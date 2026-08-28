@@ -1,0 +1,51 @@
+{
+  "name": "lite-code",
+  "version": "0.1.0",
+  "description": "lite-code：手写内核的 Code 开发 Agent 桌面工具（Electron + Python Core + Web UI）",
+  "main": "electron/main.js",
+  "author": "lite-code",
+  "license": "MIT",
+  "scripts": {
+    "dev": "concurrently -k -n core,web,app -c blue,green,magenta \"npm run dev:core\" \"npm run dev:web\" \"npm run dev:electron\"",
+    "dev:core": ".venv/bin/python -m litecode serve --port 8787 --log-level info",
+    "dev:web": "npm --prefix web run dev",
+    "dev:electron": "LITECODE_DEV_URL=http://localhost:5173 electron .",
+    "start": "npm run build:web && electron .",
+    "build:web": "npm --prefix web run build",
+    "test:backend": ".venv/bin/pytest -q",
+    "package": "npm run build:web && node scripts/package.mjs",
+    "package:backend": "node scripts/package-backend.mjs"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.litecode.app",
+    "productName": "lite-code",
+    "directories": {
+      "output": "release",
+      "buildResources": "scripts"
+    },
+    "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "release/backend/lite-code-backend",
+        "to": "litecode-bin/lite-code-backend"
+      }
+    ],
+    "mac": {
+      "icon": "release/resources/app-icon.icns",
+      "target": ["dmg", "zip"],
+      "category": "public.app-category.developer-tools",
+      "darkModeSupport": true
+    },
+    "dmg": {
+      "artifactName": "lite-code-${version}-${arch}.${ext}"
+    }
+  }
+}
