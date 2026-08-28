@@ -11,8 +11,8 @@ class DeepSeekAdapter(OpenAICompatAdapter):
     def __init__(
         self,
         api_key: str,
-        base_url: str = "https://api.deepseek.com/v1",
-        model: str = "deepseek-chat",
+        base_url: str = "https://api.deepseek.com",
+        model: str = "deepseek-v4-flash",
         **kwargs,
     ) -> None:
         super().__init__(

@@ -145,7 +145,7 @@ class LLMRegistry:
   "llm": {
     "active": "deepseek",
     "providers": {
-      "deepseek": {"api_key": "sk-...", "base_url": "https://api.deepseek.com/v1", "model": "deepseek-chat", "temperature": 0.2},
+      "deepseek": {"api_key": "sk-...", "base_url": "https://api.deepseek.com", "model": "deepseek-v4-flash", "temperature": 0.2},
       "openai": {"api_key": "", "base_url": "https://api.openai.com/v1", "model": "gpt-4o", "temperature": 0.2}
     }
   }

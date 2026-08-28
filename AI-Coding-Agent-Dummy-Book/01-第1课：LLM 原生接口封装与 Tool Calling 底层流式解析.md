@@ -65,8 +65,8 @@ from typing import AsyncGenerator, Dict, List, Optional, Tuple
 class LLMProvider:
     """底层流式 Chat 完成器，负责监听 SSE 数据包并实时拼接 Tool Call 结构。"""
 
-    def __init__(self, api_key: str, base_url: str = "https://api.deepseek.com/v1",
-                 model: str = "deepseek-chat"):
+    def __init__(self, api_key: str, base_url: str = "https://api.deepseek.com",
+                 model: str = "deepseek-v4-flash"):
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
         self.model = model

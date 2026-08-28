@@ -103,7 +103,7 @@ class AgentConfig:
     max_turns: int = 10
     max_output_chars_per_tool: int = 8000
     api_key: str = ""
-    base_url: str = "https://api.deepseek.com/v1"
+    base_url: str = "https://api.deepseek.com"
 
 async def run_robust_agent_loop(
     prompt: str,

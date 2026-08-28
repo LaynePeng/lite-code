@@ -31,7 +31,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "tool_timeout": 120,
     "auto_approve": False,
     "approval_timeout": 600,
-    "pricing": {"input_per_mtok": 2.0, "output_per_mtok": 8.0},
+    "pricing": {"input_per_mtok": 1.6, "output_per_mtok": 4.8},
 }
 
 TOOL_NAMES = [

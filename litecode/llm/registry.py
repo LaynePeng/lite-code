@@ -15,9 +15,9 @@ PROVIDER_META: Dict[str, Dict[str, Any]] = {
     "deepseek": {
         "name": "DeepSeek",
         "kind": "openai",
-        "default_base_url": "https://api.deepseek.com/v1",
-        "default_model": "deepseek-chat",
-        "models": ["deepseek-chat", "deepseek-reasoner"],
+        "default_base_url": "https://api.deepseek.com",
+        "default_model": "deepseek-v4-flash",
+        "models": ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"],
         "env_key": "DEEPSEEK_API_KEY",
     },
     "openai": {

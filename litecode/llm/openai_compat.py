@@ -27,8 +27,8 @@ class OpenAICompatAdapter(BaseLLMAdapter):
     def __init__(
         self,
         api_key: str,
-        base_url: str = "https://api.deepseek.com/v1",
-        model: str = "deepseek-chat",
+        base_url: str = "https://api.deepseek.com",
+        model: str = "deepseek-v4-flash",
         timeout: float = 120.0,
         temperature: float = 0.2,
         provider_id: str = "deepseek",

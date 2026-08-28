@@ -119,7 +119,7 @@ es.onmessage = (e) => {
 
 | 供应商 | ID | 类型 | 默认端点 |
 |---|---|---|---|
-| DeepSeek | `deepseek` | OpenAI 兼容 | `https://api.deepseek.com/v1` |
+| DeepSeek | `deepseek` | OpenAI 兼容 | `https://api.deepseek.com` |
 | OpenAI | `openai` | OpenAI 兼容 | `https://api.openai.com/v1` |
 | Kimi (Moonshot) | `kimi` | OpenAI 兼容 | `https://api.moonshot.cn/v1` |
 | 通义千问 | `qwen` | OpenAI 兼容 | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
