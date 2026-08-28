@@ -176,7 +176,160 @@ new BrowserWindow({
 })
 ```
 
-#### 6. 一键打包 (`npm run package`)
+#### 6. 稳定性加固
+
+桌面应用在真实环境中会遇到各种异常：后端启动慢、LLM 超时、网络断连、渲染进程崩溃。`lite-code` 针对这些场景做了系统性加固。
+
+**Electron 启动加载页**（`electron/loading.html`）
+
+PyInstaller 打包的后端二进制首次解压需要 10-30s，如果等后端就绪再创建窗口，用户会看到一片空白。解决：窗口**立即创建**，显示内置加载页，后端就绪后自动跳转主界面。
+
+```html
+<!-- electron/loading.html（核心结构） -->
+<body>
+  <div class="logo">⚡</div>
+  <div class="title">lite-code</div>
+  <div class="spinner"></div>
+  <div class="progress"><div class="progress-fill" id="fill"></div></div>
+  <div class="status" id="status">正在启动内核…</div>
+  <div class="error" id="errorBox">后端启动失败<button onclick="location.reload()">重试</button></div>
+  <script>
+    // 步骤动画，每 4s 推进一格
+    const steps = ["正在启动内核…", "加载安全策略…", "准备代码工具…", "连接模型服务…", "即将就绪…"];
+    setInterval(() => {
+      step = Math.min(step + 1, steps.length - 1);
+      document.getElementById("status").textContent = steps[step];
+      document.getElementById("fill").style.width = (step / (steps.length - 1)) * 100 + "%";
+    }, 4000);
+  </script>
+</body>
+```
+
+主进程启动逻辑改为先创建窗口再 await 后端：
+
+```javascript
+// 立即创建窗口 + 加载页（即使后端未就绪）
+const loadingUrl = `file://${path.join(__dirname, "loading.html")}`;
+createWindow(loadingUrl);
+
+const { url } = await spawnLocalCore();    // 后端可能耗时 30s
+if (mainWindow && !mainWindow.isDestroyed()) {
+  mainWindow.loadURL(url);                 // 就绪后跳转主界面
+}
+```
+
+**渲染进程崩溃自动恢复**（`electron/main.js`）
+
+Electron 渲染进程可能因各种原因崩溃（白屏）。监听 `render-process-gone` 事件，1s 后自动 reload；页面加载失败时最多重试 3 次：
+
+```javascript
+mainWindow.webContents.on("render-process-gone", (event, details) => {
+  setTimeout(() => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.reload();
+  }, 1000);
+});
+
+let failCount = 0;
+mainWindow.webContents.on("did-fail-load", (event, code, desc) => {
+  if (++failCount <= 3) {
+    setTimeout(() => mainWindow?.reload(), 2000);
+  }
+});
+mainWindow.webContents.on("did-finish-load", () => { failCount = 0; });
+```
+
+**React ErrorBoundary**（`web/src/components/ErrorBoundary.tsx`）
+
+React 渲染异常会导致整个应用白屏。用 ErrorBoundary 包裹根组件，捕获异常后显示错误页 + 重载按钮：
+
+```tsx
+class ErrorBoundary extends React.Component<Props, State> {
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, message: error.message };
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="crash-screen">
+          <h2>界面渲染出错</h2>
+          <p className="crash-message">{this.state.message}</p>
+          <button onClick={() => window.location.reload()}>🔄 重新加载</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+```
+
+**API 请求超时**（`web/src/api.ts`）
+
+所有 fetch 请求加 `AbortController` + 15s 超时，防止后端无响应时前端永久挂起：
+
+```typescript
+const TIMEOUT = 15000;
+async function req<T>(url: string, init?: RequestInit): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT);
+  try {
+    const res = await fetch(url, { signal: controller.signal, ...init });
+    ...
+  } finally { clearTimeout(timer); }
+}
+```
+
+**任务卡死检测**（`App.tsx`）
+
+LLM 调用可能超时（120s）或网络中断。跟踪 SSE 最后事件时间戳，超过 45s 无响应时显示黄色警告横幅 + 停止按钮：
+
+```typescript
+const lastEventTimeRef = useRef<number>(Date.now());
+const [stalled, setStalled] = useState(false);
+
+// SSE 事件到来时更新：lastEventTimeRef.current = Date.now();
+// 定时器每 15s 检查
+useEffect(() => {
+  if (!running) { setStalled(false); return; }
+  const timer = setInterval(() => {
+    if (Date.now() - lastEventTimeRef.current > 45000) {
+      setStalled(true);
+    }
+  }, 15000);
+  return () => clearInterval(timer);
+}, [running]);
+```
+
+**调试日志面板**（`App.tsx`）
+
+右下角「日志」按钮，点击展开可滚动日志面板，记录所有 SSE 事件（提交、连接、工具调用、完成/错误等），方便排查卡死原因：
+
+```typescript
+const [debugLogs, setDebugLogs] = useState<string[]>([]);
+const pushLog = useCallback((msg: string) => {
+  setDebugLogs((prev) => [...prev.slice(-200), `${new Date().toLocaleTimeString()} ${msg}`]);
+}, []);
+```
+
+**SSE 断连自动重连**
+
+前端 `EventSource` 的 `onerror` 不主动 close，让浏览器自动重连（`EventSource` 内置自动重连机制）。服务端对应的 `_stream()` 生成器在客户端断开时不清理任务，确保重连后能继续读取事件：
+
+```python
+async def _stream():
+    try:
+        while True:
+            item = await asyncio.wait_for(handle.queue.get(), timeout=15)
+            ...
+    except asyncio.CancelledError:
+        # 客户端断连：不清理任务，支持重连继续读取
+        raise
+    finally:
+        # 仅在任务真正结束时（已收到 [DONE]）清理
+        if handle.done and handle.queue.empty():
+            tasks.cleanup(task_id)
+```
+
+#### 7. 一键打包 (`npm run package`)
 
 ```bash
 npm run build:web    # 构建 React 前端 → web/dist/
@@ -195,7 +348,7 @@ release/
 
 **开发模式**：`npm run dev`（concurrently 编排 Python Core + Vite + Electron，一行命令三步启动）
 
-#### 7. 全课程总结与回顾
+#### 8. 全课程总结与回顾
 
 恭喜你！到这里我们已经完成了全套 **16 课** 的 Code Agent 深度课程，并手写出了完整的 `lite-code` 框架。
 

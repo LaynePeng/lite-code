@@ -31,12 +31,22 @@ export default function App() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [stalled, setStalled] = useState(false);
+  const [showDebug, setShowDebug] = useState(false);
+  const [debugLogs, setDebugLogs] = useState<string[]>([]);
 
   const esRef = useRef<EventSource | null>(null);
   const taskIdRef = useRef<string | null>(null);
   const streamingRef = useRef<StreamingState | null>(null);
   const messagesRef = useRef<Msg[]>([]);
   const activeSessionRef = useRef<string | null>(null);
+  const lastEventTimeRef = useRef<number>(Date.now());
+
+  const pushLog = useCallback((msg: string) => {
+    const line = `${new Date().toLocaleTimeString()} ${msg}`;
+    setDebugLogs((prev) => [...prev.slice(-200), line]);
+  }, []);
 
   useEffect(() => {
     activeSessionRef.current = activeSessionId;
@@ -47,6 +57,21 @@ export default function App() {
   useEffect(() => {
     streamingRef.current = streaming;
   }, [streaming]);
+
+  useEffect(() => {
+    if (!running) {
+      setStalled(false);
+      return;
+    }
+    const timer = setInterval(() => {
+      const elapsed = Date.now() - lastEventTimeRef.current;
+      if (elapsed > 45000) {
+        setStalled(true);
+        pushLog(`⚠ 已 ${Math.round(elapsed / 1000)}s 无响应，可能卡住`);
+      }
+    }, 15000);
+    return () => clearInterval(timer);
+  }, [running, pushLog]);
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -63,6 +88,8 @@ export default function App() {
       setConfig(cfg);
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setLoading(false);
     }
     await refreshSessions();
   }, [refreshSessions]);
@@ -127,6 +154,9 @@ export default function App() {
 
   const handleSSEEvent = useCallback(
     (ev: import("./types").SSEEvent) => {
+      lastEventTimeRef.current = Date.now();
+      setStalled(false);
+      const log = (msg: string) => pushLog(msg);
       switch (ev.type) {
         case "llm:stream": {
           const cur = streamingRef.current ?? { content: "", cards: [] };
@@ -136,12 +166,14 @@ export default function App() {
         }
         case "llm:turn_start": {
           setTurn(ev.data.turn);
+          log(`⟳ 第 ${ev.data.turn} 轮`);
           const cur = streamingRef.current ?? { content: "", cards: [] };
           streamingRef.current = { ...cur, turn: ev.data.turn };
           setStreaming({ ...streamingRef.current });
           break;
         }
         case "tool:before_execute": {
+          log(`⚡ ${ev.data.toolName}`);
           const card: ToolCardInfo = {
             id: `t${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
             name: ev.data.toolName,
@@ -154,6 +186,7 @@ export default function App() {
           break;
         }
         case "tool:after_execute": {
+          log(`✔ ${ev.data.toolName} (${ev.data.durationMs}ms)`);
           const cur = streamingRef.current;
           if (!cur) break;
           const cards = cur.cards.map((c) =>
@@ -190,6 +223,7 @@ export default function App() {
           setRunning(false);
           setTurn(0);
           closeStream();
+          pushLog("■ 任务结束");
           void (async () => {
             const snap = await api.getSession(activeSessionRef.current!);
             if (snap) setMessages(snap.messages ?? []);
@@ -199,6 +233,7 @@ export default function App() {
         }
         case "task:error": {
           setError(ev.data.message);
+          pushLog(`✗ 任务错误: ${ev.data.message}`);
           setRunning(false);
           closeStream();
           void refreshSessions();
@@ -208,7 +243,7 @@ export default function App() {
           break;
       }
     },
-    [closeStream, refreshSessions]
+    [closeStream, refreshSessions, pushLog]
   );
 
   // ------------------------------------------------------------ 发送
@@ -228,14 +263,17 @@ export default function App() {
       setStreaming({ content: "", cards: [] });
       setRunning(true);
 
-      try {
-        const { task_id } = await api.chat(sid!, prompt);
-        taskIdRef.current = task_id;
-        const es = new EventSource(`/api/tasks/${task_id}/events`);
+      const connect = (taskId: string) => {
+        const es = new EventSource(`/api/tasks/${taskId}/events`);
         esRef.current = es;
+        es.onopen = () => {
+          lastEventTimeRef.current = Date.now();
+          pushLog(`🔗 已连接任务 ${taskId}`);
+        };
         es.onmessage = (e) => {
           if (e.data === "[DONE]") {
             es.close();
+            esRef.current = null;
             return;
           }
           try {
@@ -245,16 +283,23 @@ export default function App() {
           }
         };
         es.onerror = () => {
-          es.close();
-          setRunning(false);
+          pushLog("⚠ SSE 连接中断，等待重连…");
         };
+      };
+
+      try {
+        pushLog("➤ 提交任务…");
+        const { task_id } = await api.chat(sid!, prompt);
+        taskIdRef.current = task_id;
+        connect(task_id);
       } catch (e) {
         setError((e as Error).message);
+        pushLog(`✗ 提交失败: ${(e as Error).message}`);
         setRunning(false);
         setStreaming(null);
       }
     },
-    [handleSSEEvent, refreshSessions]
+    [handleSSEEvent, refreshSessions, pushLog]
   );
 
   const stop = useCallback(() => {
@@ -286,12 +331,41 @@ export default function App() {
         if (result.error !== "cancelled") setError(result.error ?? "无法切换项目");
         return;
       }
-      // 主进程已重启后端并重载窗口，这里兜底强制刷新
       window.location.reload();
     } catch (e) {
       setError((e as Error).message);
     }
   }, []);
+
+  if (loading) {
+    return (
+      <div className="app">
+        <div className="drag-region" />
+        <div className="loading-screen">
+          <div className="loading-spinner" />
+          <p>正在连接后端服务…</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!status && error) {
+    return (
+      <div className="app">
+        <div className="drag-region" />
+        <div className="crash-screen">
+          <div className="crash-icon">⚠️</div>
+          <h2>无法连接后端服务</h2>
+          <p className="crash-message">{error}</p>
+          <div className="crash-actions">
+            <button onClick={() => { setError(null); setLoading(true); void refreshAll(); }}>
+              🔄 重试
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="app">
@@ -320,10 +394,33 @@ export default function App() {
           onApprove={(a) => void approve(a)}
         />
         <Composer disabled={running} onSend={(p) => void send(p)} />
+        <button className="debug-toggle" onClick={() => setShowDebug(!showDebug)} title="调试日志">
+          {showDebug ? "隐藏日志" : "日志"}
+        </button>
+        {stalled && running && (
+          <div className="error-banner stalled">
+            <span>⚠ 任务长时间无响应（可能 LLM 超时或网络问题）</span>
+            <button onClick={() => { if (taskIdRef.current) void api.stopTask(taskIdRef.current).catch(() => {}); }}>
+              ■ 停止任务
+            </button>
+          </div>
+        )}
         {error && (
           <div className="error-banner">
             <span>⚠ {error}</span>
             <button onClick={() => setError(null)}>✕</button>
+          </div>
+        )}
+        {showDebug && (
+          <div className="debug-panel">
+            <div className="debug-title">调试日志</div>
+            <div className="debug-body">
+              {debugLogs.length === 0 ? (
+                <div className="debug-empty">暂无日志</div>
+              ) : (
+                debugLogs.map((l, i) => <div key={i} className="debug-line">{l}</div>)
+              )}
+            </div>
           </div>
         )}
       </main>

@@ -37,6 +37,7 @@ function createWindow(url) {
     backgroundColor: "#0d1117",
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 18, y: 18 },
+    show: false,
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -45,6 +46,8 @@ function createWindow(url) {
     },
   });
 
+  // 立即显示窗口 + 内置加载页，避免等待后端就绪时空白
+  mainWindow.once("ready-to-show", () => mainWindow.show());
   mainWindow.loadURL(url);
   mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
     shell.openExternal(target);
@@ -53,6 +56,29 @@ function createWindow(url) {
   // preload 注入失败时输出错误，便于排查
   mainWindow.webContents.on("preload-error", (event, preloadPath, error) => {
     console.error(`[lite-code] preload 加载失败: ${preloadPath}`, error.message);
+  });
+  // 渲染进程崩溃 / 白屏自动恢复
+  mainWindow.webContents.on("render-process-gone", (event, details) => {
+    console.error("[lite-code] 渲染进程异常:", details.reason);
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.reload();
+      }
+    }, 1000);
+  });
+  // 页面加载失败（后端未就绪等）自动重试
+  let failCount = 0;
+  mainWindow.webContents.on("did-fail-load", (event, code, desc) => {
+    failCount += 1;
+    console.warn(`[lite-code] 页面加载失败(${code}): ${desc}`);
+    if (failCount <= 3) {
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.reload();
+      }, 2000);
+    }
+  });
+  mainWindow.webContents.on("did-finish-load", () => {
+    failCount = 0;
   });
   return mainWindow;
 }
@@ -175,10 +201,13 @@ async function handleOpenProject() {
   const workspace = result.filePaths[0];
 
   stopCore();
+  // 切换工作区时先显示加载页
+  const loadingUrl = `file://${path.join(__dirname, "loading.html")}`;
+  if (mainWindow && !mainWindow.isDestroyed()) mainWindow.loadURL(loadingUrl);
   try {
     const { url } = await spawnLocalCore(workspace);
     console.log(`[lite-code] 已切换工作区 → ${workspace} (${url})`);
-    if (mainWindow) mainWindow.loadURL(url);
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.loadURL(url);
     return { ok: true, url, workspace };
   } catch (err) {
     console.error("[lite-code] 切换工作区失败:", err.message);
@@ -213,17 +242,32 @@ app.whenReady().then(async () => {
 
   // 形态1：本地 Core
   coreMode = "local";
+
+  // 立即创建窗口 + 加载页（即使后端未就绪）
+  const loadingUrl = `file://${path.join(__dirname, "loading.html")}`;
+  createWindow(loadingUrl);
+  console.log("[lite-code] 窗口已创建，正在启动后端…");
+
   try {
     const { url } = await spawnLocalCore();
     console.log(`[lite-code] 本地 Core 就绪 → ${url}`);
-    createWindow(url);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.loadURL(url);
+    }
     app.on("window-all-closed", () => {
       stopCore();
       app.quit();
     });
   } catch (err) {
     console.error("[lite-code] 启动失败:", err.message);
-    app.quit();
+    // 加载页显示错误
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.executeJavaScript(`
+        document.querySelector('.spinner').style.display='none';
+        document.querySelector('.progress').style.display='none';
+        document.querySelector('.error').style.display='flex';
+      `);
+    }
   }
 });
 
