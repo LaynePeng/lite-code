@@ -285,9 +285,18 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
                         yield "data: [DONE]\n\n"
                         break
                     yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+            except asyncio.CancelledError:
+                # 客户端断连：任务仍可继续，后台任务会保留状态，不在此清理
+                try:
+                    if not handle.queue.empty() and not handle.done:
+                        handle.queue.put_nowait(None)
+                except asyncio.QueueFull:
+                    pass
+                raise
             finally:
-                handle.queue.put_nowait(None) if not handle.queue.empty() else None
-                tasks.cleanup(task_id)
+                # 仅在任务真正结束时（已收到 [DONE]）清理，避免断线重连 404
+                if handle.done and handle.queue.empty():
+                    tasks.cleanup(task_id)
 
         return StreamingResponse(
             _stream(),
