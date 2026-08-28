@@ -4,6 +4,8 @@
 
 **Python 内核 + FastAPI 服务 + React 前端 + Electron 桌面外壳，纯手写，不依赖 LangChain 等高层框架。**
 
+📖 配套教程（GitBook 在线阅读）：[AI Code Agent 手把手](https://laynepeng.gitbook.io/ai-code-agent-shou-ba-shou)
+
 ## 架构
 
 ```text
@@ -65,6 +67,8 @@ npx electron-builder --mac        # → release/*.dmg
 - 第 5-8 课：Tree-sitter AST / 沙箱隔离 / 精确编辑 / MCP 协议
 - 第 9-11 课：Cordis 微内核 / 中间件 / 子 Agent 编排
 - 第 12-16 课：手写实战（Python Core → 多 LLM → AgentLoop → 安全 → Web UI + Electron）
+
+📖 在线阅读：[https://laynepeng.gitbook.io/ai-code-agent-shou-ba-shou](https://laynepeng.gitbook.io/ai-code-agent-shou-ba-shou)
 
 ## License
 
