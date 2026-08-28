@@ -1,0 +1,106 @@
+"""子 Agent 编排（对应课程第11课 SubAgentRunner 真实化）。
+
+上下文隔离：子 Agent 拥有独立 Kernel 与消息链；工具集按角色裁剪；
+结果压缩：最终产出汇总为精简报告 + Token 消耗归集到父级事件。
+"""
+from __future__ import annotations
+
+import logging
+import uuid
+from typing import Any, Dict, List, Optional
+
+from ..core.agent_loop import AgentLoop
+from ..core.kernel import Kernel
+from ..core.system_prompt import SystemPromptBuilder
+from ..core.types import Message, ToolDefinition
+from ..security.plugin import SecurityPlugin
+
+logger = logging.getLogger("litecode.orchestration")
+
+ROLE_PROMPTS = {
+    "explorer": "你是一名只读调研员。只能查看代码与搜索，禁止修改文件或执行破坏性命令。"
+                "聚焦任务，给出简洁结论与关键文件/行号证据。",
+    "tester": "你是一名测试执行员。负责运行测试并分析结果，可执行命令但禁止修改生产代码。",
+    "refactor": "你是一名重构工程师。拥有完整工具集，负责完成指定的重构任务并验证。",
+    "general": "你是一名专注的专家工人，聚焦你的任务并返回简洁总结。",
+}
+
+ROLE_TOOLS: Dict[str, List[str]] = {
+    "explorer": ["read_file", "list_dir", "file_tree", "search_code", "get_file_outline",
+                 "read_focused_symbol", "git_status", "git_diff", "git_log", "git_branch",
+                 "review_code"],
+    "tester": ["read_file", "list_dir", "file_tree", "search_code", "get_file_outline",
+               "read_focused_symbol", "execute_command", "git_status", "git_diff", "git_log",
+               "git_branch"],
+    "refactor": None,  # 全部工具
+    "general": None,
+}
+
+
+class SubAgentRunner:
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def run_task(
+        self,
+        task_description: str,
+        role: str = "general",
+        system_prompt: Optional[str] = None,
+        max_steps: int = 12,
+    ) -> Dict[str, Any]:
+        sub_kernel = Kernel(session_id=f"sub_{uuid.uuid4().hex[:8]}")
+        sub_kernel.use(SecurityPlugin(self.app.guard, self.app.approval_gate))
+
+        allowed = ROLE_TOOLS.get(role)
+        registry = self.app.build_registry(
+            allowed=allowed,
+            exclude=["spawn_sub_agent"],  # 子 Agent 不再嵌套派生，防止失控
+        )
+        tools: List[ToolDefinition] = registry.get_tools()
+
+        base_prompt = system_prompt or ROLE_PROMPTS.get(role, ROLE_PROMPTS["general"])
+        system = (
+            f"{base_prompt}\n\n[你的具体任务]\n{task_description}\n\n"
+            f"工作目录: {self.app.workspace}\n"
+            f"{SystemPromptBuilder._git_info(self.app.workspace)}"
+        )
+
+        loop = AgentLoop(
+            kernel=sub_kernel,
+            adapter=self.app.adapter,
+            registry=registry,
+            session_store=None,  # 子 Agent 不落盘
+            max_steps=max_steps,
+            tool_timeout=float(self.app.config.get("tool_timeout", 120)),
+            token_budget=int(self.app.config.get("token_budget", 48000)) // 2,
+            auto_approve=bool(self.app.config.get("auto_approve", False)),
+        )
+        loop.workspace = self.app.workspace
+
+        logger.info('[SubAgent] 派生子 Agent role=%s task="%s..."',
+                    role, task_description[:60])
+
+        summary, stats = await loop.run_task(
+            f"请完成以下子任务并输出精炼总结（不要向用户提问，直接执行）：\n{task_description}",
+            system_prompt=system,
+            tools=tools,
+            store_snapshot=False,
+        )
+
+        await sub_kernel.events.emit("subagent:completed", {
+            "task": task_description,
+            "role": role,
+            "tokens_used": stats["input_tokens"] + stats["output_tokens"],
+            "turns": stats["turns"],
+            "summary": summary,
+        })
+
+        logger.info('[SubAgent] 完成 role=%s turns=%s tokens=%s',
+                    role, stats["turns"], stats["input_tokens"] + stats["output_tokens"])
+        return {
+            "summary": summary,
+            "total_tokens_used": stats["input_tokens"] + stats["output_tokens"],
+            "turns": stats["turns"],
+            "completed": stats["status"] == "SUCCESS",
+            "role": role,
+        }

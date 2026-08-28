@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lite-code"
+version = "0.1.0"
+description = "Lite Code - 手写的 Code 开发 Agent 桌面工具 (基于《AI Code Agent 手把手》课程 12-16 课)"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "httpx>=0.27",
+    "tree-sitter>=0.24",
+    "tree-sitter-typescript>=0.23",
+    "pathspec>=0.12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+]
+package = [
+    "pyinstaller>=6.10",
+]
+
+[project.scripts]
+lite-code = "litecode.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["litecode*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

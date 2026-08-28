@@ -1,0 +1,23 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+release/
+
+# Node / Web
+node_modules/
+web/dist/
+web/tsconfig.tsbuildinfo
+
+# lite-code 运行时（含 config.json 的 API Key 配置）
+.lite-code/
+
+# 日志
+*.log
+
+# 系统
+.DS_Store

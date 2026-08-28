@@ -1,0 +1,103 @@
+"""任务运行器：管理并发任务、SSE 事件队列、审批挂起。"""
+from __future__ import annotations
+
+import asyncio
+import logging
+import uuid
+from typing import Any, Dict, Optional
+
+from ..app import AgentApp
+from ..core.agent_loop import AgentLoop
+from ..core.system_prompt import SystemPromptBuilder
+from ..core.types import Message
+
+logger = logging.getLogger("litecode.tasks")
+
+EVENT_FORWARD = {
+    "llm:stream", "llm:turn_start", "message:added", "tool:before_execute",
+    "tool:after_execute", "approval:request", "approval:resolved", "task:start",
+    "task:done", "task:error", "stats:update", "subagent:completed",
+}
+
+
+class TaskHandle:
+    def __init__(self, task_id: str, kernel, registry: Any, loop: AgentLoop, app: AgentApp) -> None:
+        self.task_id = task_id
+        self.kernel = kernel
+        self.registry = registry
+        self.loop = loop
+        self.app = app
+        self.queue: asyncio.Queue = asyncio.Queue(maxsize=512)
+        self.abort_event = asyncio.Event()
+        self.loop.abort_event = self.abort_event
+        self.running = False
+        self.done = False
+        self.subscription = None
+
+    def _forward_event(self, data: Any) -> None:
+        try:
+            self.queue.put_nowait(data)
+        except asyncio.QueueFull:
+            logger.warning("[Task %s] SSE 队列溢出，丢弃事件", self.task_id)
+
+    def _subscribe_events(self) -> None:
+        async def _listener(event_name: str, payload: Any) -> None:
+            if event_name in EVENT_FORWARD:
+                self._forward_event({"type": event_name, "data": payload})
+
+        self.kernel.events.on("llm:stream", lambda p: _listener("llm:stream", p))
+        for name in EVENT_FORWARD - {"llm:stream"}:
+            self.kernel.events.on(name, lambda p, n=name: _listener(n, p))
+
+    async def run(self, prompt: str) -> None:
+        self._subscribe_events()
+        self.running = True
+        try:
+            system_prompt = SystemPromptBuilder.build(self.app.workspace, self.registry.get_tools())
+            await self.loop.run_task(prompt, system_prompt=system_prompt, store_snapshot=True)
+        except asyncio.CancelledError:
+            self._forward_event({"type": "task:error",
+                                 "data": {"message": "[Stopped]: 任务被取消。"}})
+        except Exception as exc:
+            logger.exception("[Task %s] 运行异常", self.task_id)
+            self._forward_event({"type": "task:error", "data": {"message": str(exc)}})
+        finally:
+            self.running = False
+            self.done = True
+            await self.queue.put(None)  # SSE 结束哨兵
+
+    def stop(self) -> None:
+        self.abort_event.set()
+
+
+class TaskManager:
+    def __init__(self, app: AgentApp) -> None:
+        self.app = app
+        self.tasks: Dict[str, TaskHandle] = {}
+
+    def start(self, session_id: str, prompt: str) -> TaskHandle:
+        task_id = uuid.uuid4().hex[:12]
+        kernel = self.app.create_kernel(session_id)
+        registry = self.app.build_registry()
+        loop = self.app.create_loop(kernel, registry)
+
+        handle = TaskHandle(task_id, kernel, registry, loop, self.app)
+        self.tasks[task_id] = handle
+        asyncio.get_event_loop().create_task(handle.run(prompt))
+        return handle
+
+    def get(self, task_id: str) -> Optional[TaskHandle]:
+        return self.tasks.get(task_id)
+
+    def stop(self, task_id: str) -> bool:
+        handle = self.tasks.get(task_id)
+        if handle is None:
+            return False
+        handle.stop()
+        return True
+
+    def cleanup(self, task_id: str) -> None:
+        self.tasks.pop(task_id, None)
+
+    def active_count(self) -> int:
+        return sum(1 for t in self.tasks.values() if t.running)
