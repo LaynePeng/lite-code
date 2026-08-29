@@ -204,7 +204,7 @@ if (process.env.LITECODE_DEV_URL) {
 **关键特性**：
 - `titleBarStyle: "hiddenInset"` 无边框窗口 + 红绿灯避开侧边栏
 - `sandbox: true` + `contextIsolation: true` + `preload.js` 最小化安全桥
-- `dialog.showOpenDialog` 实现"打开项目"切换工作区
+- `dialog.showOpenDialog` + **热切换工作区**：选择目录后调用后端 `POST /api/workspace` 让当前进程切换，不重启后端（毫秒级）；失败才回退重启进程
 - 60s 后端启动超时兜底，`will-quit` 时 SIGTERM 回收后端进程
 - 远程模式支持 Bearer Token 注入（`session.webRequest.onBeforeSendHeaders`）
 
