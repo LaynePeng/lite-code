@@ -228,4 +228,4 @@ async def main():
 2. 手写了基于 asyncio 的轻量 **MCP Stdio Client** 传输与握手格式；
 3. 实现了包含 **动态 Server 发现、工具路由映射与统一安全销毁** 的 MCP 集中管理器。
 
-下一次我们将正式开启 **模块四：Harness 核心架构解析 (Cordis 插件系统)** —— 学习 **第九课：Cordis 插件内核设计 (Spatiotemporal Composability)**，探索高级 Harness 是如何通过"时空解耦"与可重写轨迹实现 Agent 行为解耦的！
+下一次我们将正式开启 **第11课：Cordis 插件内核设计（Spatiotemporal Composability）** —— 探索高级 Harness 是如何通过"时空解耦"与可重写轨迹实现 Agent 行为解耦的！

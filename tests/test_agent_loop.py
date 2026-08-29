@@ -99,7 +99,7 @@ async def test_output_truncation(tmp_path):
     """工具输出超长 → 截断后进入消息链。"""
     registry = ToolRegistry()
     registry.register("big_tool", "大输出", {"type": "object"},
-                      lambda args: "A" * 50000)
+                      lambda args: "A" * 60000)
 
     adapter = MockLLMAdapter([
         ("", [tool_call("big_tool", "{}")]),
@@ -110,7 +110,7 @@ async def test_output_truncation(tmp_path):
     await loop.run_task("跑大输出", system_prompt=SYSTEM_PROMPT)
     tool_msgs = [m for m in kernel.ctx.messages if m.role == "tool"]
     assert tool_msgs and len(tool_msgs[0].content) < 50000
-    assert "截断" in tool_msgs[0].content
+    assert "truncated" in tool_msgs[0].content
 
 
 async def test_abort_stop(tmp_path):

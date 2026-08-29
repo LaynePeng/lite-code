@@ -113,6 +113,49 @@ es.onmessage = (e) => {
 
 **深色主题**（`styles.css`）：VS Code 暗色基底 + 蓝紫渐变强调色，256 行 CSS 自定义样式。
 
+#### 3.5 OpenCode 风格交互优化
+
+在完成基础功能后，我们参考 OpenCode 的交互设计，对 UI 做了几项关键优化：
+
+**右侧工具面板**：工具调用卡片不再混在对话流中，而是被移到右侧独立面板（`ToolPanel.tsx`）。每个工具调用显示为紧凑单行（图标 + 名称 + 结果摘要），点击展开查看参数与结果。面板自动滚动到底部，条目过多时通过 `flex-shrink: 0` + `overflow-y: auto` 保证滚动而非压缩：
+
+```text
+┌─────── 对话区 ───────┐  ┌── 工具面板 ────┐
+│ 用户：帮我查启动原因    │  │ 列表: file_tree ▸│
+│                       │  │ 列表: git_status ▸│
+│ 思考过程 ▸             │  │ 列表: read_file ▸│
+│ (可折叠推理)          │  │ 列表: search_code▸│
+│                       │  │ 列表: read_file ▸│
+│ ⚡ 分析完成。          │  │ 列表: list_dir  ▸│
+│ 以下是完整报告…         │  │ 列表: read_file ▸│
+│                       │  └──────────────────┘
+└───────────────────────┘
+```
+
+**思考与回答分离**：历史上，每次模型调用工具的中间推理（`assistant` 消息同时携带 `content` 和 `tool_calls`）都会被渲染为独立气泡，导致对话区呈现"多个推理气泡 + 空气泡"的混乱状态。`buildTurns` 函数将整个用户任务下的所有中间推理文本合并为一个 **thinking 块**（`<details>` 折叠），最终回答才作为正常气泡显示：
+
+```javascript
+function buildTurns(messages) {
+  // 每个 user 消息对应一个 thinking 块
+  // 所有 assistant+tool_calls 的 content 累积到 thinking
+  // 最终回答（assistant 无 tool_calls）作为独立气泡
+}
+```
+
+**Tab 快捷键切换 Agent**：全局 `keydown` 监听，按 Tab 在 Build/Plan 间循环切换，`preventDefault` 阻止焦点跳转——输入框始终聚焦，可连续打字 + 切 Agent + 发送。
+
+**停止按钮合一**：任务运行时，发送按钮（➤）变为红色停止按钮（■），点击即停止。不再有独立的悬浮停止条，避免遮挡。
+
+**目录树打开项目**：浏览器模式下，点击"打开项目"弹出 `ProjectPicker` 目录树选择器，通过 `/api/fs/list` 后端接口逐层浏览文件系统，选完后自动切换工作区并跳转到文件 tab。
+
+**单换行与表格美化**：通过 `remark-breaks` 插件让 Markdown 单换行（`\n`）渲染为 `<br>`，步骤性输出自然分行。表格加 `display: block + overflow-x: auto`，超宽表格横向滚动。
+
+**Session 首句标题**：会话标题不再显示 `session_xxx`，而是取首条用户消息的前 40 字（由 `_session_title` 在后端完成），更直观。
+
+**Build/Plan 前端切换**：`Composer.tsx` 加入 Agent 选择栏，显示 Build / Plan 两个按钮，当前选中的高亮。右侧显示 `Tab` 小标签提示快捷键。
+
+**后端新端点**：配套新增 `/api/agents` 返回 Agent 列表、`/api/workspace` 运行时切换工作区、`/api/fs/list` 浏览任意目录。
+
 #### 4. 多 LLM 配置界面 (`SettingsModal.tsx`)
 
 支持 7 个预置供应商 + 自定义：

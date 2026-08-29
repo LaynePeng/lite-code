@@ -7,6 +7,8 @@ export default function Sidebar({
   activeSessionId,
   workspace,
   stats,
+  tab,
+  onTabChange,
   onSelectSession,
   onNewSession,
   onDeleteSession,
@@ -17,13 +19,14 @@ export default function Sidebar({
   activeSessionId: string | null;
   workspace: string;
   stats: { input_tokens: number; output_tokens: number; cost_estimate: number; tool_calls: number; blocked: number } | null;
+  tab: "sessions" | "files" | "stats";
+  onTabChange: (tab: "sessions" | "files" | "stats") => void;
   onSelectSession: (id: string) => void;
   onNewSession: () => void;
   onDeleteSession: (id: string) => void;
   onOpenProject: () => void;
   onOpenSettings: () => void;
 }) {
-  const [tab, setTab] = useState<"sessions" | "files" | "stats">("sessions");
   const [tree, setTree] = useState<string>("");
   const [tools, setTools] = useState<{ name: string; description: string }[]>([]);
   const [loadingTree, setLoadingTree] = useState(false);
@@ -50,13 +53,13 @@ export default function Sidebar({
       </div>
 
       <div className="sidebar-tabs">
-        <button className={tab === "sessions" ? "active" : ""} onClick={() => setTab("sessions")}>
+        <button className={tab === "sessions" ? "active" : ""} onClick={() => onTabChange("sessions")}>
           会话
         </button>
-        <button className={tab === "files" ? "active" : ""} onClick={() => setTab("files")}>
+        <button className={tab === "files" ? "active" : ""} onClick={() => onTabChange("files")}>
           文件
         </button>
-        <button className={tab === "stats" ? "active" : ""} onClick={() => setTab("stats")}>
+        <button className={tab === "stats" ? "active" : ""} onClick={() => onTabChange("stats")}>
           统计
         </button>
       </div>
@@ -67,11 +70,9 @@ export default function Sidebar({
             <button className="btn-new-session" onClick={onNewSession}>
               ＋ 新建会话
             </button>
-            {window.liteCode && (
-              <button className="btn-open-session" onClick={onOpenProject} title="选择其他项目目录，切换工作区">
-                📂 打开项目…
-              </button>
-            )}
+            <button className="btn-open-session" onClick={onOpenProject} title="选择其他项目目录，切换工作区">
+              📂 打开项目…
+            </button>
             {sessions.length === 0 && <div className="sidebar-empty">还没有会话</div>}
             {sessions.map((s) => (
               <div
@@ -152,7 +153,7 @@ export default function Sidebar({
         <button className="btn-open-settings" onClick={onOpenSettings}>
           ⚙️ LLM 设置
         </button>
-        <div className="footer-version">lite-code v0.1 · 手写 Agent Harness</div>
+        <div className="footer-version">lite-code v0.2.0-rc · 手写 Agent Harness</div>
       </div>
     </aside>
   );

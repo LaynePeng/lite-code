@@ -180,6 +180,7 @@ class LLMRegistry:
             model=settings.get("model") or meta["default_model"],
             temperature=float(settings.get("temperature", 0.2)),
             provider_id=pid,
+            enable_cache=bool(settings.get("enable_cache", True)),
         )
         if meta["kind"] == "anthropic":
             return AnthropicAdapter(**common)

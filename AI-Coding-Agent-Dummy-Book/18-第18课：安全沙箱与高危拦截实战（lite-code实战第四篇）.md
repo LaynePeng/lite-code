@@ -308,4 +308,4 @@ else:
 4. 实现了 **`ApprovalGate` (Human-in-the-Loop)** Web 化机制，关键操作让用户保持控制权（`asyncio.Future` 挂起 + SSE 审批卡）；
 5. 将安全机制封装为 **`SecurityPlugin`**，展示了 `beforeTool` 洋葱机制在防护层的优雅应用。
 
-下一次我们将开启 **第十六课：Web UI + Electron 桌面应用与打包 (`lite-code` 实战终章)** —— 为 `lite-code` 打造带流式 Markdown、工具卡片、审批卡的现代化 Web UI，套上 Electron 桌面外壳，并支持多 LLM 配置与一键打包发布！
+下一次我们将开启 **第19课：Web UI + Electron 桌面应用与打包 (`lite-code` 实战终章)** —— 为 `lite-code` 打造带流式 Markdown、工具卡片、审批卡的现代化 Web UI，套上 Electron 桌面外壳，并支持多 LLM 配置与一键打包发布！

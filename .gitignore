@@ -21,3 +21,4 @@ web/tsconfig.tsbuildinfo
 
 # 系统
 .DS_Store
+*.png

@@ -1,5 +1,16 @@
 // 与后端对齐的类型定义
 
+export interface AgentInfo {
+  id: string;
+  mode: "primary" | "subagent";
+  description: string;
+  model: string | null;
+  temperature: number | null;
+  tools: string[] | null;
+  permissions: Record<string, string>;
+  hidden: boolean;
+}
+
 export interface ToolCall {
   id: string;
   type: string;

@@ -1,7 +1,10 @@
-"""子 Agent 编排（对应课程第11课 SubAgentRunner 真实化）。
+"""子 Agent 编排（对应课程第11/14课 SubAgentRunner 真实化）。
 
 上下文隔离：子 Agent 拥有独立 Kernel 与消息链；工具集按角色裁剪；
 结果压缩：最终产出汇总为精简报告 + Token 消耗归集到父级事件。
+
+第14课增强：角色来源扩展为 AgentRegistry —— 用户自定义的 subagent
+（mode="subagent"）也能被 spawn_sub_agent 直接派生使用。
 """
 from __future__ import annotations
 
@@ -41,6 +44,16 @@ class SubAgentRunner:
     def __init__(self, app) -> None:
         self.app = app
 
+    def _resolve_role(self, role: str):
+        """从 AgentRegistry 查找角色（支持用户自定义 subagent），否则回退内置 ROLE_*。"""
+        try:
+            profile = self.app.agent_registry.get(role)
+            if profile.mode in ("subagent", "all"):
+                return profile
+        except KeyError:
+            pass
+        return None
+
     async def run_task(
         self,
         task_description: str,
@@ -51,14 +64,23 @@ class SubAgentRunner:
         sub_kernel = Kernel(session_id=f"sub_{uuid.uuid4().hex[:8]}")
         sub_kernel.use(SecurityPlugin(self.app.guard, self.app.approval_gate))
 
-        allowed = ROLE_TOOLS.get(role)
+        profile = self._resolve_role(role)
+        if profile is not None:
+            allowed = profile.tools
+            permissions = profile.permissions
+            base_prompt = profile.system_prompt or ROLE_PROMPTS.get("general", "")
+        else:
+            allowed = ROLE_TOOLS.get(role)
+            permissions = None
+            base_prompt = system_prompt or ROLE_PROMPTS.get(role, ROLE_PROMPTS["general"])
+
         registry = self.app.build_registry(
             allowed=allowed,
             exclude=["spawn_sub_agent"],  # 子 Agent 不再嵌套派生，防止失控
+            permissions=permissions,
         )
         tools: List[ToolDefinition] = registry.get_tools()
 
-        base_prompt = system_prompt or ROLE_PROMPTS.get(role, ROLE_PROMPTS["general"])
         system = (
             f"{base_prompt}\n\n[你的具体任务]\n{task_description}\n\n"
             f"工作目录: {self.app.workspace}\n"
@@ -76,6 +98,7 @@ class SubAgentRunner:
             auto_approve=bool(self.app.config.get("auto_approve", False)),
         )
         loop.workspace = self.app.workspace
+        loop.truncation_dir = self.app.create_loop(sub_kernel, registry).truncation_dir
 
         logger.info('[SubAgent] 派生子 Agent role=%s task="%s..."',
                     role, task_description[:60])

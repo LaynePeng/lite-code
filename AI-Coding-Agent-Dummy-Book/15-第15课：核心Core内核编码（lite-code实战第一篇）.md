@@ -324,4 +324,4 @@ print(k.ctx.messages[0].to_dict())   # {'role': 'user', 'content': 'hello'}
 3. 实现了包含 **`Pipeline` 洋葱模型** 与 **`Context` 容器** 的 `Kernel`；
 4. 编写了具备**原子写盘**与列表/删除能力的 **`SessionStore`**。
 
-下一次我们将开启 **第十三课：LLM 多供应商适配器与核心工具集 (`lite-code` 实战第二篇)** —— 手写 httpx SSE 流式解析、多 LLM 供应商注册表，以及文件/搜索/AST/编辑/Shell/Git/审查等全套工具！
+下一次我们将开启 **第16课：LLM 多供应商适配器与核心工具集 (`lite-code` 实战第二篇)** —— 手写 httpx SSE 流式解析、多 LLM 供应商注册表，以及文件/搜索/AST/编辑/Shell/Git/审查等全套工具！

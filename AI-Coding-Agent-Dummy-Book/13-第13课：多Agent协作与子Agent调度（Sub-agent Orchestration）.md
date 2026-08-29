@@ -171,4 +171,6 @@ async def main():
 
 至此，**模块四：DeepSeek Harness 核心架构解析** 已全部完结！
 
-下一步我们将正式开启 **模块五：手写实战 —— 从零构建 Mini Code Agent (`lite-code`)**！在未来的第 12 至 16 课中，我们将把前面所有 11 课学到的核心模块整合为一个可以实际运行的完整开源项目（Python 内核 + FastAPI 服务 + React 前端 + Electron 桌面应用）！
+下一步我们将开启 **第14课：Agent 类型与自定义机制（Build/Plan 与用户扩展）** —— 参考 OpenCode，为 lite-code 内置 Build/Plan 两种默认 Agent，并开放用户自定义 Agent 的配置通道！
+
+此后进入 **模块四：手写实战 —— 从零构建 Mini Code Agent (`lite-code`)**！在未来的第 15 至 19 课中，我们将把前面所有 14 课学到的核心模块（含缓存机制、Token 节省、Agent 机制）整合为一个可以实际运行的完整开源项目（Python 内核 + FastAPI 服务 + React 前端 + Electron 桌面应用）！

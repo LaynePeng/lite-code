@@ -159,4 +159,4 @@ async def execute_sandbox_tool(name: str, args: dict, sandbox: LocalProcessSandb
 3. 增加了 **硬超时摧毁机制** 与 **高危命令过滤**；
 4. 屏蔽了底层 API Key 环境变量在 Shell 进程中的泄漏风险。
 
-下一次我们将进入 **第七课：精确代码编辑与 Apply Patch 机制** —— 学习解决 LLM 频繁写错代码行号的问题，手写高效且具备重试能力的代码编辑与 Patch 校验工具！
+下一次我们将进入 **第9课：精确代码编辑与 Apply Patch 机制** —— 学习解决 LLM 频繁写错代码行号的问题，手写高效且具备重试能力的代码编辑与 Patch 校验工具！

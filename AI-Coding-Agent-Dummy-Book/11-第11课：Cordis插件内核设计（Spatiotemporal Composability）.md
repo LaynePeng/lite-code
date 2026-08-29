@@ -197,4 +197,4 @@ print("Recorded steps count:", len(trajectory["get_history"]()))
 2. 实现了基于 **Cordis 依赖注入思想** 的 Context 与 Service 机制；
 3. 设计了基于 **Append-only Trajectory 的时间解耦方案**，为调试、测试重放与断点续做打下基础。
 
-下一次我们将进入 **第十课：依赖注入与插件生命周期管理** —— 深入探讨 Interceptor 拦截器管道（中间件模式），学习如何通过插件在 Tool 调用前后实现无感修改 Prompt 和安全审查拦截！
+下一次我们将进入 **第12课：依赖注入与插件生命周期管理** —— 深入探讨 Interceptor 拦截器管道（中间件模式），学习如何通过插件在 Tool 调用前后实现无感修改 Prompt 和安全审查拦截！

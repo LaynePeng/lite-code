@@ -71,13 +71,17 @@ class AgentStateTracker:
         return False
 ```
 
-**输出截断（`core/truncator.py`）**：首尾保留策略，防止 Token 爆框：
+**输出截断（`core/truncator.py`）**：行+字节双上限，保留头部，超限时落盘（第4/5课增强）：
 
 ```python
-def truncate_tool_output(output, max_characters=8000):
-    if len(output) <= max_characters: return output
-    half = max_characters // 2
-    return f"{output[:half]}\n\n[... 截断 {len(output)-max_characters} 字符 ...]\n\n{output[-half:]}"
+def truncate_tool_output(output, max_lines=2000, max_bytes=51200,
+                         direction="head", output_dir=None):
+    if not output: return TruncationResult(output, False)
+    lines = output.split("\n")
+    if len(lines) <= max_lines and len(output.encode("utf-8")) <= max_bytes:
+        return TruncationResult(output, False)
+    # 保留头部，超限内容落盘到 output_dir，提示模型按需读取
+    ...
 ```
 
 #### 3. 第 3 课增强机制集成
@@ -236,4 +240,4 @@ class SubAgentRunner:
 5. 主循环回收后自动**会话落盘**，防止中途异常崩溃丢状态；
 6. 子 Agent 编排**真实化**：上下文隔离、只读工具裁剪、Token 归集。
 
-下一次我们将开启 **第十五课：安全沙箱与高危拦截实战 (`lite-code` 实战第四篇)** —— 给 `lite-code` 加入动态黑白名单、三级风险控制、Web 审批卡与提权确认机制！
+下一次我们将开启 **第18课：安全沙箱与高危拦截实战 (`lite-code` 实战第四篇)** —— 给 `lite-code` 加入动态黑白名单、三级风险控制、Web 审批卡与提权确认机制！

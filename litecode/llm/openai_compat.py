@@ -15,7 +15,7 @@ import httpx
 
 from ..core.events import TypedEventBus
 from ..core.types import Message, ToolCall, ToolDefinition
-from .base import BaseLLMAdapter, LLMError
+from .base import BaseLLMAdapter, LLMError, decode_utf8_incremental
 
 logger = logging.getLogger("litecode.llm")
 
@@ -32,6 +32,7 @@ class OpenAICompatAdapter(BaseLLMAdapter):
         timeout: float = 120.0,
         temperature: float = 0.2,
         provider_id: str = "deepseek",
+        enable_cache: bool = True,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -39,6 +40,7 @@ class OpenAICompatAdapter(BaseLLMAdapter):
         self.timeout = timeout
         self.temperature = temperature
         self.provider_id = provider_id
+        self.enable_cache = enable_cache
         self._client: Optional[httpx.AsyncClient] = None
 
     def _get_client(self) -> httpx.AsyncClient:
@@ -70,6 +72,11 @@ class OpenAICompatAdapter(BaseLLMAdapter):
             payload["tools"] = [
                 {"type": "function", "function": t.__dict__} for t in tools
             ]
+        if self.enable_cache:
+            for msg in payload["messages"]:
+                if msg.get("role") == "system" and isinstance(msg.get("content"), str):
+                    msg["cache_control"] = {"type": "ephemeral"}
+                    break
         return payload
 
     async def chat_stream(
@@ -105,9 +112,11 @@ class OpenAICompatAdapter(BaseLLMAdapter):
         full_content = ""
         tool_calls_map: Dict[int, ToolCall] = {}
         buffer = ""
+        byte_buffer = b""
 
         async for chunk in response.aiter_bytes():
-            buffer += chunk.decode("utf-8", errors="replace")
+            text, byte_buffer = decode_utf8_incremental(byte_buffer, chunk)
+            buffer += text
             lines = buffer.split("\n")
             buffer = lines.pop()
 

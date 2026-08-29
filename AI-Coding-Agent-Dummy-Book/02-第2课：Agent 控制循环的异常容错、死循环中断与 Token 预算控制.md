@@ -75,18 +75,64 @@ class AgentStateTracker:
 
 Code Agent 最容易引发爆框的操作是 `read_file` 读了一个巨型文件，或者 Shell 执行命令打出了几万行日志。我们必须在工具返回结果进入上下文前，实现**强制截断与摘要防护**。
 
+第一版的做法是"头尾各保留一半字符"，但它有两个硬伤：按字符数截断对 Code Agent 输出不合理（输出是**按行**组织的）；且一刀切头尾各半会丢掉中间信息密度最高的部分。这里我们参考 **OpenCode 的 `Truncate.output`** 实现一个更合理的版本：
+
+1. **以「行 + 字节」双上限为准**（默认 2000 行 / 50KB）；
+2. **默认保留头部**（`direction="head"`）——命令回显、文件名、错误上下文通常在输出开头；
+3. **超限时把完整输出落盘**，并告诉 LLM 完整内容的磁盘路径，需要时再按需读取——上下文只放"句柄"，不直接丢弃信息。
+
 ```python
 # utils/truncator.py
-def truncate_tool_output(output: str, max_characters: int = 8000) -> str:
-    if len(output) <= max_characters:
-        return output
+import os, time, uuid
 
-    half = max_characters // 2
-    head = output[:half]
-    tail = output[-half:]
-    omitted = len(output) - max_characters
-    return f"{head}\n\n[... ⚠️ 内容已被 Harness 截断 ({omitted} 字符省略) ...]\n\n{tail}"
+DEFAULT_MAX_LINES = 2000
+DEFAULT_MAX_BYTES = 50 * 1024  # 50KB
+
+class TruncationResult:
+    def __init__(self, content: str, truncated: bool, output_path: str = None):
+        self.content = content
+        self.truncated = truncated
+        self.output_path = output_path
+
+def truncate_tool_output(output, max_lines=DEFAULT_MAX_LINES,
+                         max_bytes=DEFAULT_MAX_BYTES, direction="head",
+                         output_dir=None) -> TruncationResult:
+    if not output:
+        return TruncationResult(output, False)
+    lines = output.split("\n")
+    if len(lines) <= max_lines and len(output.encode("utf-8")) <= max_bytes:
+        return TruncationResult(output, False)
+
+    # 按行保留头部（OpenCode 风格：头部信息密度最高）
+    out, bytes_used = [], 0
+    for i in range(min(len(lines), max_lines)):
+        size = len(lines[i].encode("utf-8")) + (1 if i > 0 else 0)
+        if bytes_used + size > max_bytes:
+            break
+        out.append(lines[i])
+        bytes_used += size
+
+    removed = len(lines) - len(out)
+    preview = "\n".join(out)
+
+    if output_dir:
+        path = _save_to_disk(output_dir, output)  # 完整内容落盘
+        hint = (f"\n\n[... {removed} lines truncated ...]\n"
+                f"Full output saved to: {path}\n"
+                f"Use read_file/search to inspect it on demand — save context.")
+        return TruncationResult(f"{preview}\n\n{hint}", True, path)
+    return TruncationResult(f"{preview}\n\n[... {removed} lines truncated ...]", True)
+
+def _save_to_disk(output_dir: str, text: str) -> str:
+    os.makedirs(output_dir, exist_ok=True)
+    name = f"tool_{int(time.time())}_{uuid.uuid4().hex[:8]}.txt"
+    path = os.path.join(output_dir, name)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+    return path
 ```
+
+> **为什么"保存到磁盘 + 上下文只放句柄"更好？** 它把上下文从"数据容器"变成"数据索引"——模型不会被 50KB 日志塞满，但需要时仍能按路径读回完整内容。这在 OpenCode 和 OpenSquilla（带外结果存储）中都是标准做法，我们会在第 5 课继续深化。
 
 #### 4. 重构核心控制循环 (Robust Agent Loop)
 
@@ -101,7 +147,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 @dataclass
 class AgentConfig:
     max_turns: int = 10
-    max_output_chars_per_tool: int = 8000
+    max_output_lines: int = 2000
+    max_output_bytes: int = 51200
     api_key: str = ""
     base_url: str = "https://api.deepseek.com"
 
@@ -186,12 +233,17 @@ async def run_robust_agent_loop(
                 ))
                 continue
 
-            # 4.3 执行工具 & 输出截断
+            # 4.3 执行工具 & 输出截断（落盘 + 上下文只放句柄）
             try:
                 raw_output = await tool_executor(tool_name, parsed_args)
-                safe_output = truncate_tool_output(raw_output, config.max_output_chars_per_tool)
+                truncated = truncate_tool_output(
+                    raw_output,
+                    max_lines=config.max_output_lines,
+                    max_bytes=config.max_output_bytes,
+                    output_dir=config.truncation_dir,
+                )
                 messages.append(Message(
-                    role="tool", tool_call_id=tool_call.id, content=safe_output,
+                    role="tool", tool_call_id=tool_call.id, content=truncated.content,
                 ))
             except Exception as e:
                 messages.append(Message(

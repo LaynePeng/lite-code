@@ -1,0 +1,147 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.get-tag.outputs.tag }}
+      version: ${{ steps.get-tag.outputs.version }}
+    steps:
+      - id: get-tag
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          VER="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            electron-target: --mac
+            artifact-ext: dmg
+          - os: windows-latest
+            electron-target: --win
+            artifact-ext: exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Python deps
+        run: |
+          python3 -m venv .venv
+          .venv/bin/pip install -e .[dev,package]
+
+      - name: Install npm deps
+        run: npm install
+
+      - name: Build web frontend
+        run: npm run build:web
+
+      - name: Run tests
+        run: .venv/bin/pytest tests/ -q
+
+      - name: Build PyInstaller backend
+        run: node scripts/package-backend.mjs
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
+      - name: Package with electron-builder
+        run: npx electron-builder ${{ matrix.electron-target }} --publish never
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          mkdir -p _artifacts
+          cp -r release/backend/* _artifacts/ 2>/dev/null || true
+          find release -name "*.dmg" -o -name "*.zip" -o -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" 2>/dev/null | while read f; do
+            cp "$f" _artifacts/
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: lite-code-${{ needs.version.outputs.version }}-${{ matrix.os }}
+          path: _artifacts/*
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          PREV=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -z "$PREV" ]; then
+            LOG=$(git log --format="%s%n%b" --since="2024-01-01")
+          else
+            LOG=$(git log --format="%s%n%b" "$PREV..HEAD" 2>/dev/null || git log --format="%s%n%b" --since="2024-01-01")
+          fi
+
+          NOTES="# lite-code ${{ needs.version.outputs.version }}\n\n"
+          NOTES+="## 更新内容\n\n"
+
+          FEATS=$(echo "$LOG" | grep -i "^feat" || true)
+          FIXES=$(echo "$LOG" | grep -i "^fix" || true)
+          DOCS=$(echo "$LOG" | grep -i "^docs" || true)
+          CHORES=$(echo "$LOG" | grep -i "^chore" || true)
+
+          if [ -n "$FEATS" ]; then
+            NOTES+="### 🚀 新功能\n$FEATS\n\n"
+          fi
+          if [ -n "$FIXES" ]; then
+            NOTES+="### 🐛 修复\n$FIXES\n\n"
+          fi
+          if [ -n "$DOCS" ]; then
+            NOTES+="### 📖 文档\n$DOCS\n\n"
+          fi
+          if [ -n "$CHORES" ]; then
+            NOTES+="### 🔧 其他\n$CHORES\n\n"
+          fi
+
+          echo "notes<<EOF" >> "$GITHUB_OUTPUT"
+          echo -e "$NOTES" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: _downloads
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: lite-code ${{ needs.version.outputs.version }}
+          body: ${{ steps.notes.outputs.notes }}
+          files: |
+            _downloads/**/*
+          draft: false
+          prerelease: ${{ contains(needs.version.outputs.version, 'rc') || contains(needs.version.outputs.version, 'beta') || contains(needs.version.outputs.version, 'alpha') }}

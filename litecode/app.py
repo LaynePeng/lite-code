@@ -7,6 +7,7 @@ import os
 from typing import Any, Dict, List, Optional
 
 from .core.agent_loop import AgentLoop
+from .core.agent_profile import AgentProfile, AgentRegistry
 from .core.kernel import Kernel
 from .core.session_store import SessionStore
 from .llm.base import BaseLLMAdapter
@@ -65,6 +66,7 @@ class AgentApp:
         self.guard = SecurityGuard()
         self.approval_gate = ApprovalGate(timeout_seconds=600)
         self.llm_registry = LLMRegistry()
+        self.agent_registry = AgentRegistry()
         self._load_config()
         self.approval_gate = ApprovalGate(
             timeout_seconds=self.config.get("approval_timeout", 600)
@@ -109,11 +111,16 @@ class AgentApp:
                 llm_cfg = loaded.get("llm")
                 if isinstance(llm_cfg, dict):
                     self.llm_registry.apply_config(llm_cfg)
+                agents_cfg = loaded.get("agents")
+                if isinstance(agents_cfg, dict):
+                    self.agent_registry.load_config(agents_cfg)
                 logger.info("[App] 配置文件已加载: %s", self.config_path)
             except Exception:
                 logger.exception("[App] 配置文件解析失败，使用默认配置")
         else:
             self._write_default_config()
+        # 扫描 agents 目录下的自定义 agent 文件
+        self.agent_registry.load_dir(os.path.join(self.config_dir, "agents"))
 
     def _write_default_config(self) -> None:
         try:
@@ -201,6 +208,7 @@ class AgentApp:
         self,
         allowed: Optional[List[str]] = None,
         exclude: Optional[List[str]] = None,
+        permissions: Optional[Dict[str, str]] = None,
     ) -> ToolRegistry:
         registry = ToolRegistry()
         fs_tools = FileSystemTools(self.workspace)
@@ -215,6 +223,8 @@ class AgentApp:
             if allowed is not None and name not in allowed:
                 return False
             if exclude and name in exclude:
+                return False
+            if permissions and permissions.get(name) == "deny":
                 return False
             return True
 
@@ -279,10 +289,38 @@ class AgentApp:
         kernel.register_service("app", self)
         return kernel
 
-    def create_loop(self, kernel: Kernel, registry: ToolRegistry) -> AgentLoop:
+    # ------------------------------------------------------------ Agent
+
+    def get_agent(self, agent_id: Optional[str] = None) -> AgentProfile:
+        """获取 Agent 配置：不传则返回默认 build agent。"""
+        return self.agent_registry.get(agent_id or "build")
+
+    def agents_meta(self) -> List[Dict[str, Any]]:
+        """供 UI/CLI 列出全部可选 agent。"""
+        return [p.to_dict() for p in self.agent_registry.all().values()]
+
+    def create_agent_registry(self, agent_id: str) -> ToolRegistry:
+        """按 Agent 配置裁剪工具集（参考 OpenCode：plan 只读、build 全量）。"""
+        profile = self.get_agent(agent_id)
+        return self.build_registry(
+            allowed=profile.tools,
+            exclude=["spawn_sub_agent"] if agent_id == "plan" else None,
+            permissions=profile.permissions,
+        )
+
+    def create_loop(self, kernel: Kernel, registry: ToolRegistry, agent_id: Optional[str] = None) -> AgentLoop:
+        profile = self.get_agent(agent_id)
+        adapter = self.adapter
+        if profile.model or profile.temperature is not None:
+            overrides = {}
+            if profile.model:
+                overrides["model"] = profile.model
+            if profile.temperature is not None:
+                overrides["temperature"] = profile.temperature
+            adapter = self.llm_registry.build_adapter(overrides=overrides)
         loop = AgentLoop(
             kernel=kernel,
-            adapter=self.adapter,
+            adapter=adapter,
             registry=registry,
             session_store=self.session_store,
             max_steps=int(self.config.get("max_steps", 25)),
@@ -292,6 +330,7 @@ class AgentApp:
             auto_approve=bool(self.config.get("auto_approve", False)),
         )
         loop.workspace = self.workspace
+        loop.truncation_dir = os.path.join(self.config_dir, "truncations")
         return loop
 
     async def close(self) -> None:

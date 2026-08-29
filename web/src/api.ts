@@ -1,4 +1,4 @@
-import type { AppConfig, LLMConfig, LLMProviderMeta, ServerStatus, SessionInfo, ToolDef } from "./types";
+import type { AgentInfo, AppConfig, LLMConfig, LLMProviderMeta, ServerStatus, SessionInfo, ToolDef } from "./types";
 
 const TIMEOUT = 15000;
 
@@ -31,6 +31,8 @@ export const api = {
   updateConfig: (updates: Partial<AppConfig>) =>
     req<{ ok: boolean }>("/api/config", { method: "POST", body: JSON.stringify({ updates }) }),
 
+  agents: () => req<AgentInfo[]>("/api/agents"),
+
   sessions: () => req<SessionInfo[]>("/api/sessions"),
   createSession: () =>
     req<{ session_id: string }>("/api/sessions", { method: "POST", body: JSON.stringify({}) }),
@@ -41,12 +43,23 @@ export const api = {
   tools: () => req<ToolDef[]>("/api/tools"),
   workspaceTree: (depth = 4) =>
     req<{ workspace: string; tree: string }>(`/api/workspace/tree?depth=${depth}`),
+  fsList: (path?: string) =>
+    req<{ path: string; parent: string | null; home: string; is_workspace: boolean; dirs: string[]; files: string[]; truncated: boolean }>(
+      `/api/fs/list${path ? `?path=${encodeURIComponent(path)}` : ""}`
+    ),
+  setWorkspace: (path: string) =>
+    req<{ ok: boolean; workspace: string }>("/api/workspace", {
+      method: "POST", body: JSON.stringify({ path }),
+    }),
   security: () => req<Record<string, unknown>>("/api/security"),
 
-  chat: (sessionId: string, prompt: string) =>
-    req<{ task_id: string }>("/api/chat", {
-      method: "POST", body: JSON.stringify({ session_id: sessionId, prompt }),
-    }),
+  chat: (sessionId: string, prompt: string, agentId?: string) => {
+    const body: Record<string, unknown> = { session_id: sessionId, prompt };
+    if (agentId && agentId !== "build") body.agent_id = agentId;
+    return req<{ task_id: string }>("/api/chat", {
+      method: "POST", body: JSON.stringify(body),
+    });
+  },
   stopTask: (taskId: string) =>
     req<{ ok: boolean }>(`/api/tasks/${taskId}/stop`, { method: "POST" }),
   approve: (approvalId: string, approved: boolean) =>

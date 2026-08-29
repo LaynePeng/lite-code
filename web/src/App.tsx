@@ -1,10 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import ChatView from "./components/ChatView";
 import Composer from "./components/Composer";
+import ProjectPicker from "./components/ProjectPicker";
 import SettingsModal from "./components/SettingsModal";
 import Sidebar from "./components/Sidebar";
-import type { AppConfig, Msg, ServerStatus, SessionInfo, Stats, ToolCardInfo } from "./types";
+import ToolPanel from "./components/ToolPanel";
+import type { AgentInfo, AppConfig, Msg, ServerStatus, SessionInfo, Stats, ToolCardInfo } from "./types";
 
 interface PendingApproval {
   id: string;
@@ -30,11 +32,16 @@ export default function App() {
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showPicker, setShowPicker] = useState(false);
+  const [sidebarTab, setSidebarTab] = useState<"sessions" | "files" | "stats">("sessions");
   const [loading, setLoading] = useState(true);
   const [stalled, setStalled] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
+  const [agents, setAgents] = useState<AgentInfo[]>([]);
+  const [currentAgent, setCurrentAgent] = useState<string>("build");
 
   const esRef = useRef<EventSource | null>(null);
   const taskIdRef = useRef<string | null>(null);
@@ -83,9 +90,10 @@ export default function App() {
 
   const refreshAll = useCallback(async () => {
     try {
-      const [st, cfg] = await Promise.all([api.status(), api.config()]);
+      const [st, cfg, ag] = await Promise.all([api.status(), api.config(), api.agents()]);
       setStatus(st);
       setConfig(cfg);
+      setAgents(ag);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -97,6 +105,24 @@ export default function App() {
   useEffect(() => {
     void refreshAll();
   }, [refreshAll]);
+
+  // Tab 键切换 agent（参考 OpenCode：Tab 在 Build/Plan 之间循环）
+  // 无论焦点在哪都拦截，且 preventDefault 避免跳走焦点
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Tab") return;
+      e.preventDefault();
+      setCurrentAgent((prev) => {
+        const primary = agents.filter((a) => a.mode !== "subagent");
+        if (primary.length < 2) return prev;
+        const idx = primary.findIndex((a) => a.id === prev);
+        const next = idx < 0 || idx >= primary.length - 1 ? primary[0] : primary[idx + 1];
+        return next.id;
+      });
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [agents]);
 
   const selectSession = useCallback(
     async (id: string) => {
@@ -289,7 +315,7 @@ export default function App() {
 
       try {
         pushLog("➤ 提交任务…");
-        const { task_id } = await api.chat(sid!, prompt);
+        const { task_id } = await api.chat(sid!, prompt, currentAgent);
         taskIdRef.current = task_id;
         connect(task_id);
       } catch (e) {
@@ -299,7 +325,7 @@ export default function App() {
         setStreaming(null);
       }
     },
-    [handleSSEEvent, refreshSessions, pushLog]
+    [handleSSEEvent, refreshSessions, pushLog, currentAgent]
   );
 
   const stop = useCallback(() => {
@@ -323,19 +349,45 @@ export default function App() {
   );
 
   const openProject = useCallback(async () => {
-    if (!window.liteCode) return;
+    // Electron：走原生目录选择器；浏览器：弹出目录树选择器
+    if (window.liteCode) {
+      setError(null);
+      try {
+        const result = await window.liteCode.openProject();
+        if (!result.ok) {
+          if (result.error !== "cancelled") setError(result.error ?? "无法切换项目");
+          return;
+        }
+        window.location.reload();
+      } catch (e) {
+        setError((e as Error).message);
+      }
+      return;
+    }
+    setShowPicker(true);
+  }, []);
+
+  const selectProject = useCallback(async (path: string) => {
+    setShowPicker(false);
     setError(null);
     try {
-      const result = await window.liteCode.openProject();
-      if (!result.ok) {
-        if (result.error !== "cancelled") setError(result.error ?? "无法切换项目");
-        return;
+      const res = await api.setWorkspace(path);
+      if (res.ok) {
+        setStatus((prev) => prev ? { ...prev, workspace: res.workspace } : prev);
+        setSidebarTab("files");
+        setSuccess(`已切换到项目: ${res.workspace}`);
+        pushLog(`📂 已切换到项目: ${res.workspace}`);
+        setTimeout(() => setSuccess(null), 4000);
       }
-      window.location.reload();
     } catch (e) {
       setError((e as Error).message);
     }
-  }, []);
+  }, [pushLog]);
+
+  const activeSessionTitle = useMemo(
+    () => sessions.find((s) => s.session_id === activeSessionId)?.title ?? activeSessionId ?? "",
+    [sessions, activeSessionId]
+  );
 
   if (loading) {
     return (
@@ -371,10 +423,11 @@ export default function App() {
     <div className="app">
       <div className="drag-region" />
       <Sidebar
-        sessions={sessions}
-        activeSessionId={activeSessionId}
+        sessions={sessions}        activeSessionId={activeSessionId}
         workspace={status?.workspace ?? "…"}
         stats={stats}
+        tab={sidebarTab}
+        onTabChange={setSidebarTab}
         onSelectSession={(id) => void selectSession(id)}
         onNewSession={() => void newSession()}
         onDeleteSession={(id) => void deleteSession(id)}
@@ -384,6 +437,7 @@ export default function App() {
       <main className="main">
         <ChatView
           sessionId={activeSessionId ?? "（未选择）"}
+          sessionTitle={activeSessionTitle}
           messages={messages}
           streaming={streaming}
           running={running}
@@ -393,7 +447,15 @@ export default function App() {
           onStop={stop}
           onApprove={(a) => void approve(a)}
         />
-        <Composer disabled={running} onSend={(p) => void send(p)} />
+        <Composer
+          disabled={running}
+          running={running}
+          agents={agents}
+          currentAgent={currentAgent}
+          onSelectAgent={setCurrentAgent}
+          onSend={(p) => void send(p)}
+          onStop={stop}
+        />
         <button className="debug-toggle" onClick={() => setShowDebug(!showDebug)} title="调试日志">
           {showDebug ? "隐藏日志" : "日志"}
         </button>
@@ -411,6 +473,12 @@ export default function App() {
             <button onClick={() => setError(null)}>✕</button>
           </div>
         )}
+        {success && (
+          <div className="success-banner">
+            <span>✅ {success}</span>
+            <button onClick={() => setSuccess(null)}>✕</button>
+          </div>
+        )}
         {showDebug && (
           <div className="debug-panel">
             <div className="debug-title">调试日志</div>
@@ -424,10 +492,18 @@ export default function App() {
           </div>
         )}
       </main>
+      <ToolPanel messages={messages} streaming={streaming} running={running} />
       {showSettings && (
         <SettingsModal
           onClose={() => setShowSettings(false)}
           onSaved={() => { setShowSettings(false); void refreshAll(); }}
+        />
+      )}
+      {showPicker && (
+        <ProjectPicker
+          initialPath={status?.workspace ?? ""}
+          onClose={() => setShowPicker(false)}
+          onSelect={(p) => void selectProject(p)}
         />
       )}
     </div>

@@ -1,5 +1,6 @@
 import { useMemo, useRef, useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
+import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import type { Msg, ToolCardInfo } from "../types";
@@ -30,7 +31,7 @@ function ToolIcon({ name }: { name: string }) {
 function Markdown({ text }: { text: string }) {
   return (
     <div className="md">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeHighlight]}>
+      <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} rehypePlugins={[rehypeHighlight]}>
         {text}
       </ReactMarkdown>
     </div>
@@ -117,15 +118,7 @@ function StreamingTurn({
     <div className="msg-row assistant">
       <div className="assistant-avatar">⚡</div>
       <div className="bubble assistant-bubble streaming">
-        {cards.length > 0 && (
-          <div className="tool-cards">
-            {cards.map((c) => (
-              <ToolCard key={c.id} card={c} />
-            ))}
-          </div>
-        )}
-        {content && <Markdown text={content} />}
-        {!content && cards.length === 0 && (
+        {!content && (
           <div className="thinking">
             <span className="dot" />
             <span className="dot" />
@@ -133,6 +126,7 @@ function StreamingTurn({
             <span className="thinking-text">思考中…{turn ? ` (第 ${turn} 轮)` : ""}</span>
           </div>
         )}
+        {content && <Markdown text={content} />}
         {content && (
           <span className="cursor-bar">
             <span className="cursor" />
@@ -147,9 +141,10 @@ function StreamingTurn({
 
 interface RenderTurn {
   key: string;
-  assistant: Msg | null;
-  tools: { card: ToolCardInfo; result?: string }[];
   user?: Msg;
+  thinking: string; // 该任务下累积的所有中间推理文本
+  toolCount: number; // 该任务下的工具调用次数
+  assistant?: Msg; // 最终回答
 }
 
 function buildTurns(messages: Msg[]): RenderTurn[] {
@@ -159,37 +154,21 @@ function buildTurns(messages: Msg[]): RenderTurn[] {
   for (const m of messages) {
     if (m.role === "user") {
       current = null;
-      turns.push({ key: `u-${turns.length}`, assistant: null, tools: [], user: m });
+      turns.push({ key: `u-${turns.length}`, user: m, thinking: "", toolCount: 0 });
     } else if (m.role === "assistant") {
-      current = {
-        key: `a-${turns.length}`,
-        assistant: m,
-        tools: (m.tool_calls ?? []).map((tc, i) => ({
-          card: {
-            id: tc.id || `h-${i}`,
-            name: tc.function.name,
-            args: (() => {
-              try {
-                return JSON.parse(tc.function.arguments);
-              } catch {
-                return tc.function.arguments;
-              }
-            })(),
-            status: "done" as const,
-          },
-        })),
-      };
-      turns.push(current);
-    } else if (m.role === "tool" && current) {
-      const target = current.tools.find((t) => t.card.id === m.tool_call_id);
-      if (target) {
-        target.result = m.content ?? "";
-        const content = m.content ?? "";
-        if (content.startsWith("[Tool Execution Cancelled]") || content.startsWith("[Blocked")) {
-          target.card = { ...target.card, status: "cancelled" };
-        } else if (content.startsWith("[Execution Exception]") || content.startsWith("[Error]")) {
-          target.card = { ...target.card, status: "error" };
+      const hasTools = (m.tool_calls ?? []).length > 0;
+      if (hasTools) {
+        // 中间推理轮次：累积进当前任务的 thinking 块
+        if (!current) {
+          current = { key: `t-${turns.length}`, thinking: "", toolCount: 0 };
+          turns.push(current);
         }
+        current.toolCount += (m.tool_calls ?? []).length;
+        if (m.content) current.thinking += (current.thinking ? "\n\n" : "") + m.content;
+      } else {
+        // 最终回答：作为独立气泡
+        current = null;
+        turns.push({ key: `a-${turns.length}`, thinking: "", toolCount: 0, assistant: m });
       }
     }
   }
@@ -200,6 +179,7 @@ function buildTurns(messages: Msg[]): RenderTurn[] {
 
 export default function ChatView({
   sessionId,
+  sessionTitle,
   messages,
   streaming,
   running,
@@ -210,6 +190,7 @@ export default function ChatView({
   onApprove,
 }: {
   sessionId: string;
+  sessionTitle: string;
   messages: Msg[];
   streaming: { content: string; cards: ToolCardInfo[]; turn?: number } | null;
   running: boolean;
@@ -244,22 +225,27 @@ export default function ChatView({
           </div>
         ) : (
           <>
-            <div className="session-badge">会话 {sessionId}</div>
+            <div className="session-badge">{sessionTitle}</div>
             {turns.map((t) => (
               <div key={t.key}>
                 {t.user && <MessageBubble message={t.user} />}
-                {t.assistant && (
+                {t.thinking && (
+                  <details className="thinking-row" open={false}>
+                    <summary>
+                      思考过程
+                      {t.thinking.replace(/\n/g, " ").slice(0, 50)}
+                      {t.thinking.length > 50 ? "…" : ""}
+                    </summary>
+                    <div className="thinking-content">
+                      <Markdown text={t.thinking} />
+                    </div>
+                  </details>
+                )}
+                {t.assistant && t.assistant.content && (
                   <div className="msg-row assistant">
                     <div className="assistant-avatar">⚡</div>
                     <div className="bubble assistant-bubble">
-                      {t.tools.length > 0 && (
-                        <div className="tool-cards">
-                          {t.tools.map((x) => (
-                            <ToolCard key={x.card.id} card={{ ...x.card, result: x.result }} />
-                          ))}
-                        </div>
-                      )}
-                      {t.assistant.content && <Markdown text={t.assistant.content} />}
+                      <Markdown text={t.assistant.content} />
                     </div>
                   </div>
                 )}
@@ -293,14 +279,6 @@ export default function ChatView({
               </button>
             </div>
           </div>
-        </div>
-      )}
-
-      {running && (
-        <div className="stop-bar">
-          <button className="btn-stop" onClick={onStop}>
-            ■ 停止
-          </button>
         </div>
       )}
     </div>

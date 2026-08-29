@@ -184,4 +184,4 @@ async def execute_editor_tool(name: str, args: dict, cwd: str) -> str:
 3. 实现了带 **锚点自适应偏移** 的 Diff 应用器；
 4. 建立了 Patch 失败时的 **Agent 上下文自愈反馈链条**。
 
-下一次我们将开启 **第八课：标准 Model Context Protocol (MCP) 接入** —— 学习如何让我们的 Harness 接入 Anthropic 提出的标准 MCP 协议，无缝加载外部丰富的 Tool Server 生态！
+下一次我们将开启 **第10课：标准 Model Context Protocol (MCP) 接入** —— 学习如何让我们的 Harness 接入 Anthropic 提出的标准 MCP 协议，无缝加载外部丰富的 Tool Server 生态！

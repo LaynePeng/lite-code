@@ -14,7 +14,7 @@ import httpx
 
 from ..core.events import TypedEventBus
 from ..core.types import Message, ToolCall, ToolDefinition
-from .base import BaseLLMAdapter, LLMError
+from .base import BaseLLMAdapter, LLMError, decode_utf8_incremental
 
 logger = logging.getLogger("litecode.llm")
 
@@ -32,6 +32,7 @@ class AnthropicAdapter(BaseLLMAdapter):
         temperature: float = 0.2,
         max_tokens: int = 8192,
         provider_id: str = "anthropic",
+        enable_cache: bool = True,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -40,6 +41,7 @@ class AnthropicAdapter(BaseLLMAdapter):
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.provider_id = provider_id
+        self.enable_cache = enable_cache
         self._client: Optional[httpx.AsyncClient] = None
 
     def _get_client(self) -> httpx.AsyncClient:
@@ -97,6 +99,7 @@ class AnthropicAdapter(BaseLLMAdapter):
         messages: List[Message],
         tools: List[ToolDefinition],
         system: Optional[str],
+        enable_cache: bool = True,
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
             "model": self.model,
@@ -106,7 +109,13 @@ class AnthropicAdapter(BaseLLMAdapter):
             "messages": self._to_anthropic_messages(messages),
         }
         if system:
-            payload["system"] = system
+            if enable_cache:
+                payload["system"] = [
+                    {"type": "text", "text": system,
+                     "cache_control": {"type": "ephemeral"}}
+                ]
+            else:
+                payload["system"] = [{"type": "text", "text": system}]
         if tools:
             payload["tools"] = [
                 {
@@ -116,6 +125,8 @@ class AnthropicAdapter(BaseLLMAdapter):
                 }
                 for t in tools
             ]
+            if enable_cache and payload["tools"]:
+                payload["tools"][-1]["cache_control"] = {"type": "ephemeral"}
         return payload
 
     async def chat_stream(
@@ -131,7 +142,7 @@ class AnthropicAdapter(BaseLLMAdapter):
         if messages and messages[0].role == "system":
             system = messages[0].content
 
-        payload = self._build_payload(messages, tools, system)
+        payload = self._build_payload(messages, tools, system, enable_cache=self.enable_cache)
 
         try:
             async with client.stream(
@@ -156,9 +167,11 @@ class AnthropicAdapter(BaseLLMAdapter):
         tool_calls: List[ToolCall] = []
         current_tool: Optional[ToolCall] = None
         buffer = ""
+        byte_buffer = b""
 
         async for chunk in response.aiter_bytes():
-            buffer += chunk.decode("utf-8", errors="replace")
+            text, byte_buffer = decode_utf8_incremental(byte_buffer, chunk)
+            buffer += text
             lines = buffer.split("\n")
             buffer = lines.pop()
 

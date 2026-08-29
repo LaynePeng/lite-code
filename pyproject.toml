@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lite-code"
-version = "0.1.0"
+version = "0.2.0rc0"
 description = "Lite Code - 手写的 Code 开发 Agent 桌面工具 (基于《AI Code Agent 手把手》课程 12-16 课)"
 requires-python = ">=3.11"
 dependencies = [

@@ -286,4 +286,4 @@ class AgentApp:
 3. 编写了**17 个核心工具**，覆盖文件读写、代码搜索、AST 分析、精确编辑、Shell 执行、Git 操作、代码审查；
 4. 通过 `AgentApp` 装配层将所有模块组合在一起。
 
-下一次我们将开启 **第十四课：AgentLoop 主循环 (`lite-code` 实战第三篇)** —— 实现驱动整个 ReAct 循环的核心状态机，并把第 2-3 课的所有增强机制（JSON 自愈、死循环检测、Token 预算、动态 System Prompt）全部集成！
+下一次我们将开启 **第17课：AgentLoop 主循环 (`lite-code` 实战第三篇)** —— 实现驱动整个 ReAct 循环的核心状态机，并把第 2-5 课的所有增强机制（JSON 自愈、死循环检测、Token 预算、动态 System Prompt、缓存感知截断）全部集成！

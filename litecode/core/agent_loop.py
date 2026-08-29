@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -52,6 +53,8 @@ class AgentLoop:
         self.state = AgentStateTracker()
         self.abort_event: Optional[asyncio.Event] = None
         self.workspace: str = "."
+        # 截断落盘目录（第4/5课：超限工具输出保存到磁盘，上下文只放句柄）
+        self.truncation_dir: Optional[str] = None
 
     def request_stop(self) -> None:
         if self.abort_event:
@@ -212,7 +215,7 @@ class AgentLoop:
                 raw = f"[Tool Timeout]: 工具 {tool_name} 执行超过 {self.tool_timeout}s 被终止。"
             except Exception as exc:  # 注册表内已捕获，这里兜底
                 raw = f"[Execution Exception]: {exc}"
-            result_text = truncate_tool_output(raw)
+            result_text = truncate_tool_output(raw, output_dir=self.truncation_dir).content
             stats["tool_calls"] += 1
 
         duration_ms = int((time.time() - start_time) * 1000)

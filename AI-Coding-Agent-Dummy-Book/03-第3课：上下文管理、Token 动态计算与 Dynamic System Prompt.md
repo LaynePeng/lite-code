@@ -225,4 +225,4 @@ async def run_context_aware_agent(user_prompt: str, tools, tool_executor):
 2. 实现了 JSON 自愈、死循环 Hash 预警与工具输出截断；
 3. 掌握了 Token 估算、保护 `assistant-tool` 完整性的上下文裁剪算法，以及动态注入环境信息的 System Prompt。
 
-下一次我们将进入 **模块二：代码感知、检索与 AST 分析 (Codebase Understanding)** —— 学习如何让 Agent 高效感知几十万行的真实代码库！
+下一次我们将进入 **第6课：代码感知、Ripgrep 高效搜索与代码库结构构建** —— 学习如何让 Agent 高效感知几十万行的真实代码库！

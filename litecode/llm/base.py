@@ -7,6 +7,16 @@ from ..core.events import TypedEventBus
 from ..core.types import Message, ToolCall, ToolDefinition
 
 
+def decode_utf8_incremental(buffer: bytes, chunk: bytes) -> Tuple[str, bytes]:
+    data = buffer + chunk
+    try:
+        return data.decode("utf-8"), b""
+    except UnicodeDecodeError:
+        keep = min(3, len(data))
+        text = data[:-keep].decode("utf-8", errors="replace")
+        return text, data[-keep:]
+
+
 class LLMError(Exception):
     pass
 

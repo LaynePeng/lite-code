@@ -21,7 +21,7 @@ import uvicorn
 from .app import AgentApp
 from .server.app import create_app
 
-VERSION = "0.1.0"
+VERSION = "0.2.0rc0"
 
 
 def _parse_args(argv: list) -> argparse.Namespace:

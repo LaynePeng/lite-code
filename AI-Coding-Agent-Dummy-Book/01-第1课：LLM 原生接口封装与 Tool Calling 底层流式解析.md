@@ -143,6 +143,48 @@ class LLMProvider:
                             }
 ```
 
+#### 2.5 多字节 UTF-8 增量解码（中文乱码的根因）
+
+上面的 `buffer += chunk.decode("utf-8", errors="replace")` 在中文回复下**必踩坑**：`chunk` 是网络层切分的原始字节，可能把一个多字节字符**拦腰截断**。
+
+UTF-8 中文字符通常是 3 字节（如 `看` = `E7 9C 8B`）。当 chunk 边界恰好在字符中间，比如第一个 chunk 只带 `E7`、第二个才带 `9C 8B`：
+
+```python
+chunk1 = b'\xe7'                    # 看 的第一个字节
+text1 = chunk1.decode("utf-8", errors="replace")   # → "�"  ← 乱码诞生
+chunk2 = b'\x9c\x8b'
+text2 = chunk2.decode("utf-8", errors="replace")   # → "��" ← 又两个乱码
+```
+
+`errors="replace"` 会把残缺字节替换成 U+FFFD（``），导致 "先看根" 变成 "先�根"。
+
+**正确做法**：做**字节级增量解码**——保留末尾最多 3 字节（UTF-8 单字符最长 4 字节，被截断时最多剩 3），等下一个 chunk 到了再拼起来解码：
+
+```python
+def decode_utf8_incremental(buffer: bytes, chunk: bytes):
+    """增量 UTF-8 解码：避免多字节字符在 chunk 边界被截断。"""
+    data = buffer + chunk
+    try:
+        return data.decode("utf-8"), b""   # 全部是完整字符
+    except UnicodeDecodeError:
+        # 末尾可能是不完整的多字节字符，保留至多 3 字节到下一轮
+        keep = min(3, len(data))
+        text = data[:-keep].decode("utf-8", errors="replace")
+        return text, data[-keep:]
+
+# 在 SSE 解析中配合行缓冲使用
+byte_buffer = b""
+buffer = ""
+async for chunk in response.aiter_bytes():
+    text, byte_buffer = decode_utf8_incremental(byte_buffer, chunk)
+    buffer += text
+    lines = buffer.split("\n")
+    buffer = lines.pop()
+    # ... 后续按行解析 SSE 事件
+```
+
+这个模式对**任何**多字节编码的流式协议都通用（中文、emoji、韩文等），也值得抽取为公共工具函数放在适配器基类中，让所有供应商复用——`lite-code` 正是这样做的（`litecode/llm/base.py` 中的 `decode_utf8_incremental`）。
+
 #### 3. 编写最简 Agent 主循环 (Agent Loop)
 
 有了底层流式拼接器后，Agent Harness 的核心任务就是维护一个 `while` 控制循环：**Send Message → Parse Tool Calls → Execute Native Tool → Append Result → Repeat**。

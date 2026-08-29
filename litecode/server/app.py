@@ -19,7 +19,7 @@ from .tasks import TaskManager
 
 logger = logging.getLogger("litecode.server")
 
-VERSION = "0.1.0"
+VERSION = "0.2.0rc0"
 
 
 # ---------------------------------------------------------------- 请求模型
@@ -29,6 +29,7 @@ class ChatRequest(BaseModel):
     session_id: str
     prompt: str
     task_id: Optional[str] = None
+    agent_id: Optional[str] = None
 
 
 class StopRequest(BaseModel):
@@ -50,6 +51,10 @@ class SecurityUpdateRequest(BaseModel):
 
 class ConfigUpdateRequest(BaseModel):
     updates: Dict[str, Any]
+
+
+class WorkspaceUpdateRequest(BaseModel):
+    path: str
 
 
 class LLMConfigRequest(BaseModel):
@@ -251,6 +256,71 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
         fs = FileSystemTools(app.workspace)
         return {"workspace": app.workspace, "tree": fs._file_tree({"maxDepth": depth})}
 
+    # ------------------------------------------------------------ Agent 配置
+
+    @fast_app.get("/api/agents")
+    async def list_agents(request: Request):
+        _check_auth(request)
+        return app.agents_meta()
+
+    # ------------------------------------------------------------ 工作区
+
+    @fast_app.post("/api/workspace")
+    async def set_workspace(payload: WorkspaceUpdateRequest, request: Request):
+        _check_auth(request)
+        import os as _os
+        from ..core.session_store import SessionStore
+        path = _os.path.abspath(_os.path.expanduser(payload.path))
+        if not _os.path.isdir(path):
+            raise HTTPException(status_code=400, detail=f"目录不存在: {path}")
+        app.workspace = path
+        app.session_store = SessionStore(_os.path.join(app.config_dir, "sessions"))
+        return {"ok": True, "workspace": app.workspace}
+
+    @fast_app.get("/api/fs/list")
+    async def fs_list(path: str = "", request: Request = None):
+        """浏览任意目录（用于「打开项目」目录树选择）。"""
+        if request:
+            _check_auth(request)
+        import os as _os
+
+        base = _os.path.expanduser(path) if path else (app.workspace or _os.path.expanduser("~"))
+        base = _os.path.abspath(base)
+        if not _os.path.isdir(base):
+            raise HTTPException(status_code=400, detail=f"目录不存在: {base}")
+
+        dirs, files = [], []
+        try:
+            entries = _os.listdir(base)
+        except OSError as exc:
+            raise HTTPException(status_code=400, detail=f"无法读取: {exc}")
+
+        for name in entries:
+            full = _os.path.join(base, name)
+            try:
+                if _os.path.isdir(full):
+                    dirs.append(name)
+                else:
+                    files.append(name)
+            except OSError:
+                continue
+
+        def key(n: str):
+            return n.lower()
+
+        dirs.sort(key=key)
+        files.sort(key=key)
+        cap = 500
+        return {
+            "path": base,
+            "parent": _os.path.dirname(base) if base != _os.path.sep else None,
+            "home": _os.path.expanduser("~"),
+            "is_workspace": base == app.workspace,
+            "dirs": dirs[:cap],
+            "files": files[:cap],
+            "truncated": len(dirs) + len(files) > cap,
+        }
+
     # ------------------------------------------------------------ 聊天任务
 
     @fast_app.post("/api/chat")
@@ -263,7 +333,7 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
         if not prompt:
             raise HTTPException(status_code=400, detail="prompt 不能为空")
 
-        handle = tasks.start(session_id, prompt)
+        handle = tasks.start(session_id, prompt, agent_id=payload.agent_id)
         return {"task_id": handle.task_id}
 
     @fast_app.get("/api/tasks/{task_id}/events")

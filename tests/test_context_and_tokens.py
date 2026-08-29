@@ -1,4 +1,6 @@
 """Token 计数 / 上下文裁剪 / JSON 容错 / 截断器单元测试（对应第2/3课增强）。"""
+import os
+
 from litecode.core.context_manager import ContextManager
 from litecode.core.json_repair import safe_json_parse
 from litecode.core.token_counter import TokenCounter
@@ -27,12 +29,38 @@ def test_safe_json_parse_failure_reports_error():
 
 
 def test_truncate_tool_output():
-    out = "x" * 10000
-    truncated = truncate_tool_output(out, max_characters=1000)
-    assert len(truncated) < 1000 + 200
-    assert truncated.startswith("x") and truncated.rstrip().endswith("x")
-    assert "截断" in truncated
-    assert truncate_tool_output("short", 1000) == "short"
+    # 行数未超限 → 不截断
+    short = "hello\nworld"
+    result = truncate_tool_output(short, max_lines=100, max_bytes=10**6)
+    assert not result.truncated
+    assert result.content == short
+
+    # 超行数 → 截断，保留头部
+    out = "\n".join(f"line_{i}" for i in range(5000))
+    result = truncate_tool_output(out, max_lines=50, max_bytes=10**6)
+    assert result.truncated
+    assert result.content.startswith("line_0")
+    assert "lines truncated" in result.content
+    assert result.output_path is None  # 无 output_dir 不落盘
+
+    # 超字节 → 截断
+    result = truncate_tool_output("x" * 10000, max_lines=10**6, max_bytes=1000)
+    assert result.truncated
+    assert "bytes truncated" in result.content
+
+    # 短文本不截断
+    result = truncate_tool_output("hello")
+    assert not result.truncated
+
+    # 带 output_dir 落盘
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        result = truncate_tool_output("\n".join(f"line_{i}" for i in range(5000)),
+                                      max_lines=50, max_bytes=10**6, output_dir=tmp)
+        assert result.truncated
+        assert result.output_path is not None
+        assert os.path.exists(result.output_path)
+        assert os.path.getsize(result.output_path) > 0
 
 
 def _make_chain() -> list:

@@ -75,13 +75,15 @@ class TaskManager:
         self.app = app
         self.tasks: Dict[str, TaskHandle] = {}
 
-    def start(self, session_id: str, prompt: str) -> TaskHandle:
+    def start(self, session_id: str, prompt: str, agent_id: Optional[str] = None) -> TaskHandle:
         task_id = uuid.uuid4().hex[:12]
         kernel = self.app.create_kernel(session_id)
-        registry = self.app.build_registry()
-        loop = self.app.create_loop(kernel, registry)
+        # 按 Agent 配置裁剪工具集（build 全量 / plan 只读 / 自定义）
+        registry = self.app.create_agent_registry(agent_id or "build")
+        loop = self.app.create_loop(kernel, registry, agent_id=agent_id)
 
         handle = TaskHandle(task_id, kernel, registry, loop, self.app)
+        handle.agent_id = agent_id or "build"
         self.tasks[task_id] = handle
         asyncio.get_event_loop().create_task(handle.run(prompt))
         return handle

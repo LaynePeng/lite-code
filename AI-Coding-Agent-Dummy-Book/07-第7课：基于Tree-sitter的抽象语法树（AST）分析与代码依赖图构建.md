@@ -204,4 +204,4 @@ async def execute_ast_tool(name: str, args: dict, cwd: str) -> str:
 
 至此，**模块二：代码感知、检索与 AST 分析** 已全部完结！
 
-下一次我们将开启 **模块三：环境隔离、环境交互与安全的 Tool Protocol** —— 学习 **第六课：基于进程隔离的代码沙箱环境与路径安全隔离 (Execution Sandbox)**！
+下一次我们将开启 **第8课：沙箱隔离技术（Execution Sandbox）** —— 学习基于进程隔离的代码沙箱环境与路径安全隔离！
