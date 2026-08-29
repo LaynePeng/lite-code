@@ -80,6 +80,11 @@ def _mask_key(key: str) -> str:
     return f"{key[:4]}…{key[-4:]}"
 
 
+def _is_masked_key(key: str) -> bool:
+    """判断是否是脱敏 key（含省略号或全星号），不能作为真实 key 使用。"""
+    return "…" in key or key == "****"
+
+
 class LLMRegistry:
     """管理多供应商配置并构建适配器。
 
@@ -128,17 +133,21 @@ class LLMRegistry:
         for pid, settings in (config.get("providers") or {}).items():
             if pid not in self.providers:
                 continue
+            # 跳过脱敏 / 空的 api_key，防止用「sk-c…1f74」这种脱敏值覆盖真实 key
+            api_key = settings.get("api_key")
+            if api_key is None or api_key == "" or _is_masked_key(api_key):
+                settings = {k: v for k, v in settings.items() if k != "api_key"}
             merged = {**self.providers[pid], **{k: v for k, v in settings.items() if v is not None}}
             self.providers[pid] = merged
         # 环境变量兜底（配置为空时）
         self._apply_env_defaults()
 
     def to_config(self) -> Dict[str, Any]:
-        """导出配置（api_key 脱敏）。"""
+        """导出配置（api_key 不回写，仅保留 has_key 标记，避免脱敏值落盘）。"""
         providers = {}
         for pid, p in self.providers.items():
             providers[pid] = {
-                "api_key": _mask_key(p.get("api_key", "")),
+                "api_key": "",
                 "has_key": bool(p.get("api_key")),
                 "base_url": p.get("base_url", ""),
                 "model": p.get("model", ""),

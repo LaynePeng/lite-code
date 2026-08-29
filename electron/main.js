@@ -16,6 +16,7 @@ const CLIENT_CONFIG = path.join(os.homedir(), ".lite-code", "client.json");
 let mainWindow = null;
 let coreChild = null; // 当前本地后端进程
 let coreMode = "local"; // "local" | "remote" | "dev"
+let coreUrl = ""; // 当前后端 HTTP 地址（热切换工作区用）
 
 function loadClientConfig() {
   try {
@@ -150,7 +151,8 @@ function spawnLocalCore(workspace) {
         clearTimeout(timer);
         const port = parseInt(m[1], 10);
         coreChild = child;
-        resolve({ child, url: `http://127.0.0.1:${port}` });
+        coreUrl = `http://127.0.0.1:${port}`;
+        resolve({ child, url: coreUrl });
       }
     };
 
@@ -184,6 +186,26 @@ function injectRemoteToken(token) {
 
 // ------------------------------------------------------------ 打开项目
 
+// 热切换工作区：调用当前后端的 /api/workspace，进程不重启（快）
+async function hotSwitchWorkspace(workspace) {
+  if (!coreUrl) return false;
+  try {
+    const resp = await fetch(`${coreUrl}/api/workspace`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: workspace }),
+    });
+    if (!resp.ok) return false;
+    const data = await resp.json();
+    if (!data.ok) return false;
+    console.log(`[lite-code] 热切换工作区 → ${workspace}`);
+    return true;
+  } catch (err) {
+    console.warn("[lite-code] 热切换失败，回退重启后端:", err.message);
+    return false;
+  }
+}
+
 async function handleOpenProject() {
   // 仅本地 Core 形态支持切换工作区
   if (coreMode !== "local") {
@@ -200,13 +222,19 @@ async function handleOpenProject() {
   }
   const workspace = result.filePaths[0];
 
+  // 优先热切换（后端不重启，秒开）；失败才回退到重启进程
+  if (await hotSwitchWorkspace(workspace)) {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.loadURL(coreUrl);
+    return { ok: true, url: coreUrl, workspace };
+  }
+
   stopCore();
   // 切换工作区时先显示加载页
   const loadingUrl = `file://${path.join(__dirname, "loading.html")}`;
   if (mainWindow && !mainWindow.isDestroyed()) mainWindow.loadURL(loadingUrl);
   try {
     const { url } = await spawnLocalCore(workspace);
-    console.log(`[lite-code] 已切换工作区 → ${workspace} (${url})`);
+    console.log(`[lite-code] 已重启后端切换工作区 → ${workspace} (${url})`);
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.loadURL(url);
     return { ok: true, url, workspace };
   } catch (err) {
