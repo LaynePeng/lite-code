@@ -1,4 +1,4 @@
-从本课开始，我们将进入**模块五：手写实战**。我们将前面 11 课学到的所有理论与模块组合起来，从零搭建一个名为 `lite-code` 的轻量级工业级 Code Agent 框架。
+从本课开始，我们将进入**模块四：手写实战**。我们把前面 14 课学到的所有理论与模块组合起来，从零搭建一个名为 `lite-code` 的完整 Code Agent 桌面应用。
 
 本课目标是构建 `lite-code` 的核心内核（Core Engine）：建立清晰的项目文件目录架构，并手写 **`TypedEventBus` 异步事件总线**、**`Pipeline` 洋葱模型中间件管道**、**`Kernel` 插件内核** 以及 **`SessionStore` 会话持久化底层**。
 
@@ -23,15 +23,15 @@ lite-code/
 │   │   ├── json_repair.py      # JSON 容错（第2课）
 │   │   ├── truncator.py        # 输出截断（第2课）
 │   │   └── agent_loop.py       # AgentLoop 主循环（第14课）
-│   ├── llm/                    # LLM 多供应商适配层（第13课）
+│   ├── llm/                    # LLM 多供应商适配层（第16课）
 │   ├── tools/                  # 工具注册表与各工具
-│   ├── security/               # 安全沙箱（第15课）
-│   ├── server/                 # FastAPI 服务 + SSE（第16课）
-│   ├── orchestration/          # 子 Agent 编排（第11课）
+│   ├── security/               # 安全沙箱（第18课）
+│   ├── server/                 # FastAPI 服务 + SSE（第19课）
+│   ├── orchestration/          # 子 Agent 编排（第13课）
 │   ├── app.py                  # 装配层
 │   └── cli.py                  # 启动入口
-├── web/                        # React 前端（第16课）
-└── electron/                   # Electron 桌面外壳（第16课）
+├── web/                        # React 前端（第19课）
+└── electron/                   # Electron 桌面外壳（第19课）
 ```
 
 #### 2. 定义核心类型 (`litecode/core/types.py`)
@@ -91,7 +91,7 @@ class Context:
 **关键点**：
 1. `ToolCall.arguments` 是模型返回的**逐字增长的 JSON 字符串碎片**，绝不能在中途 `json.loads`，必须等整个 Turn 的流接收完毕再解析（第1课结论）；
 2. `Message.to_dict()` 保证序列化后与 OpenAI/DeepSeek 接口格式完全一致；
-3. `Context.services` 是**依赖注入容器**（第9课 Cordis 思想），插件可在内核上挂载自己的服务。
+3. `Context.services` 是**依赖注入容器**（第 11 课 Cordis 思想），插件可在内核上挂载自己的服务。
 
 #### 3. 手写强类型异步事件总线 (`litecode/core/events.py`)
 
@@ -139,11 +139,11 @@ class TypedEventBus:
                     "[EventBus] Listener error on event %s", event)
 ```
 
-**增强点**：相比课程第12课的同步 EventEmitter，这里用 asyncio 实现，`emit` 会 **await 每个异步监听器**。这保证了「事件→SSE 推送→UI 渲染」的严格顺序，是后面 Web 端流式输出的基础。
+**增强点**：相比课程第 11 课的同步 EventEmitter，这里用 asyncio 实现，`emit` 会 **await 每个异步监听器**。这保证了「事件→SSE 推送→UI 渲染」的严格顺序，是后面 Web 端流式输出的基础。
 
 #### 4. 手写洋葱模型中间件管道 (`litecode/core/pipeline.py`)
 
-对应课程第10课 `PipelineManager`，支持同步/异步中间件，`next()` 可携带更新后的数据继续传递：
+对应课程第 12 课的 `Pipeline` 管道，支持同步/异步中间件，`next()` 可携带更新后的数据继续传递：
 
 ```python
 # litecode/core/pipeline.py
@@ -179,11 +179,11 @@ class Pipeline:
         return await dispatch(0, initial_data)
 ```
 
-中间件签名固定为 `(ctx, data, next)`，`next(data)` 向下传递，返回 `data` 给上层——这就是第10课讲的**洋葱模型**：请求进入 → 逐层预处理 → 核心处理 → 逐层返回修饰。
+中间件签名固定为 `(ctx, data, next)`，`next(data)` 向下传递，返回 `data` 给上层——这就是第 12 课讲的**洋葱模型**：请求进入 → 逐层预处理 → 核心处理 → 逐层返回修饰。
 
 #### 5. 手写插件内核 (`litecode/core/kernel.py`)
 
-内核只负责维持 Context、事件总线与三阶段拦截管道，业务能力全部外包给插件（第9课「空间解耦」）：
+内核只负责维持 Context、事件总线与三阶段拦截管道，业务能力全部外包给插件（第 11 课「空间解耦」）：
 
 ```python
 # litecode/core/kernel.py
@@ -274,7 +274,7 @@ class SessionStore:
     def delete(self, session_id) -> bool: ...
 ```
 
-**增强点**：相比课程第12课，这里加了**原子写盘**（`os.replace`），并支持 `list()`（用于 Web UI 的会话列表）与 `delete()`。
+**增强点**：这里加了**原子写盘**（`os.replace`），并支持 `list()`（用于 Web UI 的会话列表）与 `delete()`。
 
 #### 7. 工程初始化与验证
 
@@ -290,7 +290,7 @@ python3 -m venv .venv
 # pyproject.toml（节选）
 [project]
 name = "lite-code"
-version = "0.1.0"
+
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27",
@@ -317,7 +317,7 @@ print(k.ctx.messages[0].to_dict())   # {'role': 'user', 'content': 'hello'}
 
 #### 本课小结
 
-在第十二课中，我们为 `lite-code` 搭建了坚实的 Python Core 内核：
+在本课中，我们为 `lite-code` 搭建了坚实的 Python Core 内核：
 
 1. 建立了标准的 Python 项目目录结构与强类型接口定义（`types.py`）；
 2. 实现了 asyncio 泛型安全的 **`TypedEventBus`**（异步监听器可被 await）；

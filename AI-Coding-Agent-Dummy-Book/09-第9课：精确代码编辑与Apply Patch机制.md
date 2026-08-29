@@ -177,7 +177,7 @@ async def execute_editor_tool(name: str, args: dict, cwd: str) -> str:
 
 ### 本课小结
 
-在第七课中，我们补齐了 Agent 在真实项目中落地改写代码的核心拼图：
+在本课中，我们补齐了 Agent 在大型代码库中精确改写代码的核心拼图：
 
 1. 深入理解了 **Search-and-Replace Block** 与 **Unified Diff** 的各自适用场景；
 2. 实现了包含 **缩进保持** 与 **模糊行匹配** 的块替换器；

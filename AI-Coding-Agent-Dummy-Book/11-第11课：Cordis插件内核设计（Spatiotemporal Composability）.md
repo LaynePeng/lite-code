@@ -1,4 +1,4 @@
-在模块二与模块三中，我们为 Harness 编写了 AST 分析、沙箱运行、代码 Patch 和 MCP 扩展等一系列强大的底层能力。
+在模块二与前面的课程中，我们为 Harness 编写了 AST 分析、沙箱运行、代码 Patch 和 MCP 扩展等一系列强大的底层能力。
 
 然而，随着系统功能不断增加，如果继续把所有逻辑硬编码在主循环 `run_agent()` 里，代码很快就会变得不可维护。
 
@@ -191,7 +191,7 @@ print("Recorded steps count:", len(trajectory["get_history"]()))
 
 ### 本课小结
 
-在第九课中，我们掌握了微内核 Harness 的精髓设计：
+在本课中，我们掌握了微内核 Harness 的精髓设计：
 
 1. 理解了 **空间解耦（内核只留管道，业务功能全部外包给插件）** 的好处；
 2. 实现了基于 **Cordis 依赖注入思想** 的 Context 与 Service 机制；

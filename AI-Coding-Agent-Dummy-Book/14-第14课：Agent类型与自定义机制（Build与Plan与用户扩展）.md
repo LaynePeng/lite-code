@@ -1,10 +1,10 @@
-在前面十课中，我们构建的 Harness 始终是"单 Agent 循环"：一个 System Prompt、一套工具、一个循环。但现实中的 Code Agent 需要**面向不同场景、不同角色**工作。OpenCode 的做法非常值得参考：
+在前面的课程中，我们构建的 Harness 始终是"单 Agent 循环"：一个 System Prompt、一套工具、一个循环。但现实中的 Code Agent 需要**面向不同场景、不同角色**工作。OpenCode 的做法非常值得参考：
 
 - **Build**（构建）：默认 Agent，拥有全部工具，负责实际开发；
 - **Plan**（规划）：只读 Agent，禁止改文件与执行命令，只做分析与出方案；
 - **Subagent**（子 Agent）：主 Agent 通过 Task 工具按需派生，上下文隔离。
 
-本课我们将把 lite-code 从"单 Agent"升级为"**多 Agent + 可自定义**"架构，回答两个问题：
+本课我们将把 Harness 从"单 Agent"升级为"**多 Agent + 可自定义**"架构，回答两个问题：
 1. 怎么内置 **Build/Plan 两种默认 Agent**？
 2. 怎么让**用户自己添加 Agent**（改 System Prompt、裁工具、配权限）？
 
@@ -106,7 +106,7 @@ class AgentRegistry:
     def list_subagents(self) -> List[str]: ...
 
     def load_dir(self, agents_dir: str) -> None:
-        """扫描 .lite-code/agents/*.json 加载用户自定义 agent。"""
+        """扫描 .harness/agents/*.json 加载用户自定义 agent。"""
         for fname in os.listdir(agents_dir):
             if not fname.endswith(".json"):
                 continue
@@ -117,7 +117,7 @@ class AgentRegistry:
 
 #### 5. 用户如何自定义 Agent？
 
-**方式一：配置文件**（`.lite-code/config.json` 的 `agents` 段）：
+**方式一：配置文件**（`.harness/config.json` 的 `agents` 段）：
 
 ```json
 {
@@ -133,7 +133,7 @@ class AgentRegistry:
 }
 ```
 
-**方式二：agents 目录**（`.lite-code/agents/reviewer.json`），文件名即 Agent ID：
+**方式二：agents 目录**（`.harness/agents/reviewer.json`），文件名即 Agent ID：
 
 ```json
 {
@@ -144,7 +144,7 @@ class AgentRegistry:
 }
 ```
 
-**方式三（对齐 OpenCode）：Markdown 文件**（`.lite-code/agents/reviewer.md`）
+**方式三（对齐 OpenCode）：Markdown 文件**（`.harness/agents/reviewer.md`）
 
 完全参考 OpenCode 的 markdown agent 设计——YAML frontmatter 放配置，正文放 system prompt，文件名即 agent id：
 
@@ -235,7 +235,7 @@ async def run_task(self, task_description, role="general", ...):
         ...
 ```
 
-这样，用户只需要写一个 JSON 文件，就能为 lite-code 添加一个全新的 Agent 角色。
+这样，用户只需要写一个 JSON 文件，就能为 Harness 添加一个全新的 Agent 角色。
 
 #### 本课小结
 
@@ -245,4 +245,4 @@ async def run_task(self, task_description, role="general", ...):
 4. 学会了 **permissions 双保险**（工具白名单 + 权限 deny）；
 5. 让 `SubAgentRunner` 支持用户自定义的 subagent 角色。
 
-至此，**模块三：核心架构** 全部完结。下一步我们将进入 **模块四：手写实战**，从零构建完整的 lite-code 桌面应用。在实战第一篇（第 15 课）中，我们会把 AgentProfile、缓存机制、Token 节省策略全部落进真实代码。
+至此，**模块三：核心架构** 全部完结。下一步我们将进入 **模块四：手写实战**，从零构建完整的桌面 Code Agent 应用。在实战第一篇（第 15 课）中，我们会把前 14 课学到的全部机制整合进一个可运行的工程。

@@ -1,4 +1,4 @@
-在前面十课中，我们构建的 Harness 都是围绕"单 Agent 循环"展开的。但在面对大型工程任务（例如"给整个项目编写单元测试"、"重构所有模块的 API"或"全盘定位安全漏洞"）时，单 Agent 会暴露出极大的瓶颈：
+在前面的课程中，我们构建的 Harness 都是围绕"单 Agent 循环"展开的。但在面对大型工程任务（例如"给整个项目编写单元测试"、"重构所有模块的 API"或"全盘定位安全漏洞"）时，单 Agent 会暴露出极大的瓶颈：
 
 1. **上下文爆满**：在一个对话中排查 10 个文件，上下文 Token 会迅速触顶并引发性能下降；
 2. **任务注意力分散**：Agent 在执行复杂多步骤时容易"走神"，遗忘最初的目标；
@@ -162,15 +162,13 @@ async def main():
 
 ### 本课小结
 
-在第十一课中，我们掌握了复杂 Agent 架构设计的高级模式：
+在本课中，我们掌握了复杂 Agent 架构设计的高级模式：
 
 1. 理解了 **Sub-agent Orchestration（子 Agent 编排）** 在处理大工程任务时的优势与上下文隔离原则；
-2. 实现了基于 **内核派生的 SubAgentRunner** 运行逻辑（对应 `litecode/orchestration/sub_agent.py`）；
+2. 实现了基于 **内核派生的 SubAgentRunner** 运行逻辑；
 3. 实现了 **工具集动态裁剪（Role-based Capability Control）** 与 **Token/事件归集管道**；
 4. 将派生能力封装为 `spawn_sub_agent` Tool，使 Agent 具备了"自我分发与并行化工作"的能力。
 
-至此，**模块四：DeepSeek Harness 核心架构解析** 已全部完结！
+至此，**模块三：核心架构** 的前半部分（微内核与子 Agent 编排）已全部完结！
 
-下一步我们将开启 **第14课：Agent 类型与自定义机制（Build/Plan 与用户扩展）** —— 参考 OpenCode，为 lite-code 内置 Build/Plan 两种默认 Agent，并开放用户自定义 Agent 的配置通道！
-
-此后进入 **模块四：手写实战 —— 从零构建 Mini Code Agent (`lite-code`)**！在未来的第 15 至 19 课中，我们将把前面所有 14 课学到的核心模块（含缓存机制、Token 节省、Agent 机制）整合为一个可以实际运行的完整开源项目（Python 内核 + FastAPI 服务 + React 前端 + Electron 桌面应用）！
+下一步我们将开启 **第14课：Agent 类型与自定义机制（Build/Plan 与用户扩展）** —— 参考 OpenCode，为 Harness 内置 Build/Plan 两种默认 Agent，并开放用户自定义 Agent 的配置通道！

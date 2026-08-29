@@ -1,4 +1,4 @@
-在上课中，我们构建了 `lite-code` 的核心内核（`Kernel`、`TypedEventBus`、`Pipeline` 和 `SessionStore`）。
+在上一课中，我们构建了 `lite-code` 的核心内核（`Kernel`、`TypedEventBus`、`Pipeline` 和 `SessionStore`）。
 
 本课我们将手写两个关键模块并将其装载入 Kernel：
 
@@ -24,7 +24,7 @@
    +-----------------+  +---------+  +------------------+
 ```
 
-所有适配器实现同一套接口：`chat_stream(messages, tools) -> (content, tool_calls)`，流式输出通过 `TypedEventBus` 的 `"llm:stream"` 事件实时广播。
+所有适配器实现同一套接口：`chat_stream(messages, tools) -> (content, tool_calls, usage)`，流式输出通过 `TypedEventBus` 的 `"llm:stream"` 事件实时广播。`usage` 是模型返回的准确 Token 统计（含 `prompt_cache_hit_tokens`），供第 4 课讲到的命中率度量使用；供应商不支持时返回 `None`，由调用方回退估算。
 
 #### 2. 手写 SSE 流式解析器（OpenAI 兼容协议）
 
@@ -268,7 +268,7 @@ class AgentApp:
         self.session_store = SessionStore(...)
         self.guard = SecurityGuard()
         self.approval_gate = ApprovalGate()
-        self.sub_agent_runner = SubAgentRunner(self)  # 第11课，延迟绑定
+        self.sub_agent_runner = SubAgentRunner(self)  # 第13课，延迟绑定
 
     def build_registry(self, allowed=None, exclude=None) -> ToolRegistry:
         # 注册全部 17 个工具，支持按角色裁剪
@@ -279,7 +279,7 @@ class AgentApp:
 
 #### 本课小结
 
-在第十三课中，我们完成了 `lite-code` 的关键 LLM 适配层与工具集：
+在本课中，我们完成了 `lite-code` 的关键 LLM 适配层与工具集：
 
 1. 实现了**纯手写 httpx SSE 流式解析器**，支持 OpenAI 兼容接口与 Anthropic 两种协议；
 2. 设计了**多供应商注册表**，预置 7 个供应商，支持环境变量兜底、配置热加载、测试连接；

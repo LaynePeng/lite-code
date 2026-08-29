@@ -1,4 +1,4 @@
-在真实的 Code Agent 开发中，随着对话轮数变多以及读取的文件变大，你很快就会遇到 **Context Window Overflow（上下文窗口溢出）** 报错。更糟糕的是，当上下文过长时，LLM 会出现"注意力幻觉"与**上下文腐败（Context Rot）**，开始忽视最开始的指令或报错信息。
+在实际的 Code Agent 开发中，随着对话轮数变多以及读取的文件变大，你很快就会遇到 **Context Window Overflow（上下文窗口溢出）** 报错。更糟糕的是，当上下文过长时，LLM 会出现"注意力幻觉"与**上下文腐败（Context Rot）**，开始忽视最开始的指令或报错信息。
 
 本课我们将手写：
 1. **轻量 Token 准确计数器** 与滑动窗口（Sliding Window）裁剪策略；
@@ -102,9 +102,169 @@ class ContextManager:
         return ([system_message] if system_message else []) + removable
 ```
 
+**上述逐条丢弃方案的局限**：从最老逐条丢弃虽然保证了 tool 对原子性，但有两个问题：
+
+1. **粒度太粗**——它无法区分「某轮的工具调用细节」与「某轮的关键结论」，可能为了省 Token 把最近的决策链也一并删掉；
+2. **效率低下**——每次 `pop` 后都要重新对整条链计数，是 O(n²) 操作。
+
+因此我们引入 **策略 B（两阶段裁剪）**，以 user 消息为界把对话切成一轮一轮：
+
+1. **Stage 1 压缩工具细节**：从最老的轮次开始，把 `assistant(tool_calls)` + `tool(result)` **原子对整体删除**，只保留该轮的 user 问题与最终回答（对话主干）。最近 `keep_recent_full_turns` 轮的完整细节**永不压缩**，保证当前任务连续性；
+2. **Stage 2 整轮删除**：还不够就按轮从最老开始整轮删除，**最新一轮永不删**；
+3. **兜底**：若正文被删空，强制保留 `system + 最新一轮`，绝不让请求变成孤儿。
+
+实现上用「标记数组 + 先算后删」，把 O(n²) 降到 O(n)：
+
+```python
+# core/context_manager.py（策略 B 完整实现）
+import logging
+from typing import Dict, List, Optional
+
+from .token_counter import TokenCounter
+from .types import Message
+
+logger = logging.getLogger("harness.context")
+
+class ContextManager:
+    def __init__(self, max_allowed_tokens: int = 48000, keep_recent_full_turns: int = 2):
+        self.max_allowed_tokens = max_allowed_tokens
+        self.keep_recent_full_turns = max(1, keep_recent_full_turns)
+        # 最近一次裁剪的统计（供 UI「上下文情况」展示）
+        self.last_prune: Dict[str, object] = {
+            "compressed": False, "removed_tokens": 0, "stage": None,
+        }
+
+    def prune_messages(self, messages: List[Message], hard_cap: Optional[int] = None) -> List[Message]:
+        cap = hard_cap or self.max_allowed_tokens
+        self.last_prune = {"compressed": False, "removed_tokens": 0, "stage": None}
+
+        current = TokenCounter.count_messages_tokens(messages)
+        if current <= cap:
+            return messages
+
+        logger.warning("[ContextManager] Exceeded token budget (%s/%s). Pruning...", current, cap)
+
+        system, body = self._split_body(messages)
+        sys_tokens = TokenCounter.count_message_tokens(system) if system else 0
+        tokens = [sys_tokens] + [TokenCounter.count_message_tokens(m) for m in body]
+        removed = [False] * (len(body) + 1)
+        total = sum(tokens)
+
+        # 阶段1：压缩更早轮次的工具细节（assistant(tool_calls)+tool 原子对）
+        if total > cap:
+            droppable = self._stage1_candidates(body)
+            for ai, tool_idxs in droppable:
+                if total <= cap:
+                    break
+                for idx in [ai + 1] + [t + 1 for t in tool_idxs]:
+                    if not removed[idx]:
+                        removed[idx] = True
+                        total -= tokens[idx]
+                self.last_prune["stage"] = "stage1"
+
+        # 阶段2：整轮删除最老轮次（保留最新一轮）
+        if total > cap:
+            for start, end in self._oldest_turn_ranges(body):
+                if total <= cap:
+                    break
+                for idx in range(start + 1, end + 1):
+                    if not removed[idx]:
+                        removed[idx] = True
+                        total -= tokens[idx]
+                self.last_prune["stage"] = "stage2"
+
+        result = ([system] if system else []) + [
+            m for m, r in zip(body, removed[1:]) if not r
+        ]
+        # 兜底：body 被删空时保留 system + 最新一轮
+        if system is not None and len(result) == 1:
+            newest = self._newest_turn(body)
+            result = [system] + body[newest[0]:newest[1]]
+
+        removed_tokens = (TokenCounter.count_messages_tokens(messages)
+                          - TokenCounter.count_messages_tokens(result))
+        self.last_prune.update(compressed=removed_tokens > 0,
+                               removed_tokens=max(0, removed_tokens))
+        return result
+
+    @staticmethod
+    def _split_body(messages: List[Message]):
+        """拆出 system 消息与对话正文。"""
+        system = messages[0] if messages and messages[0].role == "system" else None
+        body = messages[1:] if system else list(messages)
+        return system, body
+
+    @staticmethod
+    def _turn_ranges(body: List[Message]) -> List[tuple]:
+        """把正文按 user 消息切成轮次，返回 [(start, end_excl), ...]。"""
+        turns: List[tuple] = []
+        start: Optional[int] = None
+        for i, m in enumerate(body):
+            if m.role == "user":
+                if start is not None:
+                    turns.append((start, i))
+                start = i
+        if start is not None:
+            turns.append((start, len(body)))
+        # 异常数据（正文开头不是 user）：并入第一个轮次
+        if turns and turns[0][0] != 0:
+            turns[0] = (0, turns[0][1])
+        elif not body:
+            turns = [(0, len(body))]
+        return turns
+
+    def _stage1_candidates(self, body: List[Message]) -> List[tuple]:
+        """返回可删除的 assistant(tool_calls)+tool 对位置，最老在前；跳过最近 K 轮。"""
+        turns = self._turn_ranges(body)
+        keep_from = max(0, len(turns) - self.keep_recent_full_turns)
+        candidates: List[tuple] = []
+        for turn_idx, (start, end) in enumerate(turns):
+            if turn_idx >= keep_from:
+                continue
+            i = start
+            while i < end:
+                m = body[i]
+                if m.role == "assistant" and m.tool_calls:
+                    ids = {c.id for c in m.tool_calls}
+                    tool_idxs: List[int] = []
+                    j = i + 1
+                    while j < end and body[j].role == "tool" and body[j].tool_call_id in ids:
+                        tool_idxs.append(j)
+                        j += 1
+                    candidates.append((i, tool_idxs))
+                    i = j
+                else:
+                    i += 1
+        return candidates
+
+    def _oldest_turn_ranges(self, body: List[Message]) -> List[tuple]:
+        """整轮删除顺序：最老优先，最新一轮永不删。"""
+        turns = self._turn_ranges(body)
+        if len(turns) <= 1:
+            return []
+        return turns[:-1]
+
+    def _newest_turn(self, body: List[Message]) -> tuple:
+        turns = self._turn_ranges(body)
+        return turns[-1] if turns else (0, len(body))
+```
+
+**为什么保留最近 K 轮？** 工具调用是链式推理（读了文件才能改、改了才能验证），删掉最近的决策链会让模型"失忆"，当前任务直接断线。`keep_recent_full_turns=2` 是实践中的经验值：既保住当前任务的连续推理，又能把更早的历史压缩成"对话主干"。
+
+**有效上限：min(预算, 90% × 模型窗口)**。模型上下文窗口是"输入 + 输出"的总预算，输入不能占满——必须给模型回复预留空间。所以实战中：
+
+```python
+def _effective_cap(self) -> int:
+    """上下文有效上限 = min(预算, 90% × 模型上下文窗口)。"""
+    window_cap = int(0.9 * self.context_window)
+    return min(self.context_manager.max_allowed_tokens, window_cap)
+```
+
+预留 10% 给输出（以及工具结果的瞬时波动），否则模型会被"挤"得只能输出几个 Token。
+
 #### 3. 手写 Dynamic System Prompt 动态组装器
 
-在真实的软件开发 Harness 中，System Prompt **绝不是静态的字符串**，而是随环境动态渲染的。
+在真正的软件开发 Harness 中，System Prompt **绝不是静态的字符串**，而是随环境动态渲染的。
 
 每次调用 LLM 前，Dynamic System Prompt 会实时收集：
 - 当前工作目录（CWD）
@@ -159,6 +319,18 @@ class SystemPromptBuilder:
 4. 用简洁的 Markdown 回复用户；中文优先。
 """
 ```
+
+**设计决策：动态 System Prompt 与缓存红线的张力**
+
+细心的读者会发现：`_git_info()` 的结果每次调用都在变（新增文件、`git commit` 后清零），如果每轮都用新文本**整体替换** `payload[0]`，那么 system 前缀就永远不稳定——这与第 5 课的「缓存断点之前不能动一个字节」红线直接冲突。
+
+本教程的选择是：**环境信息永远最新**。理由：
+
+1. Code Agent 的工作区状态随时可能被工具改变（`git commit`、`write_file`），让模型看到过期的工作区会导致它基于错误事实决策；
+2. 对 Code Agent 而言，**正确性 > 缓存命中率**——缓存省的是钱，环境过期亏的是任务结果；
+3. 折中方案（把 Git 状态挪到缓存断点之后的历史区）会增加实现复杂度，收益有限。
+
+这个取舍值得记录：**「保新鲜」还是「保缓存」，取决于你的 Agent 是否频繁变更环境状态**。通用 Chat Agent 可以固定前缀换取缓存命中；Code Agent 建议每轮刷新环境信息。
 
 #### 4. 集成：完整的上下文受控 Agent 循环
 
@@ -219,10 +391,10 @@ async def run_context_aware_agent(user_prompt: str, tools, tool_executor):
 
 ### 本课小结
 
-在第三课中，我们完成了 **模块一：Agent Harness 基础与底层控制循环** 的全路线建设：
+在本课中，我们完成了 Agent 底层控制循环的上下文建设：
 
 1. 学会了纯手写流式 Tool Calling 拼接；
 2. 实现了 JSON 自愈、死循环 Hash 预警与工具输出截断；
-3. 掌握了 Token 估算、保护 `assistant-tool` 完整性的上下文裁剪算法，以及动态注入环境信息的 System Prompt。
+3. 掌握了 Token 估算、保护 `assistant-tool` 完整性的**策略 B 两阶段裁剪**算法，以及动态注入环境信息的 System Prompt。
 
-下一次我们将进入 **第6课：代码感知、Ripgrep 高效搜索与代码库结构构建** —— 学习如何让 Agent 高效感知几十万行的真实代码库！
+在下一课中，我们将进入 **第4课：Prompt 缓存机制** —— 学习如何让稳定前缀命中供应商的 KV 缓存，把输入 Token 成本砍到 10%。

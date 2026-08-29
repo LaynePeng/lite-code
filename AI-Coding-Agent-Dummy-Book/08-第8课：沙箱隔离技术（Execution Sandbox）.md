@@ -152,7 +152,7 @@ async def execute_sandbox_tool(name: str, args: dict, sandbox: LocalProcessSandb
 
 ### 本课小结
 
-在第六课中，我们为 Harness 构建了安全底座：
+在本课中，我们为 Harness 构建了安全底座：
 
 1. 实现了基于 **asyncio 子进程的受限 Shell 执行器**（超时自动终止 + 敏感环境变量擦除）；
 2. 提供了可选的 **Docker 容器沙箱**（内存/CPU/网络限制）；

@@ -1,6 +1,6 @@
 在上一课中，我们学会了用 **Prompt 缓存** 把稳定前缀的成本砍到 10%。但缓存只能解决"重复"的部分，对于**真正增长的对话历史**，我们还需要主动节省 Token。
 
-本课我们参考 OpenSquilla（Apache 2.0 的 Python AI Agent 运行时）的 **13 层 Token 节省机制**，提炼出最适合 lite-code 的 5 个模式，并强调一个**核心铁律**：
+本课我们参考 OpenSquilla（Apache 2.0 的 Python AI Agent 运行时）的 **13 层 Token 节省机制**，提炼出最适合我们的 Harness 的 5 个模式，并强调一个**核心铁律**：
 
 > **省 Token 不能影响缓存命中**——任何改动都不能破坏缓存断点之前的稳定前缀。
 
@@ -29,7 +29,7 @@ class ContextBudget:
 
 **可借鉴处**：外部工具结果自然比本地工具结果噪音大，应该给更小的预算。这是纯业务判断，API 层不会帮你区分。
 
-#### 2. 四层负载压缩升级
+#### 2. 四层负载压缩
 
 当请求超预算时，不是直接一刀切，而是从温和到激进**逐步升级**：
 
@@ -96,16 +96,38 @@ class ContextManager:
 
 大型工具输出（如 `cat 大文件`、长日志）**不存入上下文**，而是存到磁盘，上下文中只放一个轻量句柄。需要时通过句柄检索。
 
-这就是我们在第二课改进版截断器里实现的**落盘机制**：
+这就是我们在第二课截断器中实现的**落盘机制**：
 
 ```
 上下文中：  "输出已保存: tool_1699999999_ab12cd34.txt (1.2MB)"
-磁盘上：    .lite-code/truncations/tool_1699999999_ab12cd34.txt  ← 完整内容
+磁盘上：    .harness/truncations/tool_1699999999_ab12cd34.txt  ← 完整内容
 ```
 
 **约束**：单结果最大 8MB，总磁盘预算 256MB，7 天自动清理。
 
 **可借鉴处**：把上下文从"数据容器"变成"数据索引"，开销从 O(内容大小) 降到 O(1)。对于会产生大量输出的场景（日志分析、数据导出）特别有用。
+
+**实现细节（`core/truncator.py`）**：
+
+- **7 天自动清理**：落盘文件名带时间戳 `tool_{int(time.time())}_{uuid4.hex[:8]}.txt`，每次写入前扫描目录、按 mtime 删除超过 `RETENTION_SECONDS = 7 * 24 * 3600` 的旧文件——否则每个大输出 50KB，几百次调用就会撑爆磁盘：
+
+```python
+def _cleanup_expired(output_dir: str) -> None:
+    """删除超过保留期的落盘文件，避免无限膨胀。"""
+    cutoff = time.time() - RETENTION_SECONDS
+    for entry in os.listdir(output_dir):
+        if not entry.startswith("tool_"):
+            continue
+        fp = os.path.join(output_dir, entry)
+        try:
+            if os.path.getmtime(fp) < cutoff:
+                os.remove(fp)
+        except OSError:
+            pass
+```
+
+- **tail 模式**：默认 `direction="head"` 保留开头（命令回显、错误上下文在开头），但脚本化输出（生成代码、报表）用 `direction="tail"` 保留结尾更有用；
+- **引导模型的提示文案**：截断内容里明确告诉模型"完整输出已保存到磁盘，用 read_file/search 按需读取，不要主动读完整文件"——把"节省上下文"变成模型可见的行为约束，否则模型会出于好奇把 50KB 又读回来，前功尽弃。
 
 #### 6. 省 Token 但不能破坏缓存的"红线"
 
@@ -129,11 +151,9 @@ def build_request(stable_prefix, history):
 #### 本课小结
 
 1. 掌握了 **OpenSquilla 式多层级预算治理**，把上下文拆成独立池子；
-2. 实现了 **四层负载压缩升级**，从温和到激进逐步降级；
+2. 实现了 **四层负载压缩**，从温和到激进逐步降级；
 3. 强化了 **轮次边界感知压缩**，在缓存断点之后安全裁剪；
 4. 学会了**区分性工具结果预算**（错误输出绝不截断）与**带外结果存储**；
 5. 牢记了**省 Token 不破坏缓存**的五条红线。
 
-在下一课中，我们将进入 **模块二：代码感知**，学习如何让 Agent 高效感知几十万行的真实代码库。
-
-接下来，我们进入实战。但在动手之前，还要掌握一个重要的架构概念——**Agent 类型与自定义机制**（Build/Plan 双默认 Agent），它决定了 lite-code 如何被不同用户、不同场景调用。
+在下一课中，我们将进入 **模块二：代码感知**，学习如何让 Agent 高效感知大型代码库。

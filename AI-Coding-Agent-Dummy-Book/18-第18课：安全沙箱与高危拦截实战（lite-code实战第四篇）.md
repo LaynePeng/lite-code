@@ -1,4 +1,4 @@
-在前十四课中，我们为 `lite-code` 实现了强类型的 Core 内核、核心 API/文件/Shell 插件以及驱动 ReAct 闭环的 `AgentLoop`。
+在前面的课程中，我们为 `lite-code` 实现了强类型的 Core 内核、核心 API/文件/Shell 插件以及驱动 ReAct 闭环的 `AgentLoop`。
 
 但作为一个运行在真实宿主环境或开发机上的自主 Agent，如果缺乏严密的**安全沙箱与高危指令拦截机制**，诸如 `rm -rf /`、删库指令、敏感文件读取或越权网络请求等误操作与注入攻击（Prompt Injection）将带来毁灭性后果。
 
@@ -150,7 +150,7 @@ class SecurityGuard:
         return SecurityCheckResult(ThreatLevel.SAFE)
 ```
 
-**增强点（相比原课程第15课）**：
+**增强点（相比第 8 课的命令级过滤）**：
 1. **动态黑白名单**：规则通过 `.lite-code/config.json` 热加载，改配置即生效，无需改代码；
 2. **白名单机制**：精确前缀放行覆盖默认检查（如 `git status`、`pytest` 等安全命令直接放行）；
 3. **非法正则忽略**：编译失败的规则自动跳过，不会导致整体崩溃。
@@ -159,7 +159,7 @@ class SecurityGuard:
 
 在遇到 `MEDIUM` 风险级别的操作时，我们需要暂停 Agent 自动流转，向操作员发起交互式确认。
 
-原课程用 `readline` 控制台确认；`lite-code` 将其**升级为 Web 审批卡**：用 `asyncio.Future` 挂起 AgentLoop，通过 SSE 通知 UI 弹出审批卡，用户点击后在 `POST /api/approve` 中 resolve Future：
+第 8 课的控制台确认适合单机演示；实战中我们需要**Web 审批卡**：用 `asyncio.Future` 挂起 AgentLoop，通过 SSE 通知 UI 弹出审批卡，用户点击后在 `POST /api/approve` 中 resolve Future：
 
 ```python
 # litecode/security/approval.py
@@ -300,7 +300,7 @@ else:
 
 ### 本课小结
 
-在第十五课中，我们构建了 `lite-code` 的沙箱防护系统：
+在本课中，我们构建了 `lite-code` 的沙箱防护系统：
 
 1. 建立了三级风险控制模型（`SAFE` / `MEDIUM` / `HIGH`）；
 2. 实现了基于正则与敏感词的 **`SecurityGuard` 规则引擎**，阻断路径穿越与恶性指令；

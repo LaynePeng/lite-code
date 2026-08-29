@@ -183,7 +183,7 @@ async for chunk in response.aiter_bytes():
     # ... 后续按行解析 SSE 事件
 ```
 
-这个模式对**任何**多字节编码的流式协议都通用（中文、emoji、韩文等），也值得抽取为公共工具函数放在适配器基类中，让所有供应商复用——`lite-code` 正是这样做的（`litecode/llm/base.py` 中的 `decode_utf8_incremental`）。
+这个模式对**任何**多字节编码的流式协议都通用（中文、emoji、韩文等），也值得抽取为公共工具函数放在适配器基类中，让所有供应商复用——我们在实战篇中就会这样做。
 
 #### 3. 编写最简 Agent 主循环 (Agent Loop)
 

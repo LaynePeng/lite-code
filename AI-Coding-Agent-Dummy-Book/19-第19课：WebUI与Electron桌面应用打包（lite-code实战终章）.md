@@ -1,4 +1,4 @@
-在前面的十五课中，我们从架构设计、核心 Kernel、插件体系、AgentLoop 状态机到沙箱防护，一步步完成了 `lite-code` 框架的底层构建。
+在前面的课程中，我们从架构设计、核心 Kernel、插件体系、AgentLoop 状态机到沙箱防护，一步步完成了 `lite-code` 框架的底层构建。
 
 本课作为手写实战的**收官之作**，我们将为 `lite-code` 赋予成熟的生产级外壳：
 
@@ -44,7 +44,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-app = FastAPI(title="lite-code", version="0.1.0")
+app = FastAPI(title="lite-code")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], ...)
 
 # 核心 API 路由
@@ -155,6 +155,53 @@ function buildTurns(messages) {
 **Build/Plan 前端切换**：`Composer.tsx` 加入 Agent 选择栏，显示 Build / Plan 两个按钮，当前选中的高亮。右侧显示 `Tab` 小标签提示快捷键。
 
 **后端新端点**：配套新增 `/api/agents` 返回 Agent 列表、`/api/workspace` 运行时切换工作区、`/api/fs/list` 浏览任意目录。
+
+#### 3.6 上下文可观测性：`context:stats` 数据链路
+
+「上下文情况」面板的数据不是前端瞎猜的，而是 AgentLoop 每轮把真实统计通过事件总线推出来的（见第 17 课的 `_emit_context_stats`）。完整链路：
+
+```
+AgentLoop._emit_context_stats()
+   │  kernel.events.emit("context:stats", {...})
+   ▼
+TypedEventBus → TaskRunner 订阅 → asyncio.Queue
+   ▼
+SSE /api/tasks/{id}/events  →  data: {"type":"context:stats", ...}
+   ▼
+前端 ToolPanel 接收 → 更新「上下文情况」页签
+```
+
+后端侧（第 17 课已实现）每轮推送：模型名、上下文窗口大小、本轮 `prompt_tokens`、累计 `cache_hit_tokens / cache_miss_tokens / cache_hit_rate`、压缩次数、压缩节省 Token、窗口占用比例 `usage_ratio`。TaskRunner 在转发前还会把任务内统计累加进会话级累计（`session` 段），因此面板同时展示"本次调用"与"会话累计"两个视角。
+
+前端 `App.tsx` 的 SSE 处理只需加一个 case：
+
+```typescript
+case "context:stats":     // 上下文情况面板（ToolPanel）
+  setContextStats(ev.data);
+```
+
+`ToolPanel.tsx` 的「上下文情况」页签渲染（关键指标 + 进度条）：
+
+```tsx
+// 上下文情况面板（关键部分，位于右侧面板第一个页签）
+const ratio = stats?.task?.usage_ratio ?? 0;
+const danger = ratio >= 0.9;   // 达到模型窗口 90%，自动压缩已触发
+<div className="ctx-panel">
+  <div className="ctx-progress-track" className={danger ? "danger" : ""}>
+    <div className="ctx-progress-fill" style={{ width: `${Math.min(100, ratio * 100)}%` }} />
+  </div>
+  <div className="ctx-row"><span>窗口占用</span>
+    <b>{Math.round(ratio * 100)}%</b></div>
+  <div className="ctx-row"><span>缓存命中率</span>
+    <b>{stats?.task?.cache_hit_rate != null ? `${Math.round(stats.task.cache_hit_rate * 100)}%` : "—"}</b></div>
+  <div className="ctx-row"><span>输入 Token（本次）</span>
+    <b>{stats?.task?.prompt_tokens?.toLocaleString() ?? 0}</b></div>
+  <div className="ctx-row"><span>压缩次数 / 节省</span>
+    <b>{stats?.task?.compression_count ?? 0} 次 / {(stats?.task?.compressed_tokens ?? 0).toLocaleString()}</b></div>
+</div>
+```
+
+**为什么值得做**：上下文压缩是"黑盒操作"——模型突然失忆时，如果面板显示"压缩 5 次、省了 30K token"，你能立刻定位到是 Stage 1 压缩工具细节还是 Stage 2 整轮删除导致的；缓存命中率骤降则说明 System Prompt 或工具定义在漂移、缓存断点被破坏了。**可观测性让"上下文管理"从玄学变成可排查的工程指标**。同时，窗口占用比例到达 **90%**（`usage_ratio >= 0.9`）时进度条变红，提示 AgentLoop 已在按 `min(预算, 90% × 模型窗口)` 自动压缩。
 
 #### 4. 多 LLM 配置界面 (`SettingsModal.tsx`)
 
@@ -375,47 +422,52 @@ async def _stream():
 #### 7. 一键打包 (`npm run package`)
 
 ```bash
-npm run build:web    # 构建 React 前端 → web/dist/
-node scripts/generate-icon.mjs   # 生成应用图标 → release/resources/app-icon.icns
-node scripts/package-backend.mjs # PyInstaller → release/backend/lite-code-backend
-npx electron-builder --mac       # → release/lite-code-0.1.0-arm64.dmg
+npm run build:web                    # 构建 React 前端 → web/dist/
+node scripts/package-backend.mjs     # PyInstaller → release/backend/lite-code-backend(.exe)
+npx electron-builder --win nsis      # Windows 安装包（macOS 用 --mac）
 ```
 
-**产物**：
+Windows 一键打包脚本 `scripts/build-windows.ps1` 把上述步骤串起来：创建 venv → 安装 Python 依赖 → 安装前端依赖 → 构建前端 → PyInstaller 后端 → NSIS 安装包。
+
+**产物**（以 Windows 为例）：
 ```
 release/
-├── lite-code-0.1.0-arm64.dmg         (109MB，双击安装)
-├── lite-code-0.1.0-arm64-mac.zip     (106MB)
-└── mac-arm64/lite-code.app           (已 ad-hoc 签名)
+├── lite-code Setup <版本号>.exe    (约 116MB，NSIS 安装包，可改安装目录)
+├── lite-code Setup <版本号>.exe.blockmap
+└── win-unpacked/lite-code.exe       (解包目录，可直接运行)
 ```
+
+关键工程点：
+- **后端进包**：`package.json` 的 `extraResources` 把 `release/backend` 目录（含 `lite-code-backend.exe`）复制到安装后的 `resources/litecode-bin/`，Electron 主进程通过 `resolvePython()` 优先使用内置二进制；
+- **图标**：`scripts/app-icon.svg` 直接配置为 `win.icon`，electron-builder 自动栅格化为 ICO；
+- **加载页**：PyInstaller 单文件后端首次解压需 10-30s，主进程先显示 `loading.html`，后端就绪后跳转主界面。
 
 **开发模式**：`npm run dev`（concurrently 编排 Python Core + Vite + Electron，一行命令三步启动）
 
 #### 8. 全课程总结与回顾
 
-恭喜你！到这里我们已经完成了全套 **16 课** 的 Code Agent 深度课程，并手写出了完整的 `lite-code` 框架。
+恭喜你！到这里我们已经完成了全套 **19 课** 的 Code Agent 深度课程，并手写出了完整的 `lite-code` 框架。
 
 ```text
 +-----------------------------------------------------------------------+
-|                     lite-code 工业级全景架构                            |
+|                     lite-code 全景架构                                  |
 +-----------------------------------------------------------------------+
-|  [Module 1] ReAct 与 Loop 状态机 (第1-4课)                            |
-|  - AgentLoop 状态控制 | Prompt Stream 解析 | 结构化 Tool Execution    |
-|  - JSON 自愈 / 死循环检测 / 输出截断 / Token 预算 / 动态 System Prompt |
+|  [模块一] ReAct 与循环 (第1-5课)                                       |
+|  - LLM 流式 Tool Calling 解析 | JSON 自愈 / 死循环检测 | 输出截断      |
+|  - Token 预算与策略B滑动裁剪 | 动态 System Prompt | Prompt 缓存       |
+|  - Token 节省策略（多层预算 / 带外存储 / 缓存铁律）                     |
 +-----------------------------------------------------------------------+
-|  [Module 2] 工业级 Code Agent 增强能力 (第4-7课)                       |
-|  - Ripgrep 搜索 | Tree-sitter AST 分析 | 差异 Patch 增量替换           |
-|  - 本地进程沙箱 + 环境变量擦除                                         |
+|  [模块二] Code Agent 增强能力 (第6-10课)                               |
+|  - Ripgrep 代码感知 | Tree-sitter AST 分析 | 沙箱隔离                 |
+|  - Search-Replace / Unified Diff | MCP 外部工具生态接入               |
 +-----------------------------------------------------------------------+
-|  [Module 3] 工具协议与开放生态 (第8课)                                 |
-|  - 标准 Model Context Protocol (MCP) JSON-RPC 2.0 协议集成             |
+|  [模块三] 核心架构 (第11-14课)                                         |
+|  - Cordis 微内核与时空解耦 | 洋葱模型中间件 / 生命周期钩子            |
+|  - 子 Agent 编排 | Build/Plan 与用户自定义 Agent                       |
 +-----------------------------------------------------------------------+
-|  [Module 4] 微内核与子 Agent 编排 (第9-11课)                           |
-|  - Cordis 时空解耦 | Interceptor 洋葱模型拦截链 | Sub-Agent 派发编排    |
-+-----------------------------------------------------------------------+
-|  [Module 5] 手写实战 lite-code (第12-16课)                             |
-|  - Python Core | 多 LLM 供应商 | 全套工具集 | AgentLoop                 |
-|  - 动态黑白名单 | Web 审批 | React UI | Electron 桌面 | 打包发布       |
+|  [模块四] 手写实战 lite-code (第15-19课)                               |
+|  - Python Core | 多 LLM 供应商 | 全套工具集 | AgentLoop 主循环        |
+|  - 动态黑白名单 | Web 审批 | 上下文可观测性 | React UI | Electron 打包 |
 +-----------------------------------------------------------------------+
 ```
 
@@ -425,5 +477,5 @@ release/
 ```bash
 npm run dev      # 开发模式：Python Core(8787) + Vite(5173) + Electron 窗口
 npm start        # 生产模式：构建前端 → 自动拉起 Python Core → 窗口
-npm run package  # 打包：PyInstaller 后端 + electron-builder → .app/.dmg
+npm run package  # 打包：PyInstaller 后端 + electron-builder（Windows 出 NSIS 安装包）
 ```

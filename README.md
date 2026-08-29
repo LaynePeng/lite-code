@@ -31,6 +31,10 @@ Python 后端（litecode/）
 - **Agent 增强**：JSON 自愈、死循环检测、OpenCode 风格输出截断（落盘句柄）、Token 预算裁剪、动态 System Prompt
 - **Prompt 缓存**：Anthropic / OpenAI 兼容接口的 `cache_control` 断点标注，稳定前缀命中缓存
 - **Token 节省策略**：多层级预算治理、区分性工具结果预算、带外结果存储（超大输出落盘）
+- **策略 B 上下文压缩**：两阶段裁剪（先压缩旧轮工具细节、再删最老轮次），保留最近 N 轮完整细节；有效上限 `min(预算, 90% × 模型窗口)` 自动压缩
+- **上下文可观测性**：右面板「上下文情况」页签——模型窗口占用进度条（≥90% 红色警示）、准确 Token 统计（模型 usage 回填）、Cache 命中率、压缩次数/节省量（任务内实时 + 会话累计）
+- **模型上下文窗口三层机制**：启动同步 models.dev 模型元数据 → 内置静态表兜底 → 设置页手动覆盖（断网可用）
+- **多轮对话**：会话历史落盘全量保留（含思考过程），重启/切换后自动加载续聊
 - **Build/Plan 双 Agent**：默认开发 Agent + 只读规划 Agent，支持用户通过 `.json` / `.md` 自定义 Agent
 - **OpenCode 风格交互**：思考/回答分离、右侧工具面板、Tab 切换 Agent、目录树打开项目
 - **三种运行形态**：本地桌面（Electron + 自动 spawn 后端）/ 远程 Core / 纯浏览器
@@ -43,34 +47,43 @@ Python 后端（litecode/）
 
 # 安装 Python 依赖
 python3 -m venv .venv
-.venv/bin/pip install -e .[dev]
+.venv/bin/pip install -e .[dev]        # Windows: .venv\Scripts\pip install -e .[dev]
 
 # 安装前端 + Electron 依赖
 npm install
 
-# 一键启动（开发模式：Core + Vite + Electron 窗口）
+# 一键启动（开发模式：Core + Vite + Electron 窗口，跨平台）
 npm run dev
 
 # 或生产模式（构建前端后启动）
 npm start
 ```
 
+> 国内网络受限时 pip 可加 `-i https://pypi.tuna.tsinghua.edu.cn/simple`；Electron 二进制由 `npm install` 的 postinstall 下载，失败时执行 `node node_modules/electron/install.js`（已默认走 npmmirror 镜像）。
+
 ## 打包
+
+### Windows（NSIS 安装包）
+
+```powershell
+.\scripts\build-windows.ps1        # 一键：venv → 前端构建 → PyInstaller 后端 → NSIS 安装包
+# 产物：release\lite-code Setup <版本号>.exe（可改安装目录，含桌面/开始菜单快捷方式）
+```
+
+### macOS / 通用
 
 ```bash
 npm run build:web      # 构建前端
-node scripts/generate-icon.mjs   # 生成应用图标
 node scripts/package-backend.mjs  # PyInstaller 后端二进制
 node scripts/package.mjs          # 完整打包 → release/*.dmg（含 electron-builder + hdiutil 两步）
-
-# 国内网络受限时 electron-builder 下载二进制可能卡住，可预设镜像环境变量
-export ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
-export ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-builder-binaries/"
-node scripts/package.mjs
 ```
 
-> 注：`scripts/package.mjs` 未设置镜像环境变量时会自动兜底使用 npmmirror 镜像，已存在则沿用你的配置。
-> macOS 未签名构建（无 Developer ID 证书）首次打开需右键 →「打开」绕过 Gatekeeper；升级 Electron 到 43+ 可避免 macOS 26 的 XProtect 误报。
+> 国内网络受限时 electron-builder 下载二进制可能卡住，可预设镜像环境变量（`scripts/package.mjs` 与 `build-windows.ps1` 未设置时会自动兜底 npmmirror 镜像）：
+> ```bash
+> export ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
+> export ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-builder-binaries/"
+> ```
+> macOS 未签名构建（无 Developer ID 证书）首次打开需右键 →「打开」绕过 Gatekeeper。
 
 ## 教程
 

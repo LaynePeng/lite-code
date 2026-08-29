@@ -65,7 +65,7 @@ class MCPClient:
         await self._send_request("initialize", {
             "protocolVersion": "2024-11-05",
             "capabilities": {},
-            "clientInfo": {"name": "lite-code", "version": "0.1.0"},
+            "clientInfo": {"name": "harness", "version": "1.0.0"},
         })
 
         # 2. 发送 initialized 通知
@@ -222,7 +222,7 @@ async def main():
 
 ### 本课小结
 
-在第八课中，我们为 Harness 赋予了连接外部 Tool 生态的无限扩展能力：
+在本课中，我们为 Harness 赋予了连接外部 Tool 生态的无限扩展能力：
 
 1. 深入理解了 **Model Context Protocol (MCP)** 的 JSON-RPC 2.0 帧结构；
 2. 手写了基于 asyncio 的轻量 **MCP Stdio Client** 传输与握手格式；

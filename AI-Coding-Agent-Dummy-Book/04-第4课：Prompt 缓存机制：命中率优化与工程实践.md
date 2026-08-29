@@ -4,7 +4,7 @@
 1. 什么是 Prompt 缓存？为什么它能带来 **90% 的输入 Token 成本削减**？
 2. 主流供应商（Anthropic、DeepSeek、OpenAI）的缓存机制对比；
 3. 缓存命中的关键：**稳定前缀（Stable Prefix）**；
-4. 如何在 lite-code 中接入缓存，并设计缓存友好的代码结构。
+4. 如何在我们的 Harness 中接入缓存，并设计缓存友好的代码结构。
 
 #### 1. 为什么需要 Prompt 缓存？
 
@@ -31,7 +31,7 @@
 | OpenAI | Prompt Caching | 自动检测，或 `cache_control` 标注 | 5-10 分钟 | 命中 0.5× |
 | Google Gemini | Context Caching | 创建显式缓存对象 | 可配置 TTL | 缓存存储费 + 命中 0.25× |
 
-在 lite-code 中，我们主要对接 **Anthropic 和 DeepSeek/OpenAI 兼容接口**，所以重点实现前两种方案。
+在后续实战中，我们主要对接 **Anthropic 和 DeepSeek/OpenAI 兼容接口**，所以重点实现前两种方案。
 
 #### 3. 缓存命中的关键：稳定前缀设计
 
@@ -65,7 +65,7 @@ class PayloadBuilder:
 
 **注意**：缓存断点（Cache Breakpoint）标注在**稳定前缀的最后一个元素**上，告诉供应商"从这里开始后面的内容不缓存"。
 
-#### 4. 在 lite-code 中接入缓存
+#### 4. 在 Harness 中接入缓存
 
 我们以 Anthropic 适配器为例，实现缓存标注：
 
@@ -149,11 +149,40 @@ DeepSeek 的响应中也会包含缓存命中信息：
 }
 ```
 
+#### 7. 度量缓存：估算与真实 usage 混用
+
+缓存命中率不是玄学，必须用模型返回的 **usage 字段**精确度量。我们的做法是「首次估算兜底，之后真实回填」：
+
+```python
+# AgentLoop 内（D2 阶段，core/agent_loop.py）
+# 第一次调用前还没有 usage，用 TokenCounter 估算 input_tokens
+if not self._last_usage:
+    stats["input_tokens"] += TokenCounter.count_messages_tokens(processed)
+
+# 拿到模型返回的 usage 后，用真实值累加（估算永远不准，只做兜底）
+self._last_usage = usage or self._last_usage
+if usage:
+    stats["input_tokens"] += usage.get("prompt_tokens", 0)
+    stats["output_tokens"] += usage.get("completion_tokens", 0)
+    hit = usage.get("prompt_cache_hit_tokens", 0)      # 缓存命中的部分
+    prompt = usage.get("prompt_tokens", 0)
+    stats["cache_hit_tokens"] += hit
+    stats["cache_miss_tokens"] += max(0, prompt - hit)
+```
+
+命中率 = `cache_hit_tokens / (cache_hit_tokens + cache_miss_tokens)`。这个指标同时回答三个问题：
+
+1. 我的**稳定前缀设计是否有效**（命中率低 → system / tools 前缀在漂移）；
+2. 我的**裁剪策略是否破坏了缓存断点**（每次裁剪后命中率骤降 → 裁剪越界了）；
+3. **省钱效果到底多少**（命中 90% 意味着输入成本只剩 10%）。
+
+> **重要**：估算与真实值**不要混进同一个计数器**做预算判断——`TokenCounter` 是给「裁剪时机」用的（便宜、快速、前置），usage 是给「统计展示」用的（准确、事后）。两者职责分离，在实战篇的 AgentLoop 中，我们会看到这个 D2 阶段如何落地。
+
 #### 本课小结
 
 1. 理解了 **Prompt 缓存**的原理与收益——最多可节省 **90% 的输入 Token 费用**；
 2. 掌握了 **缓存断点（Cache Breakpoint）** 的标注方法，以及**稳定前缀**的设计原则；
-3. 在 lite-code 的 Anthropic 和 OpenAI 兼容适配器中实际接入了缓存标注；
+3. 在 Anthropic 和 OpenAI 兼容适配器中实际接入了缓存标注；
 4. 学会了**缓存感知的 Token 预算管理**，以及**缓存友好**的代码设计约束。
 
-在下一课中，我们将更进一步，学习**Token 节省策略**——从 OpenSquilla 的 13 层 Token 节省机制中提炼最适合 lite-code 的模式，并在不破坏缓存的前提下实现多级压缩。
+在下一课中，我们将更进一步，学习**Token 节省策略**——从 OpenSquilla 的 13 层 Token 节省机制中提炼最适合我们的 Harness 的模式，并在不破坏缓存的前提下实现多级压缩。
