@@ -66,7 +66,37 @@ export interface AppConfig {
   token_budget: number;
   tool_timeout: number;
   auto_approve: boolean;
+  context_full_turns?: number;
   pricing: { input_per_mtok: number; output_per_mtok: number };
+}
+
+export interface ContextTaskStats {
+  prompt_tokens: number;
+  output_tokens: number;
+  cache_hit_tokens: number;
+  cache_miss_tokens: number;
+  cache_hit_rate: number | null;
+  compression_count: number;
+  compressed_tokens: number;
+  usage_ratio: number | null;
+  last_prompt_tokens: number;
+}
+
+export interface ContextSessionStats {
+  prompt_tokens: number;
+  output_tokens: number;
+  cache_hit_tokens: number;
+  cache_miss_tokens: number;
+  cache_hit_rate: number | null;
+  compression_count: number;
+  compressed_tokens: number;
+}
+
+export interface ContextStats {
+  model: string;
+  context_window: number;
+  task?: ContextTaskStats;
+  session: ContextSessionStats;
 }
 
 export interface LLMProviderMeta {
@@ -85,6 +115,7 @@ export interface LLMProviderSettings {
   base_url: string;
   model: string;
   temperature: number;
+  context_window?: number | null;
 }
 
 export interface LLMConfig {
@@ -104,6 +135,7 @@ export type SSEEvent =
   | { type: "task:done"; data: { content: string; stats: Stats } }
   | { type: "task:error"; data: { message: string } }
   | { type: "stats:update"; data: Stats }
+  | { type: "context:stats"; data: ContextStats }
   | { type: "subagent:completed"; data: Record<string, unknown> };
 
 // Electron 注入的原生能力（浏览器模式下不存在）

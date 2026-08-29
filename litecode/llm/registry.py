@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Dict, List, Optional, Tuple
 
 from .anthropic import AnthropicAdapter
@@ -19,6 +20,12 @@ PROVIDER_META: Dict[str, Dict[str, Any]] = {
         "default_model": "deepseek-v4-flash",
         "models": ["deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-flash-vision-exp"],
         "env_key": "DEEPSEEK_API_KEY",
+        "context_window": 1_000_000,
+        "context_windows": {
+            "deepseek-v4-flash": 1_000_000,
+            "deepseek-v4-pro": 1_000_000,
+            "deepseek-v4-flash-vision-exp": 1_000_000,
+        },
     },
     "openai": {
         "name": "OpenAI",
@@ -27,6 +34,14 @@ PROVIDER_META: Dict[str, Dict[str, Any]] = {
         "default_model": "gpt-4o",
         "models": ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "gpt-4.1-mini", "o3-mini"],
         "env_key": "OPENAI_API_KEY",
+        "context_window": 128_000,
+        "context_windows": {
+            "gpt-4o": 128_000,
+            "gpt-4o-mini": 128_000,
+            "gpt-4.1": 1_047_576,
+            "gpt-4.1-mini": 1_047_576,
+            "o3-mini": 200_000,
+        },
     },
     "kimi": {
         "name": "Kimi (Moonshot)",
@@ -35,6 +50,13 @@ PROVIDER_META: Dict[str, Dict[str, Any]] = {
         "default_model": "moonshot-v1-32k",
         "models": ["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k", "kimi-k2-0711-preview"],
         "env_key": "MOONSHOT_API_KEY",
+        "context_window": 262_144,
+        "context_windows": {
+            "moonshot-v1-8k": 8_192,
+            "moonshot-v1-32k": 32_768,
+            "moonshot-v1-128k": 131_072,
+            "kimi-k2-0711-preview": 262_144,
+        },
     },
     "qwen": {
         "name": "通义千问 (DashScope)",
@@ -43,6 +65,13 @@ PROVIDER_META: Dict[str, Dict[str, Any]] = {
         "default_model": "qwen-plus",
         "models": ["qwen-plus", "qwen-max", "qwen-turbo", "qwen-long"],
         "env_key": "DASHSCOPE_API_KEY",
+        "context_window": 131_072,
+        "context_windows": {
+            "qwen-plus": 131_072,
+            "qwen-max": 131_072,
+            "qwen-turbo": 131_072,
+            "qwen-long": 1_000_000,
+        },
     },
     "glm": {
         "name": "智谱 GLM",
@@ -51,6 +80,13 @@ PROVIDER_META: Dict[str, Dict[str, Any]] = {
         "default_model": "glm-4-plus",
         "models": ["glm-4-plus", "glm-4-flash", "glm-4-air", "glm-4-long"],
         "env_key": "ZHIPUAI_API_KEY",
+        "context_window": 131_072,
+        "context_windows": {
+            "glm-4-plus": 131_072,
+            "glm-4-flash": 131_072,
+            "glm-4-air": 131_072,
+            "glm-4-long": 1_000_000,
+        },
     },
     "anthropic": {
         "name": "Anthropic Claude",
@@ -60,6 +96,7 @@ PROVIDER_META: Dict[str, Dict[str, Any]] = {
         "models": ["claude-sonnet-4-20250514", "claude-3-7-sonnet-20250219",
                    "claude-3-5-sonnet-20241022", "claude-opus-4-20250514"],
         "env_key": "ANTHROPIC_API_KEY",
+        "context_window": 200_000,
     },
     "custom": {
         "name": "自定义 (OpenAI 兼容)",
@@ -68,6 +105,7 @@ PROVIDER_META: Dict[str, Dict[str, Any]] = {
         "default_model": "",
         "models": [],
         "env_key": "",
+        "context_window": 128_000,
     },
 }
 
@@ -98,7 +136,11 @@ class LLMRegistry:
     }
     """
 
-    def __init__(self, llm_config: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(
+        self,
+        llm_config: Optional[Dict[str, Any]] = None,
+        config_dir: Optional[str] = None,
+    ) -> None:
         self.providers: Dict[str, Dict[str, Any]] = {
             pid: {
                 "api_key": "",
@@ -110,6 +152,14 @@ class LLMRegistry:
         }
         self.active = "deepseek"
         self._adapter: Optional[BaseLLMAdapter] = None
+        # 模型元数据服务（models.dev 同步 + 内置静态表兜底）
+        self.meta_service = None
+        if config_dir:
+            from .model_meta import ModelMetaService
+
+            self.meta_service = ModelMetaService(
+                os.path.join(config_dir, "models.dev.json")
+            )
         self._apply_env_defaults()
         if llm_config:
             self.apply_config(llm_config)
@@ -156,6 +206,7 @@ class LLMRegistry:
                 "base_url": p.get("base_url", ""),
                 "model": p.get("model", ""),
                 "temperature": p.get("temperature", 0.2),
+                "context_window": p.get("context_window"),
             }
         return {"active": self.active, "providers": providers}
 
@@ -171,8 +222,43 @@ class LLMRegistry:
                 "default_base_url": meta["default_base_url"],
                 "has_key": bool(p.get("api_key")),
                 "model": p.get("model", ""),
+                "context_window": self.get_context_window(pid, p.get("model")),
             })
         return out
+
+    # ------------------------------------------------------------ 上下文窗口
+
+    def get_context_window(self, provider_id: str, model: Optional[str] = None) -> int:
+        """解析模型上下文长度（token）。
+
+        优先级：手动覆盖（设置里手填）→ models.dev 缓存 → 内置静态表 → 供应商默认。
+        """
+        pid = provider_id or self.active
+        meta = PROVIDER_META.get(pid, PROVIDER_META["custom"])
+        p = self.providers.get(pid, {})
+        # ① 手动覆盖（config 里手填，用户优先）
+        manual = p.get("context_window")
+        if isinstance(manual, int) and manual > 0:
+            return manual
+        # ② models.dev 缓存（按模型 ID 精确匹配）
+        if self.meta_service is not None and model:
+            remote = self.meta_service.get_context_window(model)
+            if remote:
+                return remote
+        # ③ 内置静态表（per-model → provider 默认）
+        windows = meta.get("context_windows") or {}
+        if model and isinstance(windows.get(model), int):
+            return windows[model]
+        default = meta.get("context_window")
+        if isinstance(default, int) and default > 0:
+            return default
+        return 128_000
+
+    def refresh_models_dev(self) -> bool:
+        """同步 models.dev 元数据（失败静默降级到内置表）。"""
+        if self.meta_service is None:
+            return False
+        return self.meta_service.refresh()
 
     # ------------------------------------------------------------ 适配器
 

@@ -17,6 +17,7 @@ EVENT_FORWARD = {
     "llm:stream", "llm:turn_start", "message:added", "tool:before_execute",
     "tool:after_execute", "approval:request", "approval:resolved", "task:start",
     "task:done", "task:error", "stats:update", "subagent:completed",
+    "context:stats",
 }
 
 
@@ -42,6 +43,12 @@ class TaskHandle:
 
     def _subscribe_events(self) -> None:
         async def _listener(event_name: str, payload: Any) -> None:
+            if event_name == "context:stats":
+                # 合并会话级累计（任务内实时 + 会话累计一并推给前端）
+                session_stats = self.app.accumulate_context_stats(
+                    self.kernel.session_id, (payload or {}).get("task") or {}
+                )
+                payload = {**(payload or {}), "session": session_stats}
             if event_name in EVENT_FORWARD:
                 self._forward_event({"type": event_name, "data": payload})
 
@@ -78,6 +85,11 @@ class TaskManager:
     def start(self, session_id: str, prompt: str, agent_id: Optional[str] = None) -> TaskHandle:
         task_id = uuid.uuid4().hex[:12]
         kernel = self.app.create_kernel(session_id)
+        # 多轮对话：加载该 session 已落盘的历史消息到上下文，
+        # 避免每轮新建 kernel 时从空上下文开始、落盘覆盖上一轮对话
+        snapshot = self.app.session_store.load(session_id)
+        if snapshot and snapshot.messages:
+            kernel.ctx.messages = list(snapshot.messages)
         # 按 Agent 配置裁剪工具集（build 全量 / plan 只读 / 自定义）
         registry = self.app.create_agent_registry(agent_id or "build")
         loop = self.app.create_loop(kernel, registry, agent_id=agent_id)

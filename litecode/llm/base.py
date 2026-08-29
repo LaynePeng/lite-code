@@ -24,8 +24,10 @@ class LLMError(Exception):
 class BaseLLMAdapter:
     """LLM 适配器抽象接口。
 
-    chat_stream(messages, tools) -> (content, tool_calls)
+    chat_stream(messages, tools) -> (content, tool_calls, usage)
     流式输出通过事件总线以 "llm:stream" 事件实时广播。
+    usage 为模型返回的 token 统计（准确值），无返回时可为 None：
+      {prompt_tokens, completion_tokens, prompt_cache_hit_tokens}
     """
 
     name = "base"
@@ -36,7 +38,7 @@ class BaseLLMAdapter:
         messages: List[Message],
         tools: List[ToolDefinition],
         events: Optional[TypedEventBus] = None,
-    ) -> Tuple[str, List[ToolCall]]:
+    ) -> Tuple[str, List[ToolCall], Optional[Dict[str, Any]]]:
         raise NotImplementedError
 
     async def test_connection(self) -> Tuple[bool, str, float]:

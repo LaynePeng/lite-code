@@ -55,6 +55,7 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], ...)
 @app.post("/api/approve")        # 审批确认
 @app.post("/api/llm/config")     # LLM 配置更新
 @app.post("/api/llm/test")       # 测试连接
+@app.get("/api/context/stats")   # 会话级上下文统计（切换会话时回填面板）
 @app.get("/api/workspace/tree")  # 文件树
 ```
 
@@ -68,6 +69,22 @@ async def _stream():
 
 return StreamingResponse(_stream(), media_type="text/event-stream")
 ```
+
+**多轮对话历史加载**：每次任务都会新建 Kernel，如果从空上下文开始，新任务的落盘会覆盖上一轮历史。`TaskManager.start` 在启动任务前先从 `SessionStore` 恢复该会话的历史消息，再注入新 Kernel：
+
+```python
+# litecode/server/tasks.py（核心）
+def start(self, session_id, prompt, agent_id=None):
+    kernel = self.app.create_kernel(session_id)
+    snapshot = self.app.session_store.load(session_id)   # 恢复历史
+    if snapshot and snapshot.messages:
+        kernel.ctx.messages = list(snapshot.messages)    # 续上上一轮对话
+    registry = self.app.create_agent_registry(agent_id or "build")
+    loop = self.app.create_loop(kernel, registry, agent_id=agent_id)
+    ...
+```
+
+这样「第二轮」的上下文 = 第一轮完整历史 + 新问题，system + tools 前缀保持不变——多轮对话间的缓存命中也能延续（第 4 课稳定前缀 + 第 17 课静态 System Prompt）。
 
 #### 3. React 前端（Web UI）
 
@@ -203,6 +220,16 @@ const danger = ratio >= 0.9;   // 达到模型窗口 90%，自动压缩已触发
 
 **为什么值得做**：上下文压缩是"黑盒操作"——模型突然失忆时，如果面板显示"压缩 5 次、省了 30K token"，你能立刻定位到是 Stage 1 压缩工具细节还是 Stage 2 整轮删除导致的；缓存命中率骤降则说明 System Prompt 或工具定义在漂移、缓存断点被破坏了。**可观测性让"上下文管理"从玄学变成可排查的工程指标**。同时，窗口占用比例到达 **90%**（`usage_ratio >= 0.9`）时进度条变红，提示 AgentLoop 已在按 `min(预算, 90% × 模型窗口)` 自动压缩。
 
+**切换会话时回填累计**：SSE 只在任务运行期间推送，切回历史会话时面板需要恢复累计数据。前端在切换会话时调用 `GET /api/context/stats?session_id=...`（后端 `app.get_context_session_stats` 聚合落盘统计），把 `session` 段回填到面板：
+
+```typescript
+// App.tsx — 切换会话
+const ctx = await api.contextStats(id);
+if (ctx.session && Object.keys(ctx.session).length > 0) {
+  setContextStats({ model: "", context_window: 0, session: ctx.session });
+}
+```
+
 #### 4. 多 LLM 配置界面 (`SettingsModal.tsx`)
 
 支持 7 个预置供应商 + 自定义：
@@ -223,10 +250,13 @@ const danger = ratio >= 0.9;   // 达到模型窗口 90%，自动压缩已触发
 - Base URL 编辑
 - 模型下拉选择 + 自定义输入（`<datalist>`）
 - Temperature 滑块
+- **上下文长度 tokens 输入**（留空自动：models.dev 同步 / 内置表兜底）
 - 测试连接按钮（真实 API 调用）
 - 保存配置按钮
 
 配置持久化在 `.lite-code/config.json` 的 `"llm"` 段，切换供应商即时生效（`AgentApp.close_adapter()` 重建适配器）。
+
+**上下文长度手动覆盖**：每个供应商可手填 `context_window`，留空则自动解析（`LLMRegistry.get_context_window` 四级优先级：① 手动覆盖 → ② models.dev → ③ 内置表 → ④ 128K 默认，见第 16 课 §5）。另有全局配置 `context_full_turns`（默认 2）控制策略 B 裁剪时保留的最近完整轮数——即第 3 课的 `keep_recent_full_turns`，在 `.lite-code/config.json` 的根级配置即可调。
 
 #### 5. Electron 桌面外壳 (`electron/main.js`)
 
@@ -454,7 +484,7 @@ release/
 +-----------------------------------------------------------------------+
 |  [模块一] ReAct 与循环 (第1-5课)                                       |
 |  - LLM 流式 Tool Calling 解析 | JSON 自愈 / 死循环检测 | 输出截断      |
-|  - Token 预算与策略B滑动裁剪 | 动态 System Prompt | Prompt 缓存       |
+|  - Token 预算与策略B滑动裁剪 | 静态 System Prompt（稳定前缀） | Prompt 缓存 |
 |  - Token 节省策略（多层预算 / 带外存储 / 缓存铁律）                     |
 +-----------------------------------------------------------------------+
 |  [模块二] Code Agent 增强能力 (第6-10课)                               |

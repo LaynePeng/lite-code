@@ -202,10 +202,27 @@ export default function ChatView({
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const stickRef = useRef(true);
   const turns = useMemo(() => buildTurns(messages), [messages]);
 
+  // 用户手动上翻浏览历史时暂停自动跟随；滚回底部附近自动恢复
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+    const el = scrollRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
+  useEffect(() => {
+    if (!stickRef.current) return;
+    // 流式期间瞬时定位（smooth 动画追不上高频内容增长会产生抖动）
+    bottomRef.current?.scrollIntoView({
+      behavior: streaming ? "auto" : "smooth",
+      block: "end",
+    });
   }, [messages, streaming, turns.length]);
 
   return (

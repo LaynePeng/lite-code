@@ -6,7 +6,7 @@ import ProjectPicker from "./components/ProjectPicker";
 import SettingsModal from "./components/SettingsModal";
 import Sidebar from "./components/Sidebar";
 import ToolPanel from "./components/ToolPanel";
-import type { AgentInfo, AppConfig, Msg, ServerStatus, SessionInfo, Stats, ToolCardInfo } from "./types";
+import type { AgentInfo, AppConfig, ContextStats, Msg, ServerStatus, SessionInfo, Stats, ToolCardInfo } from "./types";
 
 interface PendingApproval {
   id: string;
@@ -42,6 +42,7 @@ export default function App() {
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [currentAgent, setCurrentAgent] = useState<string>("build");
+  const [contextStats, setContextStats] = useState<ContextStats | null>(null);
 
   const esRef = useRef<EventSource | null>(null);
   const taskIdRef = useRef<string | null>(null);
@@ -131,11 +132,21 @@ export default function App() {
       setMessages([]);
       setStreaming(null);
       setStats(null);
+      setContextStats(null);
       try {
         const snap = await api.getSession(id);
         setMessages(snap.messages ?? []);
       } catch {
         setMessages([]);
+      }
+      // 拉取该会话的上下文累计统计
+      try {
+        const ctx = await api.contextStats(id);
+        if (ctx.session && Object.keys(ctx.session).length > 0) {
+          setContextStats({ model: "", context_window: 0, session: ctx.session });
+        }
+      } catch {
+        /* ignore */
       }
     },
     []
@@ -176,6 +187,25 @@ export default function App() {
     taskIdRef.current = null;
   }, []);
 
+  // 流式 chunk 渲染节流：内容立即累积到 ref，setStreaming 合并到 ~80ms 一次，
+  // 避免高频 setState 导致 Markdown 重解析与滚动动画追不上（气泡抖动）
+  const flushTimerRef = useRef<number | null>(null);
+
+  const scheduleStreamFlush = useCallback(() => {
+    if (flushTimerRef.current !== null) return;
+    flushTimerRef.current = window.setTimeout(() => {
+      flushTimerRef.current = null;
+      setStreaming({ ...(streamingRef.current ?? { content: "", cards: [] }) });
+    }, 80);
+  }, []);
+
+  const cancelStreamFlush = useCallback(() => {
+    if (flushTimerRef.current !== null) {
+      clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+  }, []);
+
   // ------------------------------------------------------------ SSE 事件处理
 
   const handleSSEEvent = useCallback(
@@ -187,7 +217,7 @@ export default function App() {
         case "llm:stream": {
           const cur = streamingRef.current ?? { content: "", cards: [] };
           streamingRef.current = { ...cur, content: cur.content + ev.data.chunk };
-          setStreaming({ ...streamingRef.current });
+          scheduleStreamFlush();
           break;
         }
         case "llm:turn_start": {
@@ -236,6 +266,10 @@ export default function App() {
           setStats(ev.data);
           break;
         }
+        case "context:stats": {
+          setContextStats(ev.data);
+          break;
+        }
         case "task:done": {
           setStats(ev.data.stats);
           const cur = streamingRef.current;
@@ -244,6 +278,7 @@ export default function App() {
             content: cur?.content || ev.data.content,
           };
           setMessages((prev) => [...prev, finalMsg]);
+          cancelStreamFlush();
           streamingRef.current = null;
           setStreaming(null);
           setRunning(false);
@@ -260,6 +295,7 @@ export default function App() {
         case "task:error": {
           setError(ev.data.message);
           pushLog(`✗ 任务错误: ${ev.data.message}`);
+          cancelStreamFlush();
           setRunning(false);
           closeStream();
           void refreshSessions();
@@ -269,7 +305,7 @@ export default function App() {
           break;
       }
     },
-    [closeStream, refreshSessions, pushLog]
+    [closeStream, refreshSessions, pushLog, scheduleStreamFlush, cancelStreamFlush]
   );
 
   // ------------------------------------------------------------ 发送
@@ -285,6 +321,7 @@ export default function App() {
       const sid = activeSessionRef.current;
       setError(null);
       setMessages((prev) => [...prev, { role: "user", content: prompt }]);
+      cancelStreamFlush();
       streamingRef.current = { content: "", cards: [] };
       setStreaming({ content: "", cards: [] });
       setRunning(true);
@@ -492,7 +529,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <ToolPanel messages={messages} streaming={streaming} running={running} />
+      <ToolPanel messages={messages} streaming={streaming} running={running} contextStats={contextStats} />
       {showSettings && (
         <SettingsModal
           onClose={() => setShowSettings(false)}

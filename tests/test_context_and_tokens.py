@@ -6,6 +6,8 @@ from litecode.core.json_repair import safe_json_parse
 from litecode.core.token_counter import TokenCounter
 from litecode.core.truncator import truncate_tool_output
 from litecode.core.types import Message, ToolCall
+from litecode.llm.anthropic import AnthropicAdapter
+from litecode.llm.openai_compat import OpenAICompatAdapter
 
 
 def test_count_text_tokens():
@@ -102,3 +104,113 @@ def test_prune_noop_within_budget():
     messages = _make_chain()
     cm = ContextManager(max_allowed_tokens=10**6)
     assert cm.prune_messages(messages) == messages
+
+
+# ---------------------------------------------------------------- 策略 B
+
+
+def _big_tool_turn(user_text: str, call_id: str, final_text: str) -> list:
+    return [
+        Message(role="user", content=user_text),
+        Message(role="assistant", content=None, tool_calls=[
+            ToolCall(id=call_id, name="read_file", arguments='{"filePath":"a.ts"}')]),
+        Message(role="tool", tool_call_id=call_id, content="result " * 200),
+        Message(role="assistant", content=final_text),
+    ]
+
+
+def _three_turn_chain() -> list:
+    messages = [Message(role="system", content="sys" * 300)]
+    messages += _big_tool_turn("问题一", "c1", "回答一")
+    messages += _big_tool_turn("问题二", "c2", "回答二")
+    messages += _big_tool_turn("问题三", "c3", "回答三")
+    return messages
+
+
+def test_prune_stage1_drops_old_tool_pairs_keeps_backbone():
+    """策略 B：先删更早轮次的工具细节（原子对），保留问题+最终回答；
+    最近 keep_recent_full_turns 轮的完整细节保留。"""
+    messages = _three_turn_chain()  # 总 1443 tokens
+    cm = ContextManager(max_allowed_tokens=1200, keep_recent_full_turns=2)
+    pruned = cm.prune_messages(messages)
+
+    contents = {m.content for m in pruned}
+    kept_call_ids = {
+        c.id for m in pruned if m.role == "assistant" and m.tool_calls for c in m.tool_calls
+    }
+    tool_call_ids = {m.tool_call_id for m in pruned if m.role == "tool"}
+
+    # system 永远在
+    assert pruned[0].role == "system"
+    # 最老一轮（问题一）：user 与最终回答保留，工具对（assistant tc + tool）被删
+    assert "问题一" in contents and "回答一" in contents
+    assert "c1" not in kept_call_ids and "c1" not in tool_call_ids
+    # 最近两轮的完整细节保留（含工具对）
+    assert "c2" in kept_call_ids and "c3" in kept_call_ids
+    assert "c2" in tool_call_ids and "c3" in tool_call_ids
+    assert "问题二" in contents and "回答二" in contents
+    assert "问题三" in contents and "回答三" in contents
+    # 原子对约束：每个 assistant(tool_calls) 的 tool 都跟着
+    assert len(kept_call_ids) == len(tool_call_ids)
+    # 裁剪后有压缩统计，且不超预算（核算含 system）
+    assert cm.last_prune["compressed"] is True
+    assert cm.last_prune["removed_tokens"] > 0
+    assert TokenCounter.count_messages_tokens(pruned) <= 1200
+
+
+def test_prune_hard_cap_override():
+    messages = _three_turn_chain()
+    cm = ContextManager(max_allowed_tokens=10**6)  # 预算巨大，不触发
+    pruned = cm.prune_messages(messages, hard_cap=1200)
+    assert len(pruned) < len(messages)
+    assert cm.last_prune["compressed"] is True
+
+
+def test_prune_stage2_drops_oldest_turn():
+    """阶段1 删完工具对仍超预算 → 从最老整轮删除（最新一轮永不删）。"""
+    messages = _three_turn_chain()
+    cm = ContextManager(max_allowed_tokens=500, keep_recent_full_turns=1)
+    pruned = cm.prune_messages(messages)
+
+    contents = {m.content for m in pruned}
+    assert pruned[0].role == "system"
+    assert "问题一" not in contents and "回答一" not in contents
+    assert "问题二" not in contents and "回答二" not in contents
+    assert "问题三" in contents and "回答三" in contents
+    # 不能出现孤立 tool 消息（整轮删不破坏原子对）
+    tool_count = sum(1 for m in pruned if m.role == "tool")
+    tc_count = sum(1 for m in pruned if m.role == "assistant" and m.tool_calls)
+    assert tool_count == tc_count
+    assert TokenCounter.count_messages_tokens(pruned) <= TokenCounter.count_messages_tokens(messages)
+
+
+# ---------------------------------------------------------------- usage 解析
+
+
+def test_openai_extract_usage():
+    # 末帧 usage（choices 为空）
+    usage = OpenAICompatAdapter._extract_usage({
+        "id": "x", "choices": [], "usage": {
+            "prompt_tokens": 100, "completion_tokens": 20,
+            "prompt_cache_hit_tokens": 80, "prompt_cache_miss_tokens": 20,
+        },
+    })
+    assert usage == {"prompt_tokens": 100, "completion_tokens": 20,
+                     "prompt_cache_hit_tokens": 80}
+    # 普通内容帧无 usage
+    assert OpenAICompatAdapter._extract_usage({"choices": [{"delta": {"content": "hi"}}]}) is None
+    # usage 字段缺失类型异常时不崩溃
+    assert OpenAICompatAdapter._extract_usage({"usage": {}}) is None
+
+
+def test_anthropic_usage_extract():
+    start = AnthropicAdapter._start_usage({
+        "type": "message_start", "message": {"usage": {"input_tokens": 500, "cache_read_input_tokens": 300}},
+    })
+    assert start == {"prompt_tokens": 500, "completion_tokens": 0, "prompt_cache_hit_tokens": 300}
+    delta = AnthropicAdapter._delta_usage({
+        "type": "message_delta", "usage": {"output_tokens": 42, "cache_read_input_tokens": 10},
+    })
+    assert delta == {"output_tokens": 42, "cache_read_input_tokens": 10}
+    assert AnthropicAdapter._start_usage({"type": "x"}) is None
+    assert AnthropicAdapter._delta_usage({"type": "x"}) is None

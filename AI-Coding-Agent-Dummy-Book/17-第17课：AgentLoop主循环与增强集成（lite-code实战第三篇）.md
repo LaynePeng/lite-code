@@ -211,7 +211,7 @@ class ContextManager:
         return turns[-1] if turns else (0, len(body))
 ```
 
-**动态 System Prompt（`core/system_prompt.py`）**：每次调用 LLM 前实时注入 OS、CWD、Git 分支、工具列表等环境信息：
+**静态 System Prompt（`core/system_prompt.py`）**：System 只含任务内恒定内容（角色、OS/CWD、工具摘要、规则），**任务开始时构建一次**，整轮任务内逐字节不变——这是第 4 课「稳定前缀」原则的真正落地。Git 状态等会随时间变化的信息**不进 System**，由 `git_status` 工具按需获取：
 
 ```python
 class SystemPromptBuilder:
@@ -219,8 +219,10 @@ class SystemPromptBuilder:
     def build(cls, cwd, tools):
         os_name = f"{platform.system()} {platform.release()} ({platform.machine()})"
         tools_summary = "\n".join(f"- **{t.name}**: {t.description}" for t in tools)
-        return f"你是一个专业的 AI 软件工程师 Code Agent...\n### 环境信息\n- 操作系统: {os_name}\n- 工作目录: `{cwd}`\n- Git: {cls._git_info(cwd)}\n### 可用工具\n{tools_summary}\n### 工作规则..."
+        return f"你是一个专业的 AI 软件工程师 Code Agent...\n### 环境信息\n- 操作系统: {os_name}\n- 当前工作目录: `{cwd}`\n### 可用工具\n{tools_summary}\n### 工作规则..."
 ```
+
+> **与第 3 课的关系**：第 3 课展示了"动态 System Prompt"的概念价值（环境感知），并讨论了它与缓存红线的张力；实战落地的最终选择是**静态骨架 + 工具按需获取**——`git_status` 等工具返回的信息永远比 System 里预埋的快照新鲜，而前缀稳定性保住了缓存命中（详见第 3 课「设计决策」与第 4 课「稳定前缀」）。
 
 #### 4. AgentLoop 主循环代码 (`litecode/core/agent_loop.py`)
 
@@ -249,9 +251,13 @@ class AgentLoop:
     async def run_task(self, prompt, system_prompt=None, tools=None, store_snapshot=True):
         messages = self.kernel.ctx.messages
 
-        # 1. System Prompt 初始化
+        # 1. System Prompt 初始化（每任务一次：静态骨架，保证缓存前缀稳定）
+        if system_prompt is None:
+            system_prompt = SystemPromptBuilder.build(self.workspace, tools)
         if not messages or messages[0].role != "system":
             messages.insert(0, Message(role="system", content=system_prompt))
+        else:
+            messages[0].content = system_prompt
 
         # 2. 用户消息入链
         messages.append(Message(role="user", content=prompt))
@@ -275,12 +281,7 @@ class AgentLoop:
                 self._compressed_tokens += int(
                     self.context_manager.last_prune.get("removed_tokens", 0))
 
-            # B. 动态 System Prompt（每次调用前实时注入，整体替换 payload[0]）
-            if payload[0].role == "system":
-                payload[0] = Message(role="system",
-                    content=SystemPromptBuilder.build(self.workspace, tools))
-
-            # C. beforeLLM 管道（插件可修改消息）
+            # B. beforeLLM 管道（插件可修改消息）
             processed = await self.kernel.before_llm.run(self.kernel.ctx, payload)
 
             # D. 调用 LLM（流式，内部 emit llm:stream）
@@ -297,7 +298,12 @@ class AgentLoop:
                 hit = usage.get("prompt_cache_hit_tokens", 0)
                 prompt = usage.get("prompt_tokens", 0)
                 stats["cache_hit_tokens"] += hit
-                stats["cache_miss_tokens"] += max(0, prompt - hit)
+                if self.adapter.name == "anthropic":
+                    # Anthropic: input_tokens 不含 cache_read，miss = input_tokens
+                    stats["cache_miss_tokens"] += prompt
+                else:
+                    # OpenAI 兼容（DeepSeek 等）: prompt_tokens 已含命中部分
+                    stats["cache_miss_tokens"] += max(0, prompt - hit)
             else:
                 stats["output_tokens"] += TokenCounter.count_text_tokens(content or "")
 
@@ -395,6 +401,7 @@ class SubAgentRunner:
             context_manager=ContextManager(max_allowed_tokens=24000),
             max_steps=max_steps,
             context_window=self.app.llm_registry.get_context_window(self.app.llm_registry.active),
+            # 四级解析：手动覆盖 → models.dev → 内置表 → 128K（详见第 16 课 §5）
         )
         summary, _ = await loop.run_task(
             prompt=f"请完成以下子任务：\n{task_description}\n完成后只输出结论。",
@@ -415,9 +422,9 @@ class SubAgentRunner:
 
 1. 掌握了完整的 **Think-Act-Observe 状态机** 控制逻辑；
 2. 集成了第 2 课所有防御：**JSON 自愈**、**死循环 Hash 检测**、**输出截断**（截断结果落盘，上下文只放句柄）；
-3. 集成了第 3 课所有增强：**Token 预算估算**、**策略 B 两阶段滑动裁剪**（保护 system 与 tool 原子对、保留最近 K 轮、`min(预算, 90% × 模型窗口)` 有效上限）、**动态 System Prompt**；
+3. 集成了第 3 课所有增强：**Token 预算估算**、**策略 B 两阶段滑动裁剪**（保护 system 与 tool 原子对、保留最近 K 轮、`min(预算, 90% × 模型窗口)` 有效上限）、**静态 System Prompt**（任务内构建一次，稳定前缀）；
 4. 实现了 **beforeTool 安全管道**（第 18 课 SecurityPlugin 的接入点）；
-5. 实现了 **估算兜底 + 真实 usage 回填**（第 4 课）：用模型返回的 `prompt_cache_hit_tokens` 精确统计缓存命中率，而非依赖估算；
+5. 实现了 **估算兜底 + 真实 usage 回填**（第 4 课）：用模型返回的 `prompt_cache_hit_tokens` 精确统计缓存命中率，并对 Anthropic 与 OpenAI 兼容接口使用不同的 miss 口径；
 6. 实现了 **上下文可观测性**：`context:stats` 事件把压缩次数、压缩节省 Token、命中率、窗口占用比例推给「上下文情况」面板；
 7. 主循环回收后自动**会话落盘**，防止中途异常崩溃丢状态；
 8. 子 Agent 编排**真实化**：上下文隔离、只读工具裁剪、Token 归集。

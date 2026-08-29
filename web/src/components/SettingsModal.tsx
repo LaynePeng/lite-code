@@ -31,7 +31,7 @@ export default function SettingsModal({
     }).catch(() => {});
   }, []);
 
-  const update = (pid: string, key: string, value: string | number | boolean) => {
+  const update = (pid: string, key: string, value: string | number | boolean | null) => {
     setEditing((e) => ({ ...e, [pid]: { ...(e[pid] || {}), [key]: value } }));
   };
 
@@ -156,6 +156,22 @@ export default function SettingsModal({
                   className="form-range"
                   value={currentEdit.temperature ?? 0.2}
                   onChange={(e) => update(activeProvider, "temperature", parseFloat(e.target.value))}
+                />
+              </div>
+
+              <div className="form-group">
+                <label>上下文长度 tokens（留空自动：models.dev 同步/内置表）</label>
+                <input
+                  type="number"
+                  min="1000"
+                  step="1000"
+                  className="form-input"
+                  placeholder="如 1000000（DeepSeek V4）"
+                  value={(currentEdit.context_window as number) ?? ""}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    update(activeProvider, "context_window", v === "" ? null : parseInt(v, 10));
+                  }}
                 />
               </div>
 

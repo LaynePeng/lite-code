@@ -1,4 +1,4 @@
-在前三课中，我们已经构建了一个完整的 Agent 控制循环：LLM 流式调用、JSON 自愈、死循环检测、Token 预算控制、滑动窗口裁剪、动态 System Prompt。但在实际生产环境中，有一个被严重低估的优化手段——**Prompt 缓存（Prompt Caching）**。
+在前三课中，我们已经构建了一个完整的 Agent 控制循环：LLM 流式调用、JSON 自愈、死循环检测、Token 预算控制、滑动窗口裁剪、感知环境的 System Prompt。但在实际生产环境中，有一个被严重低估的优化手段——**Prompt 缓存（Prompt Caching）**。
 
 本课我们会深入：
 1. 什么是 Prompt 缓存？为什么它能带来 **90% 的输入 Token 成本削减**？
@@ -95,16 +95,14 @@ def _build_payload(self, messages, tools, system, enable_cache=True):
     return payload
 ```
 
-对于 OpenAI 兼容接口（DeepSeek / OpenAI / Kimi 等），标注在 system 消息上：
+对于 OpenAI 兼容接口（DeepSeek / OpenAI / Kimi 等），**不需要任何手动标注**——服务端自动检测长前缀并缓存（DeepSeek 官方文档明确：无需配置，命中即生效）。我们唯一要做的，是请求时开启 usage 返回，才能在流末帧拿到真实的命中数据：
 
 ```python
 # llm/openai_compat.py
-if self.enable_cache:
-    for msg in payload["messages"]:
-        if msg.get("role") == "system":
-            msg["cache_control"] = {"type": "ephemeral"}
-            break
+"stream_options": {"include_usage": True}   # 流末帧返回 usage
 ```
+
+> **重要**：`cache_control` 是 Anthropic Messages API 专属字段，OpenAI 兼容接口一律静默忽略——往 system 消息上标注它既无效又污染载荷。命中数据必须靠 `include_usage` 返回的 `prompt_cache_hit_tokens` 统计（提取逻辑见第 16 课 §2）。
 
 #### 5. 缓存感知的 Token 预算管理
 
@@ -126,7 +124,7 @@ class TokenCounter:
 
 **重要**：调整 Token 预算策略时，**不能破坏缓存断点**。例如：
 - 裁剪历史消息时，只能裁剪**缓存断点之后**的消息；
-- 动态 System Prompt 中**不能插入**会改变前缀的消息；
+- 静态 System Prompt 中**不能插入**会改变前缀的消息（任务内构建一次，逐字节稳定）；
 - 工具定义列表的顺序和内容必须稳定。
 
 #### 6. 验证缓存命中
@@ -167,8 +165,15 @@ if usage:
     hit = usage.get("prompt_cache_hit_tokens", 0)      # 缓存命中的部分
     prompt = usage.get("prompt_tokens", 0)
     stats["cache_hit_tokens"] += hit
-    stats["cache_miss_tokens"] += max(0, prompt - hit)
+    if adapter.name == "anthropic":
+        # Anthropic: input_tokens 不含 cache_read，miss = input_tokens
+        stats["cache_miss_tokens"] += prompt
+    else:
+        # OpenAI 兼容（DeepSeek 等）: prompt_tokens 已含命中部分
+        stats["cache_miss_tokens"] += max(0, prompt - hit)
 ```
+
+**口径差异**：OpenAI 兼容接口的 `prompt_tokens` 已包含缓存命中部分，所以 `miss = prompt - hit`；而 Anthropic 的 `input_tokens` **不含** `cache_read_input_tokens`（命中部分在 message_delta 事件里单独返回，见第 16 课 §3），所以 `miss = input_tokens`。两家不能共用同一公式。
 
 命中率 = `cache_hit_tokens / (cache_hit_tokens + cache_miss_tokens)`。这个指标同时回答三个问题：
 

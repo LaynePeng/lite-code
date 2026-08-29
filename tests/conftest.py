@@ -19,7 +19,7 @@ class MockLLMAdapter:
         messages: List[Message],
         tools: List[ToolDefinition],
         events: Optional[TypedEventBus] = None,
-    ) -> Tuple[str, List[ToolCall]]:
+    ) -> tuple:
         idx = len(self.calls)
         self.calls.append(idx)
         if idx < len(self.responses):
@@ -28,7 +28,7 @@ class MockLLMAdapter:
             content, calls = "（模拟完成）", []
         if events and content:
             await events.emit("llm:stream", {"chunk": content})
-        return content, calls
+        return content, calls, None
 
 
 def tool_call(name: str, args_json: str, cid: str = "call_1") -> ToolCall:

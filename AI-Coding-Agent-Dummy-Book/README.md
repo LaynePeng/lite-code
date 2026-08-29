@@ -19,7 +19,7 @@
 | --------------------- | ------------------------------------------------------------------- | ---------------------------------- |
 | **模块一：ReAct 与循环**     | [第 1 课](<01-第1课：LLM 原生接口封装与 Tool Calling 底层流式解析.md>)                  | LLM 原生接口封装 + Tool Calling 流式解析     |
 |                       | [第 2 课](<02-第2课：Agent 控制循环的异常容错、死循环中断与 Token 预算控制.md>)                | JSON 自愈 / 死循环检测 / 输出截断（OpenCode 风格）             |
-|                       | [第 3 课](<03-第3课：上下文管理、Token 动态计算与 Dynamic System Prompt.md>)          | Token 预算 / 策略 B 两阶段裁剪 / 动态 System Prompt |
+|                       | [第 3 课](<03-第3课：上下文管理、Token 动态计算与 Dynamic System Prompt.md>)          | Token 预算 / 策略 B 两阶段裁剪 / System Prompt 静态化 |
 |                       | [第 4 课](<04-第4课：Prompt 缓存机制：命中率优化与工程实践.md>)                       | Prompt 缓存 / 断点标注 / 稳定前缀设计                   |
 |                       | [第 5 课](<05-第5课：Token 节省策略：从 OpenSquilla 到缓存友好.md>)                         | 多层预算治理 / 四层压缩 / 带外存储 / 缓存铁律 |
 | **模块二：Code Agent 增强** | [第 6 课](<06-第6课：代码感知、Ripgrep 高效搜索与代码库结构构建.md>)                       | Ripgrep 搜索 / 文件树                   |
@@ -32,7 +32,7 @@
 |                       | [第 13 课](<13-第13课：多Agent协作与子Agent调度（Sub-agent Orchestration）.md>) | 子 Agent 编排                         |
 |                       | [第 14 课](<14-第14课：Agent类型与自定义机制（Build与Plan与用户扩展）.md>)      | Build/Plan 双默认 Agent / 自定义 Agent 机制 |
 | **模块四：手写实战**          | [第 15 课](<15-第15课：核心Core内核编码（lite-code实战第一篇）.md>)                  | Python Core 内核                     |
-|                       | [第 16 课](<16-第16课：LLM多供应商适配器与核心工具集（lite-code实战第二篇）.md>)             | 多 LLM + 17 工具                      |
+|                       | [第 16 课](<16-第16课：LLM多供应商适配器与核心工具集（lite-code实战第二篇）.md>)             | 多 LLM + models.dev 元数据 + 17 工具              |
 |                       | [第 17 课](<17-第17课：AgentLoop主循环与增强集成（lite-code实战第三篇）.md>)            | AgentLoop 主循环（策略 B 集成 + 上下文可观测性）                      |
 |                       | [第 18 课](<18-第18课：安全沙箱与高危拦截实战（lite-code实战第四篇）.md>)                   | 安全沙箱 + Web 审批                      |
 |                       | [第 19 课](<19-第19课：WebUI与Electron桌面应用打包（lite-code实战终章）.md>)       | Web UI（上下文情况面板）+ Electron + 打包             |

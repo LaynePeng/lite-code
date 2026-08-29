@@ -19,7 +19,7 @@ from .tasks import TaskManager
 
 logger = logging.getLogger("litecode.server")
 
-VERSION = "0.2.0rc0"
+VERSION = "0.3.0rc0"
 
 
 # ---------------------------------------------------------------- 请求模型
@@ -99,7 +99,20 @@ def _session_title(snapshot: dict) -> str:
 
 
 def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
-    fast_app = FastAPI(title="lite-code", version=VERSION)
+    from contextlib import asynccontextmanager
+
+    @asynccontextmanager
+    async def _lifespan(_fast_app: FastAPI):
+        # models.dev 元数据同步（失败静默降级到内置静态表）
+        import asyncio as _asyncio
+
+        try:
+            await _asyncio.to_thread(app.refresh_model_meta)
+        except Exception:
+            pass
+        yield
+
+    fast_app = FastAPI(title="lite-code", version=VERSION, lifespan=_lifespan)
     auth = TokenAuth(token)
     tasks = TaskManager(app)
 
@@ -141,7 +154,7 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
         return {
             k: app.config.get(k) for k in (
                 "max_steps", "token_budget", "tool_timeout",
-                "auto_approve", "pricing",
+                "auto_approve", "pricing", "context_full_turns",
             )
         }
 
@@ -179,6 +192,14 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
             overrides=payload.overrides,
         )
         return result
+
+    @fast_app.get("/api/context/stats")
+    async def context_stats(session_id: str = "", request: Request = None):
+        if request:
+            _check_auth(request)
+        if not session_id:
+            return {"session": {}}
+        return {"session": app.get_context_session_stats(session_id)}
 
     # ------------------------------------------------------------ 安全规则
 

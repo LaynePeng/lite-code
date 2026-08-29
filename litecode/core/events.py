@@ -32,6 +32,7 @@ class TypedEventBus:
         "task:error": dict,
         "task:stop": dict,
         "stats:update": dict,
+        "context:stats": dict,
         "subagent:completed": dict,
     }
 

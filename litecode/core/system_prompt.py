@@ -1,7 +1,10 @@
-"""动态 System Prompt 组装器（对应课程第3课 DynamicSystemPromptBuilder）。"""
+"""静态 System Prompt 骨架（对应课程第3课 DynamicSystemPromptBuilder）。
+
+System 只含任务内恒定内容（角色 / 环境 / 工具摘要 / 规则），保证缓存前缀稳定；
+git 状态等会随时间变化的信息由 git_status 工具按需获取。
+"""
 from __future__ import annotations
 
-import os
 import platform
 import subprocess
 from typing import List
@@ -10,7 +13,7 @@ from .types import ToolDefinition
 
 
 class SystemPromptBuilder:
-    """每次调用 LLM 前实时收集环境信息，渲染动态 System Prompt。"""
+    """静态 System Prompt 组装器：同一任务内所有 LLM 调用共享同一份 system 内容。"""
 
     @staticmethod
     def _git_info(cwd: str) -> str:
@@ -45,7 +48,6 @@ class SystemPromptBuilder:
 ### 环境信息 (Environment Context)
 - **操作系统**: {os_name}
 - **当前工作目录**: `{cwd}`
-- **Git 状态**: {cls._git_info(cwd)}
 
 ### 可用工具 (Available Tools)
 {tools_summary}

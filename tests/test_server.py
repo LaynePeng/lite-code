@@ -61,7 +61,7 @@ async def test_status_and_sessions(live_client):
     c, app, _ = live_client
     r = await c.get("/api/status")
     assert r.status_code == 200
-    assert r.json()["version"] == "0.2.0rc0"
+    assert r.json()["version"] == "0.3.0rc0"
 
     r = await c.post("/api/sessions", json={"name": "会话A"})
     assert r.status_code == 200
@@ -91,17 +91,55 @@ async def test_chat_sse_flow(live_client):
     assert "task:start" in types
     assert "llm:stream" in types
     assert "message:added" in types
+    assert "context:stats" in types
     assert any(e["type"] == "tool:before_execute" and e["data"]["toolName"] == "write_file"
                for e in events)
     assert types[-1] == "task:done"
     done = next(e for e in events if e["type"] == "task:done")
     assert done["data"]["content"] == "完成"
 
+    # 上下文统计事件：任务内 + 会话累计
+    ctx = next(e for e in events if e["type"] == "context:stats")
+    assert ctx["data"]["context_window"] == 1_000_000
+    assert ctx["data"]["task"]["prompt_tokens"] >= 0
+    assert ctx["data"]["session"]["prompt_tokens"] >= 0
+
+    # 会话累计接口可查
+    r = await c.get(f"/api/context/stats?session_id={sid}")
+    assert r.json()["session"]["prompt_tokens"] >= 0
+
     # 会话已持久化，且文件真实写入
     r = await c.get(f"/api/sessions/{sid}")
     assert len(r.json()["messages"]) >= 5
     with open(os.path.join(app.workspace, "x.txt"), encoding="utf-8") as f:
         assert f.read() == "hello"
+
+
+async def test_multiturn_history_preserved(live_client):
+    """多轮对话：第二轮不能覆盖第一轮，标题保持为第一个问题。"""
+    c, app, _ = live_client
+    r = await c.post("/api/sessions", json={})
+    sid = r.json()["session_id"]
+
+    async def _chat(prompt):
+        r = await c.post("/api/chat", json={"session_id": sid, "prompt": prompt})
+        task_id = r.json()["task_id"]
+        async with c.stream("GET", f"/api/tasks/{task_id}/events") as stream:
+            await _consume_sse(stream)
+
+    await _chat("第一个问题")
+    await _chat("第二个问题")
+
+    r = await c.get(f"/api/sessions/{sid}")
+    snap = r.json()
+    user_msgs = [m["content"] for m in snap["messages"] if m["role"] == "user"]
+    assert user_msgs == ["第一个问题", "第二个问题"], user_msgs
+    # 首个 user 消息仍在，说明历史没有被第二轮覆盖
+    assert any(m["role"] == "assistant" and m.get("content") for m in snap["messages"])
+
+    r = await c.get("/api/sessions")
+    entry = next(s for s in r.json() if s["session_id"] == sid)
+    assert entry["title"] == "第一个问题", entry["title"]
 
 
 async def test_stop_task(live_client):

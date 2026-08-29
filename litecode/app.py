@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from .core.agent_loop import AgentLoop
 from .core.agent_profile import AgentProfile, AgentRegistry
+from .core.context_manager import ContextManager
 from .core.kernel import Kernel
 from .core.session_store import SessionStore
 from .llm.base import BaseLLMAdapter
@@ -32,6 +33,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "tool_timeout": 120,
     "auto_approve": False,
     "approval_timeout": 600,
+    "context_full_turns": 2,
     "pricing": {"input_per_mtok": 1.6, "output_per_mtok": 4.8},
 }
 
@@ -65,8 +67,9 @@ class AgentApp:
         # 安全组件（先于配置加载，供默认配置落盘引用）
         self.guard = SecurityGuard()
         self.approval_gate = ApprovalGate(timeout_seconds=600)
-        self.llm_registry = LLMRegistry()
+        self.llm_registry = LLMRegistry(config_dir=config_dir)
         self.agent_registry = AgentRegistry()
+        self._context_session_stats: Dict[str, Dict[str, Any]] = {}
         self._load_config()
         self.approval_gate = ApprovalGate(
             timeout_seconds=self.config.get("approval_timeout", 600)
@@ -192,6 +195,9 @@ class AgentApp:
                     settings.pop("api_key")
                 # 前端回传的 has_key 是 UI 展示用标记，不并入 provider 配置
                 settings.pop("has_key", None)
+                # 空/无效的 context_window（手动覆盖）视为未设置
+                if settings.get("context_window") in (None, "", 0):
+                    settings.pop("context_window", None)
                 self.llm_registry.providers[pid] = {**current, **settings}
         self.llm_registry.reset_adapter()
         self._persist_config()
@@ -203,6 +209,30 @@ class AgentApp:
 
     def llm_provider_meta(self) -> List[Dict[str, Any]]:
         return self.llm_registry.provider_meta()
+
+    def refresh_model_meta(self) -> bool:
+        """同步 models.dev 模型元数据（启动时调用，失败静默降级）。"""
+        return self.llm_registry.refresh_models_dev()
+
+    # ------------------------------------------------------------ 上下文统计
+
+    def accumulate_context_stats(self, session_id: str, task_stats: Dict[str, Any]) -> Dict[str, Any]:
+        """把一次任务内的上下文统计累加进会话级累计，返回最新会话累计。"""
+        acc = self._context_session_stats.setdefault(session_id, {
+            "prompt_tokens": 0, "output_tokens": 0,
+            "cache_hit_tokens": 0, "cache_miss_tokens": 0,
+            "compression_count": 0, "compressed_tokens": 0,
+        })
+        for key in ("prompt_tokens", "output_tokens", "cache_hit_tokens",
+                    "cache_miss_tokens", "compression_count", "compressed_tokens"):
+            acc[key] += int(task_stats.get(key, 0) or 0)
+        hit = acc["cache_hit_tokens"]
+        miss = acc["cache_miss_tokens"]
+        acc["cache_hit_rate"] = round(hit / (hit + miss), 4) if (hit + miss) > 0 else None
+        return dict(acc)
+
+    def get_context_session_stats(self, session_id: str) -> Dict[str, Any]:
+        return dict(self._context_session_stats.get(session_id, {}))
 
     # ------------------------------------------------------------ 工具
 
@@ -320,16 +350,27 @@ class AgentApp:
             if profile.temperature is not None:
                 overrides["temperature"] = profile.temperature
             adapter = self.llm_registry.build_adapter(overrides=overrides)
+        # 上下文压缩：策略 B（保留最近 N 轮完整细节），预算 = min(token_budget, 90%×窗口)
+        token_budget = int(self.config.get("token_budget", 48000))
+        context_manager = ContextManager(
+            token_budget,
+            keep_recent_full_turns=int(self.config.get("context_full_turns", 2)),
+        )
+        context_window = self.llm_registry.get_context_window(
+            self.llm_registry.active, getattr(adapter, "model", None)
+        )
         loop = AgentLoop(
             kernel=kernel,
             adapter=adapter,
             registry=registry,
             session_store=self.session_store,
+            context_manager=context_manager,
             max_steps=int(self.config.get("max_steps", 25)),
             tool_timeout=float(self.config.get("tool_timeout", 120)),
-            token_budget=int(self.config.get("token_budget", 48000)),
+            token_budget=token_budget,
             pricing=self.config.get("pricing", DEFAULT_CONFIG["pricing"]),
             auto_approve=bool(self.config.get("auto_approve", False)),
+            context_window=context_window,
         )
         loop.workspace = self.workspace
         loop.truncation_dir = os.path.join(self.config_dir, "truncations")

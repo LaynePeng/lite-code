@@ -75,4 +75,9 @@ export const api = {
     req<{ ok: boolean; message: string; latency_ms: number }>("/api/llm/test", {
       method: "POST", body: JSON.stringify({ provider_id: providerId, overrides }),
     }),
+
+  contextStats: (sessionId: string) =>
+    req<{ session: import("./types").ContextSessionStats }>(
+      `/api/context/stats?session_id=${encodeURIComponent(sessionId)}`
+    ),
 };

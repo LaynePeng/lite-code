@@ -153,7 +153,7 @@ export default function Sidebar({
         <button className="btn-open-settings" onClick={onOpenSettings}>
           ⚙️ LLM 设置
         </button>
-        <div className="footer-version">lite-code v0.2.0-rc · 手写 Agent Harness</div>
+        <div className="footer-version">lite-code v0.3.0-rc · 手写 Agent Harness</div>
       </div>
     </aside>
   );

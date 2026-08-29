@@ -67,16 +67,12 @@ class OpenAICompatAdapter(BaseLLMAdapter):
             "messages": [m.to_dict() for m in messages],
             "stream": True,
             "temperature": self.temperature,
+            "stream_options": {"include_usage": True},
         }
         if tools:
             payload["tools"] = [
                 {"type": "function", "function": t.__dict__} for t in tools
             ]
-        if self.enable_cache:
-            for msg in payload["messages"]:
-                if msg.get("role") == "system" and isinstance(msg.get("content"), str):
-                    msg["cache_control"] = {"type": "ephemeral"}
-                    break
         return payload
 
     async def chat_stream(
@@ -106,11 +102,27 @@ class OpenAICompatAdapter(BaseLLMAdapter):
         except httpx.HTTPError as exc:
             raise LLMError(f"[LLM Error] 网络错误: {exc}") from exc
 
+    @staticmethod
+    def _extract_usage(parsed: Dict[str, Any]) -> Optional[Dict[str, int]]:
+        """从流式 chunk 提取 usage（末帧返回，choices 为空）。统一字段格式。"""
+        usage = parsed.get("usage")
+        if not usage or not isinstance(usage, dict):
+            return None
+        prompt = usage.get("prompt_tokens")
+        if not isinstance(prompt, int):
+            return None
+        return {
+            "prompt_tokens": prompt,
+            "completion_tokens": usage.get("completion_tokens", 0),
+            "prompt_cache_hit_tokens": usage.get("prompt_cache_hit_tokens", 0),
+        }
+
     async def _parse_sse(
         self, response: httpx.Response, events: Optional[TypedEventBus]
-    ) -> Tuple[str, List[ToolCall]]:
+    ) -> Tuple[str, List[ToolCall], Optional[Dict[str, int]]]:
         full_content = ""
         tool_calls_map: Dict[int, ToolCall] = {}
+        usage: Optional[Dict[str, int]] = None
         buffer = ""
         byte_buffer = b""
 
@@ -125,7 +137,7 @@ class OpenAICompatAdapter(BaseLLMAdapter):
                 if not line or line.startswith(":"):
                     continue
                 if line == "data: [DONE]":
-                    return full_content, self._finalize_tool_calls(tool_calls_map)
+                    return full_content, self._finalize_tool_calls(tool_calls_map), usage
                 if not line.startswith("data: "):
                     continue
 
@@ -133,6 +145,10 @@ class OpenAICompatAdapter(BaseLLMAdapter):
                     parsed = json.loads(line[6:])
                 except json.JSONDecodeError:
                     continue
+
+                extracted = self._extract_usage(parsed)
+                if extracted is not None:
+                    usage = extracted
 
                 delta = (parsed.get("choices") or [{}])[0].get("delta")
                 if not delta:
@@ -157,7 +173,7 @@ class OpenAICompatAdapter(BaseLLMAdapter):
                     if fn.get("arguments"):
                         target.arguments += fn["arguments"]
 
-        return full_content, self._finalize_tool_calls(tool_calls_map)
+        return full_content, self._finalize_tool_calls(tool_calls_map), usage
 
     @staticmethod
     def _finalize_tool_calls(tool_calls_map: Dict[int, ToolCall]) -> List[ToolCall]:

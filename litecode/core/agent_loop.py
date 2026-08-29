@@ -40,6 +40,7 @@ class AgentLoop:
         token_budget: int = 48000,
         pricing: Optional[Dict[str, float]] = None,
         auto_approve: bool = False,
+        context_window: Optional[int] = None,
     ) -> None:
         self.kernel = kernel
         self.adapter = adapter
@@ -50,11 +51,16 @@ class AgentLoop:
         self.tool_timeout = tool_timeout
         self.auto_approve = auto_approve
         self.pricing = pricing or {"input_per_mtok": 2.0, "output_per_mtok": 8.0}
+        self.context_window = context_window or 128_000
         self.state = AgentStateTracker()
         self.abort_event: Optional[asyncio.Event] = None
         self.workspace: str = "."
         # 截断落盘目录（第4/5课：超限工具输出保存到磁盘，上下文只放句柄）
         self.truncation_dir: Optional[str] = None
+        # 上下文压缩/缓存统计（供「上下文情况」面板）
+        self._compression_count = 0
+        self._compressed_tokens = 0
+        self._last_usage: Optional[Dict[str, int]] = None
 
     def request_stop(self) -> None:
         if self.abort_event:
@@ -84,12 +90,17 @@ class AgentLoop:
             "tool_calls": 0,
             "turns": 0,
             "blocked": 0,
+            "cache_hit_tokens": 0,
+            "cache_miss_tokens": 0,
         }
 
-        # 1. System Prompt 初始化（会话首条）
+        # 1. System Prompt 初始化（每任务一次：静态骨架，保证缓存前缀稳定）
+        if system_prompt is None:
+            system_prompt = SystemPromptBuilder.build(self.workspace, tools)
         if not messages or messages[0].role != "system":
-            if system_prompt:
-                messages.insert(0, Message(role="system", content=system_prompt))
+            messages.insert(0, Message(role="system", content=system_prompt))
+        else:
+            messages[0].content = system_prompt
 
         # 2. 用户消息入链
         user_message = Message(role="user", content=prompt)
@@ -109,26 +120,48 @@ class AgentLoop:
                     return await self._finish("[Stopped]: 已由用户手动停止。", messages, stats, store_snapshot)
 
                 # A. 上下文裁剪（保护 system 与 assistant/tool 原子对）
-                payload = self.context_manager.prune_messages(messages)
+                #    有效上限 = min(预算, 90% × 模型上下文窗口)，到阈值自动压缩
+                cap = self._effective_cap()
+                payload = self.context_manager.prune_messages(messages, hard_cap=cap)
+                if self.context_manager.last_prune.get("compressed"):
+                    self._compression_count += 1
+                    self._compressed_tokens += int(
+                        self.context_manager.last_prune.get("removed_tokens", 0)
+                    )
 
-                # B. 动态 System Prompt（每次调用前实时注入环境信息）
-                if payload and payload[0].role == "system":
-                    payload = [Message(role="system", content=SystemPromptBuilder.build(
-                        self.workspace, tools))] + payload[1:]
-
-                # C. beforeLLM 管道（插件可修改消息）
+                # B. beforeLLM 管道（插件可修改消息）
                 processed = await self.kernel.before_llm.run(self.kernel.ctx, payload)
-                stats["input_tokens"] += TokenCounter.count_messages_tokens(processed)
+                if not self._last_usage:
+                    stats["input_tokens"] += TokenCounter.count_messages_tokens(processed)
 
                 # D. 调用 LLM（流式，内部 emit llm:stream）
                 try:
-                    content, tool_calls = await self.adapter.chat_stream(processed, tools, self.kernel.events)
+                    content, tool_calls, usage = await self.adapter.chat_stream(
+                        processed, tools, self.kernel.events
+                    )
                 except Exception as exc:
                     logger.exception("[AgentLoop] LLM 调用失败")
                     messages.append(Message(role="assistant", content=f"[LLM Error]: {exc}"))
                     return await self._finish(f"[LLM Error]: {exc}", messages, stats, store_snapshot)
 
-                stats["output_tokens"] += TokenCounter.count_text_tokens(content or "")
+                # D2. 用模型返回的 usage 累加（准确值），无 usage 时回退估算
+                self._last_usage = usage or self._last_usage
+                if usage:
+                    stats["input_tokens"] += usage.get("prompt_tokens", 0)
+                    stats["output_tokens"] += usage.get("completion_tokens", 0)
+                    hit = usage.get("prompt_cache_hit_tokens", 0)
+                    prompt = usage.get("prompt_tokens", 0)
+                    stats["cache_hit_tokens"] += hit
+                    if getattr(self.adapter, "name", "") == "anthropic":
+                        # Anthropic: input_tokens 不含 cache_read，miss = input_tokens
+                        stats["cache_miss_tokens"] += prompt
+                    else:
+                        # OpenAI 兼容（DeepSeek 等）: prompt_tokens 已含命中部分
+                        stats["cache_miss_tokens"] += max(0, prompt - hit)
+                else:
+                    stats["output_tokens"] += TokenCounter.count_text_tokens(content or "")
+
+                await self._emit_context_stats(stats)
 
                 # E. Assistant 消息入链
                 assistant_message = Message(
@@ -269,3 +302,33 @@ class AgentLoop:
             "cost_estimate": round(cost, 4),
             "status": self.state.status.value,
         }
+
+    def _effective_cap(self) -> int:
+        """上下文有效上限 = min(预算, 90% × 模型上下文窗口)。"""
+        window_cap = int(0.9 * self.context_window)
+        return min(self.context_manager.max_allowed_tokens, window_cap)
+
+    async def _emit_context_stats(self, stats: Dict[str, Any]) -> None:
+        """推送「上下文情况」统计（任务内实时，会话累计由 TaskHandle 合并）。"""
+        hit = stats.get("cache_hit_tokens", 0)
+        miss = stats.get("cache_miss_tokens", 0)
+        hit_rate = round(hit / (hit + miss), 4) if (hit + miss) > 0 else None
+        last_usage = self._last_usage or {}
+        prompt_tokens = last_usage.get("prompt_tokens") or stats.get("input_tokens", 0)
+        usage_ratio = round(prompt_tokens / self.context_window, 4) if self.context_window else None
+        model = getattr(self.adapter, "model", None) or ""
+        await self.kernel.events.emit("context:stats", {
+            "model": model,
+            "context_window": self.context_window,
+            "task": {
+                "prompt_tokens": stats.get("input_tokens", 0),
+                "output_tokens": stats.get("output_tokens", 0),
+                "cache_hit_tokens": hit,
+                "cache_miss_tokens": miss,
+                "cache_hit_rate": hit_rate,
+                "compression_count": self._compression_count,
+                "compressed_tokens": self._compressed_tokens,
+                "usage_ratio": usage_ratio,
+                "last_prompt_tokens": prompt_tokens,
+            },
+        })

@@ -1,18 +1,18 @@
 {
   "name": "lite-code",
-  "version": "0.2.0-rc0",
+  "version": "0.3.0-rc0",
   "description": "lite-code：手写内核的 Code 开发 Agent 桌面工具（Electron + Python Core + Web UI）",
   "main": "electron/main.js",
   "author": "lite-code",
   "license": "MIT",
   "scripts": {
     "dev": "concurrently -k -n core,web,app -c blue,green,magenta \"npm run dev:core\" \"npm run dev:web\" \"npm run dev:electron\"",
-    "dev:core": ".venv/bin/python -m litecode serve --port 8787 --log-level info",
+    "dev:core": "node scripts/dev-core.mjs",
     "dev:web": "npm --prefix web run dev",
-    "dev:electron": "LITECODE_DEV_URL=http://localhost:5173 electron .",
+    "dev:electron": "node scripts/dev-electron.mjs",
     "start": "npm run build:web && electron .",
     "build:web": "npm --prefix web run build",
-    "test:backend": ".venv/bin/pytest -q",
+    "test:backend": "node scripts/test-backend.mjs",
     "package": "npm run build:web && node scripts/package.mjs",
     "package:backend": "node scripts/package-backend.mjs"
   },

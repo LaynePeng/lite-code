@@ -160,12 +160,37 @@ class AnthropicAdapter(BaseLLMAdapter):
         except httpx.HTTPError as exc:
             raise LLMError(f"[Anthropic Error] 网络错误: {exc}") from exc
 
+    @staticmethod
+    def _start_usage(parsed: Dict[str, Any]) -> Optional[Dict[str, int]]:
+        """message_start 事件的 input/cache_read 统计。"""
+        msg = parsed.get("message") or {}
+        m_usage = msg.get("usage") or {}
+        if not isinstance(m_usage.get("input_tokens"), int):
+            return None
+        return {
+            "prompt_tokens": m_usage["input_tokens"],
+            "completion_tokens": m_usage.get("output_tokens", 0),
+            "prompt_cache_hit_tokens": m_usage.get("cache_read_input_tokens", 0),
+        }
+
+    @staticmethod
+    def _delta_usage(parsed: Dict[str, Any]) -> Optional[Dict[str, int]]:
+        """message_delta 事件的 output/cache_read 增量。"""
+        d_usage = parsed.get("usage") or {}
+        if not isinstance(d_usage.get("output_tokens"), int):
+            return None
+        return {
+            "output_tokens": d_usage.get("output_tokens", 0),
+            "cache_read_input_tokens": d_usage.get("cache_read_input_tokens", 0),
+        }
+
     async def _parse_sse(
         self, response: httpx.Response, events: Optional[TypedEventBus]
-    ) -> Tuple[str, List[ToolCall]]:
+    ) -> Tuple[str, List[ToolCall], Optional[Dict[str, int]]]:
         full_content = ""
         tool_calls: List[ToolCall] = []
         current_tool: Optional[ToolCall] = None
+        usage: Optional[Dict[str, int]] = None
         buffer = ""
         byte_buffer = b""
 
@@ -190,7 +215,19 @@ class AnthropicAdapter(BaseLLMAdapter):
                     continue
 
                 ev_type = parsed.get("type", "")
-                if ev_type == "content_block_start":
+                if ev_type == "message_start":
+                    start = self._start_usage(parsed)
+                    if start is not None:
+                        usage = start
+                elif ev_type == "message_delta":
+                    delta = self._delta_usage(parsed)
+                    if delta is not None:
+                        usage = usage or {"prompt_tokens": 0, "completion_tokens": 0,
+                                          "prompt_cache_hit_tokens": 0}
+                        # message_delta.usage 为请求累计值（非增量），直接覆盖
+                        usage["completion_tokens"] = delta.get("output_tokens", 0)
+                        usage["prompt_cache_hit_tokens"] = delta.get("cache_read_input_tokens", 0)
+                elif ev_type == "content_block_start":
                     block = parsed.get("content_block", {})
                     if block.get("type") == "tool_use":
                         current_tool = ToolCall(
@@ -211,7 +248,7 @@ class AnthropicAdapter(BaseLLMAdapter):
                 elif ev_type == "content_block_stop":
                     current_tool = None
 
-        return full_content, [tc for tc in tool_calls if tc.name]
+        return full_content, [tc for tc in tool_calls if tc.name], usage
 
     async def test_connection(self) -> Tuple[bool, str, float]:
         start = time.time()

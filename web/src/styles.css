@@ -536,6 +536,11 @@ button {
   min-width: 0;
 }
 
+/* 流式气泡固定最小高度：思考中 → 首字出现的瞬间不跳变 */
+.bubble.streaming {
+  min-height: 24px;
+}
+
 /* Markdown 渲染 */
 .md > *:first-child {
   margin-top: 0;
@@ -1860,6 +1865,126 @@ button {
   font-size: 10px;
   color: var(--green);
   animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+/* 右面板页签：上下文情况 | 工具调用
+   顶部 38px 是无边框窗口拖拽区（-webkit-app-region: drag 不响应点击），
+   因此页签必须整体下移并标记 no-drag，否则按钮点不到。 */
+.tool-panel-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 40px 8px 6px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.tool-tab {
+  flex: 1;
+  padding: 5px 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+  -webkit-app-region: no-drag;
+}
+
+.tool-tab:hover {
+  background: var(--bg-2);
+}
+
+.tool-tab.active {
+  color: var(--text-1);
+  background: var(--bg-2);
+  border-color: var(--border);
+}
+
+/* 上下文情况面板 */
+.ctx-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 2px;
+}
+
+.ctx-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-1);
+  padding: 2px 0 4px;
+  border-bottom: 1px dashed var(--border);
+}
+
+.ctx-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 0 8px;
+}
+
+.ctx-progress-track {
+  position: relative;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--bg-2);
+  overflow: hidden;
+}
+
+.ctx-progress-track.danger {
+  box-shadow: 0 0 0 1px var(--red);
+}
+
+.ctx-progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--green), #4aa3ff);
+  transition: width 0.3s ease;
+}
+
+.ctx-progress-track.danger .ctx-progress-fill {
+  background: var(--red);
+}
+
+.ctx-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--text-3);
+}
+
+.ctx-danger {
+  color: var(--red);
+  font-weight: 600;
+}
+
+.ctx-section-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-top: 6px;
+}
+
+.ctx-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 2px;
+  font-size: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.ctx-row-label {
+  color: var(--text-2);
+}
+
+.ctx-row-value {
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
 }
 
 @keyframes pulse-dot {

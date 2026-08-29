@@ -1,0 +1,105 @@
+"""模型元数据服务（models.dev 同步 + 内置静态表兜底）。
+
+各厂商的 /models 接口不返回上下文长度（OpenAI 官方 issue #587 未实现），
+业界标准做法（OpenCode 同款）是使用社区模型元数据库 models.dev：
+  https://models.dev/api.json
+数据结构为 provider → models → model_id → {limit: {context, output}, ...}，
+本模块会将其拍平成 model_id → entry 的索引。
+
+本模块：
+1. 启动时尝试拉取 models.dev 数据并缓存到配置目录；
+2. 查询时按模型 ID 精确匹配缓存；命中失败再回退内置静态表；
+3. 网络失败静默降级，离线可用。
+"""
+from __future__ import annotations
+
+import json
+import logging
+import os
+import time
+from typing import Dict, Optional
+
+logger = logging.getLogger("litecode.modelmeta")
+
+MODELS_DEV_URL = "https://models.dev/api.json"
+CACHE_TTL_SECONDS = 7 * 24 * 3600  # 缓存 7 天
+
+
+def _flatten(data: Dict[str, dict]) -> Dict[str, dict]:
+    """把 models.dev 的 provider→models→model_id 结构拍平成 model_id → entry。"""
+    flat: Dict[str, dict] = {}
+    for provider, meta in (data or {}).items():
+        if not isinstance(meta, dict):
+            continue
+        models = meta.get("models")
+        if not isinstance(models, dict):
+            continue
+        for model_id, entry in models.items():
+            if isinstance(entry, dict):
+                flat[model_id] = entry
+    return flat
+
+
+class ModelMetaService:
+    def __init__(self, cache_path: Optional[str] = None) -> None:
+        self.cache_path = cache_path
+        self._index: Optional[Dict[str, dict]] = None
+
+    # ------------------------------------------------------------ 加载/刷新
+
+    def refresh(self) -> bool:
+        """拉取 models.dev 全量数据并落盘缓存。失败返回 False（静默降级）。"""
+        try:
+            import httpx
+
+            resp = httpx.get(MODELS_DEV_URL, timeout=10)
+            if resp.status_code != 200:
+                logger.warning("[ModelMeta] models.dev 返回 HTTP %s", resp.status_code)
+                return False
+            data = resp.json()
+            if not isinstance(data, dict):
+                return False
+            index = _flatten(data)
+            if not index:
+                return False
+            self._index = index
+            if self.cache_path:
+                os.makedirs(os.path.dirname(self.cache_path) or ".", exist_ok=True)
+                with open(self.cache_path, "w", encoding="utf-8") as f:
+                    json.dump(index, f, ensure_ascii=False)
+            logger.info("[ModelMeta] models.dev 同步成功 (%s 个模型)", len(index))
+            return True
+        except Exception:
+            logger.warning("[ModelMeta] models.dev 同步失败，使用内置静态表")
+            return False
+
+    def _load_cache(self) -> Optional[Dict[str, dict]]:
+        if self._index is not None:
+            return self._index
+        if not self.cache_path or not os.path.exists(self.cache_path):
+            return None
+        try:
+            with open(self.cache_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if time.time() - os.path.getmtime(self.cache_path) > CACHE_TTL_SECONDS:
+                return None
+            if not isinstance(data, dict):
+                return None
+            self._index = _flatten(data) if "models" in data else data
+            return self._index
+        except Exception:
+            return None
+
+    # ------------------------------------------------------------ 查询
+
+    def get_context_window(self, model_id: str) -> Optional[int]:
+        """按模型 ID 查上下文长度（缓存优先，None 表示未知）。"""
+        index = self._load_cache()
+        if index:
+            entry = index.get(model_id)
+            if isinstance(entry, dict):
+                limit = entry.get("limit") or {}
+                context = limit.get("context") or limit.get("input")
+                if isinstance(context, int) and context > 0:
+                    return context
+        return None
