@@ -21,16 +21,7 @@ jobs:
 
   build:
     needs: version
-    strategy:
-      matrix:
-        include:
-          - os: macos-latest
-            electron-target: --mac
-            artifact-ext: dmg
-          - os: windows-latest
-            electron-target: --win
-            artifact-ext: exe
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:
@@ -68,23 +59,24 @@ jobs:
           PYTHONPATH: ${{ github.workspace }}
 
       - name: Package with electron-builder
-        run: npx electron-builder ${{ matrix.electron-target }} --publish never
+        run: npx electron-builder --mac --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
       - name: Collect artifacts
         shell: bash
         run: |
           mkdir -p _artifacts
           cp -r release/backend/* _artifacts/ 2>/dev/null || true
-          find release -name "*.dmg" -o -name "*.zip" -o -name "*.exe" -o -name "*.msi" -o -name "*.AppImage" -o -name "*.deb" 2>/dev/null | while read f; do
+          find release -name "*.dmg" -o -name "*.zip" -o -name "*.AppImage" -o -name "*.deb" 2>/dev/null | while read f; do
             cp "$f" _artifacts/
           done
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: lite-code-${{ needs.version.outputs.version }}-${{ matrix.os }}
+          name: lite-code-${{ needs.version.outputs.version }}-macos
           path: _artifacts/*
 
   release:
