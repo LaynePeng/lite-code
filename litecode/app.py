@@ -147,7 +147,7 @@ class AgentApp:
     # ------------------------------------------------------------ LLM
 
     def _persist_config(self) -> None:
-        self.config["llm"] = self.llm_registry.to_config()
+        self.config["llm"] = self.llm_registry.to_config(persist_key=True)
         with open(self.config_path, "w", encoding="utf-8") as f:
             json.dump(self.config, f, ensure_ascii=False, indent=2)
 
@@ -190,6 +190,8 @@ class AgentApp:
                     settings.pop("api_key")
                 elif "api_key" in settings and not settings["api_key"]:
                     settings.pop("api_key")
+                # 前端回传的 has_key 是 UI 展示用标记，不并入 provider 配置
+                settings.pop("has_key", None)
                 self.llm_registry.providers[pid] = {**current, **settings}
         self.llm_registry.reset_adapter()
         self._persist_config()

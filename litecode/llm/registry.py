@@ -142,12 +142,16 @@ class LLMRegistry:
         # 环境变量兜底（配置为空时）
         self._apply_env_defaults()
 
-    def to_config(self) -> Dict[str, Any]:
-        """导出配置（api_key 不回写，仅保留 has_key 标记，避免脱敏值落盘）。"""
+    def to_config(self, persist_key: bool = False) -> Dict[str, Any]:
+        """导出配置。
+
+        persist_key=False（API 返回）：api_key 不回写，仅保留 has_key 标记，避免泄露真实 key。
+        persist_key=True（落盘）：写入真实 api_key，保证重启后 key 不丢失。
+        """
         providers = {}
         for pid, p in self.providers.items():
             providers[pid] = {
-                "api_key": "",
+                "api_key": p.get("api_key", "") if persist_key else "",
                 "has_key": bool(p.get("api_key")),
                 "base_url": p.get("base_url", ""),
                 "model": p.get("model", ""),
@@ -180,6 +184,9 @@ class LLMRegistry:
         meta = PROVIDER_META.get(pid, PROVIDER_META["custom"])
         settings = {**self.providers.get(pid, {}), **(overrides or {})}
         api_key = settings.get("api_key", "")
+        # 兜底：overrides 传入脱敏 key 视为未配置，避免「sk-c…1f74」进入真实请求
+        if api_key and _is_masked_key(api_key):
+            api_key = ""
         if not api_key:
             raise ValueError(f"供应商「{meta['name']}」未配置 API Key")
 
