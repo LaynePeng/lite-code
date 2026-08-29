@@ -52,7 +52,9 @@ jobs:
           .venv/bin/pip install -e .[dev,package]
 
       - name: Install npm deps
-        run: npm install
+        run: |
+          npm install
+          npm --prefix web install
 
       - name: Build web frontend
         run: npm run build:web
