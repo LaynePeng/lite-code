@@ -17,9 +17,11 @@
     "package:backend": "node scripts/package-backend.mjs"
   },
   "devDependencies": {
+    "app-builder-bin": "^4.2.0",
     "concurrently": "^8.2.2",
     "electron": "^43.4.1",
-    "electron-builder": "^26.15.3"
+    "electron-builder": "^26.15.3",
+    "sharp": "^0.35.4"
   },
   "build": {
     "appId": "com.litecode.app",
@@ -50,7 +52,8 @@
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "icon": "scripts/app-icon.svg"
     },
     "nsis": {
       "oneClick": false,
