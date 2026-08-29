@@ -34,8 +34,8 @@
     ],
     "extraResources": [
       {
-        "from": "release/backend/lite-code-backend",
-        "to": "litecode-bin/lite-code-backend"
+        "from": "release/backend/lite-code-backend*",
+        "to": "litecode-bin"
       }
     ],
     "mac": {
@@ -46,6 +46,17 @@
       ],
       "category": "public.app-category.developer-tools",
       "darkModeSupport": true
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
     },
     "dmg": {
       "artifactName": "lite-code-${version}-${arch}.${ext}"

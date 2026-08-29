@@ -85,16 +85,22 @@ function createWindow(url) {
 }
 
 function resolvePython() {
-  // 打包模式：使用内置后端二进制
+  // 打包模式：使用内置后端二进制（Windows 为 .exe）
   if (app.isPackaged) {
-    const bundled = path.join(process.resourcesPath, "litecode-bin", "lite-code-backend");
+    const isWin = process.platform === "win32";
+    const bundled = path.join(
+      process.resourcesPath, "litecode-bin",
+      isWin ? "lite-code-backend.exe" : "lite-code-backend"
+    );
     if (fs.existsSync(bundled)) return bundled;
   }
   // 开发模式：优先项目 venv，其次系统 python3
   const projectRoot = app.getAppPath();
-  const venv = path.join(projectRoot, ".venv", "bin", "python");
+  const venv = process.platform === "win32"
+    ? path.join(projectRoot, ".venv", "Scripts", "python.exe")
+    : path.join(projectRoot, ".venv", "bin", "python");
   if (fs.existsSync(venv)) return venv;
-  return "python3";
+  return process.platform === "win32" ? "python" : "python3";
 }
 
 // cwd 必须是真实目录：打包模式下 app.getAppPath() 指向 app.asar（文件），会导致 spawn ENOTDIR

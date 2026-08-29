@@ -1,15 +1,23 @@
 // 打包后端：PyInstaller 产出独立二进制（release/backend/lite-code-backend）
+// 跨平台：自动适配 Windows / macOS / Linux 的 venv 路径与 --add-data 分隔符。
 import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const python = path.join(root, ".venv", "bin", "python");
+const isWindows = process.platform === "win32";
+const python = isWindows
+  ? path.join(root, ".venv", "Scripts", "python.exe")
+  : path.join(root, ".venv", "bin", "python");
 const outDir = path.join(root, "release", "backend");
 
 if (!fs.existsSync(python)) {
-  console.error("[package] 未找到 .venv/bin/python，请先执行: python3 -m venv .venv && .venv/bin/pip install -e .");
+  console.error(
+    isWindows
+      ? "[package] 未找到 .venv\\Scripts\\python.exe，请先执行: python -m venv .venv && .venv\\Scripts\\pip install -e ."
+      : "[package] 未找到 .venv/bin/python，请先执行: python3 -m venv .venv && .venv/bin/pip install -e ."
+  );
   process.exit(1);
 }
 
@@ -21,6 +29,9 @@ if (!fs.existsSync(path.join(webDist, "index.html"))) {
   process.exit(1);
 }
 
+// Windows 用分号，macOS/Linux 用冒号
+const sep = isWindows ? ";" : ":";
+
 const specArgs = [
   "--noconfirm",
   "--clean",
@@ -30,7 +41,7 @@ const specArgs = [
   "--workpath", path.join(root, "release", "_build"),
   "--specpath", path.join(root, "release", "_spec"),
   "--paths", root,
-  "--add-data", `${webDist}:web/dist`,
+  "--add-data", `${webDist}${sep}web${path.sep}dist`,
   "--collect-all", "fastapi",
   "--collect-all", "uvicorn",
   "--collect-all", "starlette",
@@ -59,7 +70,7 @@ execSync([python, "-m", "PyInstaller", ...specArgs].join(" "), {
   env: { ...process.env, PYTHONPATH: root },
 });
 
-const binary = path.join(outDir, "lite-code-backend");
+const binary = path.join(outDir, isWindows ? "lite-code-backend.exe" : "lite-code-backend");
 if (!fs.existsSync(binary)) {
   console.error("[package] 后端打包失败：未生成二进制");
   process.exit(1);
