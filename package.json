@@ -18,8 +18,8 @@
   },
   "devDependencies": {
     "concurrently": "^8.2.2",
-    "electron": "^31.7.7",
-    "electron-builder": "^24.13.3"
+    "electron": "^43.4.1",
+    "electron-builder": "^26.15.3"
   },
   "build": {
     "appId": "com.litecode.app",
@@ -40,7 +40,10 @@
     ],
     "mac": {
       "icon": "release/resources/app-icon.icns",
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "category": "public.app-category.developer-tools",
       "darkModeSupport": true
     },

@@ -61,8 +61,16 @@ npm start
 npm run build:web      # 构建前端
 node scripts/generate-icon.mjs   # 生成应用图标
 node scripts/package-backend.mjs  # PyInstaller 后端二进制
-npx electron-builder --mac        # → release/*.dmg
+node scripts/package.mjs          # 完整打包 → release/*.dmg（含 electron-builder + hdiutil 两步）
+
+# 国内网络受限时 electron-builder 下载二进制可能卡住，可预设镜像环境变量
+export ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/"
+export ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-builder-binaries/"
+node scripts/package.mjs
 ```
+
+> 注：`scripts/package.mjs` 未设置镜像环境变量时会自动兜底使用 npmmirror 镜像，已存在则沿用你的配置。
+> macOS 未签名构建（无 Developer ID 证书）首次打开需右键 →「打开」绕过 Gatekeeper；升级 Electron 到 43+ 可避免 macOS 26 的 XProtect 误报。
 
 ## 教程
 
