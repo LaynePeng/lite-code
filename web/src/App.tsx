@@ -247,7 +247,12 @@ export default function App() {
           if (!cur) break;
           const cards = cur.cards.map((c) =>
             c.name === ev.data.toolName && c.status === "running"
-              ? { ...c, status: (ev.data.status === "cancelled" ? "cancelled" : "done") as ToolCardInfo["status"], durationMs: ev.data.durationMs }
+              ? {
+                  ...c,
+                  status: (ev.data.status === "cancelled" ? "cancelled" : "done") as ToolCardInfo["status"],
+                  durationMs: ev.data.durationMs,
+                  ...(ev.data.result !== undefined ? { result: ev.data.result } : {}),
+                }
               : c
           );
           streamingRef.current = { ...cur, cards };

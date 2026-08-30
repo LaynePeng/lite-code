@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
+import { DiffPre, DiffStats, isFileDiff } from "./FileDiff";
 import type { Msg, ToolCardInfo } from "../types";
 
 // ---------------------------------------------------------------- 渲染助手
@@ -41,9 +42,15 @@ function Markdown({ text }: { text: string }) {
 // ---------------------------------------------------------------- 工具卡片
 
 function ToolCard({ card }: { card: ToolCardInfo }) {
-  const [open, setOpen] = useState(false);
+  // 文件修改（diff）卡片默认展开，其他工具默认收起
+  const [open, setOpen] = useState(() => isFileDiff(card.result ?? ""));
   const statusClass =
     card.status === "running" ? "running" : card.status === "done" ? "done" : "cancelled";
+
+  // 实时卡片结果到达（tool:after_execute 携带 result）后自动展开 diff
+  useEffect(() => {
+    if (isFileDiff(card.result ?? "")) setOpen(true);
+  }, [card.result]);
 
   return (
     <div className={`tool-card ${statusClass}`}>
@@ -72,7 +79,8 @@ function ToolCard({ card }: { card: ToolCardInfo }) {
           {card.result && (
             <div className="tool-block">
               <div className="tool-block-label">结果</div>
-              <pre className="tool-result">{card.result}</pre>
+              <DiffStats text={card.result} />
+              <DiffPre text={card.result} />
             </div>
           )}
         </div>
@@ -118,7 +126,7 @@ function StreamingTurn({
     <div className="msg-row assistant">
       <div className="assistant-avatar">⚡</div>
       <div className="bubble assistant-bubble streaming">
-        {!content && (
+        {!content && !cards.length && (
           <div className="thinking">
             <span className="dot" />
             <span className="dot" />
@@ -127,6 +135,13 @@ function StreamingTurn({
           </div>
         )}
         {content && <Markdown text={content} />}
+        {cards.length > 0 && (
+          <div className="tool-cards">
+            {cards.map((c) => (
+              <ToolCard key={c.id} card={c} />
+            ))}
+          </div>
+        )}
         {content && (
           <span className="cursor-bar">
             <span className="cursor" />
@@ -143,35 +158,79 @@ interface RenderTurn {
   key: string;
   user?: Msg;
   thinking: string; // 该任务下累积的所有中间推理文本
+  tools: ToolCardInfo[]; // 该任务下的工具调用卡片（assistant(tool_calls) 与 tool(result) 配对）
   toolCount: number; // 该任务下的工具调用次数
   assistant?: Msg; // 最终回答
+}
+
+// 解析 tool_calls 参数（可能是不合法 JSON 字符串，回退为原字符串）
+function parseToolArgs(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
 }
 
 function buildTurns(messages: Msg[]): RenderTurn[] {
   const turns: RenderTurn[] = [];
   let current: RenderTurn | null = null;
+  // 当前任务已发出的工具调用，等待 role="tool" 消息回填 result
+  let pendingTools: ToolCardInfo[] = [];
+
+  const commitTools = () => {
+    if (current && pendingTools.length > 0) {
+      current.tools = pendingTools;
+      pendingTools = [];
+    }
+  };
 
   for (const m of messages) {
     if (m.role === "user") {
+      commitTools();
       current = null;
-      turns.push({ key: `u-${turns.length}`, user: m, thinking: "", toolCount: 0 });
+      pendingTools = [];
+      turns.push({ key: `u-${turns.length}`, user: m, thinking: "", tools: [], toolCount: 0 });
     } else if (m.role === "assistant") {
       const hasTools = (m.tool_calls ?? []).length > 0;
       if (hasTools) {
         // 中间推理轮次：累积进当前任务的 thinking 块
         if (!current) {
-          current = { key: `t-${turns.length}`, thinking: "", toolCount: 0 };
+          current = { key: `t-${turns.length}`, thinking: "", tools: [], toolCount: 0 };
           turns.push(current);
         }
         current.toolCount += (m.tool_calls ?? []).length;
         if (m.content) current.thinking += (current.thinking ? "\n\n" : "") + m.content;
+        for (const tc of m.tool_calls ?? []) {
+          pendingTools.push({
+            id: tc.id || `h-${pendingTools.length}-${Math.random().toString(36).slice(2, 6)}`,
+            name: tc.function.name,
+            args: parseToolArgs(tc.function.arguments),
+            status: "done",
+          });
+        }
       } else {
         // 最终回答：作为独立气泡
+        commitTools();
         current = null;
-        turns.push({ key: `a-${turns.length}`, thinking: "", toolCount: 0, assistant: m });
+        pendingTools = [];
+        turns.push({ key: `a-${turns.length}`, thinking: "", tools: [], toolCount: 0, assistant: m });
+      }
+    } else if (m.role === "tool") {
+      // 回填工具结果（[Patch Success] diff 正文在此进入卡片，驱动 DiffStats/DiffPre 渲染）
+      const target = pendingTools.find((t) => t.id === m.tool_call_id);
+      if (target) {
+        target.result = m.content ?? "";
+        const content = m.content ?? "";
+        if (content.startsWith("[Tool Execution Cancelled]") || content.startsWith("[Blocked")) {
+          target.status = "cancelled";
+        } else if (content.startsWith("[Execution Exception]") || content.startsWith("[Error]")) {
+          target.status = "error";
+        }
       }
     }
   }
+  commitTools();
   return turns;
 }
 
@@ -257,6 +316,13 @@ export default function ChatView({
                       <Markdown text={t.thinking} />
                     </div>
                   </details>
+                )}
+                {t.tools.length > 0 && (
+                  <div className="tool-cards">
+                    {t.tools.map((c) => (
+                      <ToolCard key={c.id} card={c} />
+                    ))}
+                  </div>
                 )}
                 {t.assistant && t.assistant.content && (
                   <div className="msg-row assistant">

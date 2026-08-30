@@ -215,7 +215,7 @@ class LLMRegistry:
 
 #### 5. 模型元数据服务 (`litecode/llm/model_meta.py`)
 
-上下文窗口长度（`context_window`）直接决定第 17 课的压缩阈值（`max(预算下限, 90% × 窗口)`）与「上下文情况」面板的占用率计算——而它随模型而异（DeepSeek V4 是 1M，Kimi K2 是 262K，GLM-4-Long 也是 1M）。各厂商的 `/models` 接口并不返回上下文长度，业界标准做法（OpenCode 同款）是使用社区模型元数据库 **models.dev**：
+上下文窗口长度（`context_window`）是后续实战两处关键计算的输入——上下文压缩阈值与「上下文情况」面板的窗口占用率。它随模型而异（DeepSeek V4 是 1M，Kimi K2 是 262K，GLM-4-Long 也是 1M）。各厂商的 `/models` 接口并不返回上下文长度，业界标准做法（OpenCode 同款）是使用社区模型元数据库 **models.dev**：
 
 ```python
 # litecode/llm/model_meta.py（核心）
@@ -233,7 +233,7 @@ class ModelMetaService:
 
 注册表对外提供 **四级解析**（`llm/registry.py`），优先级从高到低：
 
-1. **手动覆盖**：用户在设置面板手填的 `context_window`（第 19 课配置界面）；
+1. **手动覆盖**：用户在设置面板手填的 `context_window`（第 19 课会实现这个输入框）；
 2. **models.dev 缓存**：按模型 ID 精确匹配的远程元数据；
 3. **内置静态表**：`PROVIDER_META` 中维护的 per-model 常备数据；
 4. **默认兜底**：128K。
@@ -243,7 +243,7 @@ def get_context_window(self, provider_id, model=None) -> int:
     # ① 手动覆盖 → ② models.dev → ③ 内置表 → ④ 128K 默认
 ```
 
-同步时机放在 FastAPI 的启动生命周期里（见第 19 课后端装配），异步执行、失败静默降级：
+同步时机放在 FastAPI 的启动生命周期里（第 19 课装配后端时接入），异步执行、失败静默降级：
 
 ```python
 # server/app.py — FastAPI lifespan
@@ -321,7 +321,7 @@ class ASTAnalyzer:
         ...
 ```
 
-**精确编辑工具**（`tools/editor.py`）：Search-and-Replace 模糊退避 + Unified Diff 锚点偏移。成功回执不再只是 `[Patch Success]: 已更新 <path>。`，而是用 `difflib.unified_diff` 生成 `[Patch Success]: 已更新 <path> (+N -M)` 增删统计并附上 diff 正文（超 4000 字符截断）——既让 Agent 自检刚做的修改，又为第 19 课 ToolPanel 的"文件修改卡片"提供渲染数据：
+**精确编辑工具**（`tools/editor.py`）：Search-and-Replace 模糊退避 + Unified Diff 锚点偏移。成功回执不再只是 `[Patch Success]: 已更新 <path>。`，而是用 `difflib.unified_diff` 生成 `[Patch Success]: 已更新 <path> (+N -M)` 增删统计并附上 diff 正文（超 4000 字符截断）——既让 Agent 自检刚做的修改，也为第 19 课 Web UI 的"文件修改卡片"准备好渲染数据：
 
 ```python
 class BlockReplacer:

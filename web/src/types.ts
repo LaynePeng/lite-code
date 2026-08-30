@@ -128,7 +128,7 @@ export type SSEEvent =
   | { type: "llm:stream"; data: { chunk: string } }
   | { type: "llm:turn_start"; data: { turn: number } }
   | { type: "tool:before_execute"; data: { toolName: string; args: unknown } }
-  | { type: "tool:after_execute"; data: { toolName: string; durationMs: number; status: string } }
+  | { type: "tool:after_execute"; data: { toolName: string; durationMs: number; status: string; result?: string } }
   | { type: "approval:request"; data: { id: string; action: string; reason: string } }
   | { type: "approval:resolved"; data: { id: string; approved: boolean } }
   | { type: "task:start"; data: { session_id: string } }

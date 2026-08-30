@@ -274,7 +274,8 @@ class AgentLoop:
         await self.kernel.events.emit(
             "tool:after_execute",
             {"toolName": tool_name, "durationMs": duration_ms,
-             "status": "cancelled" if verified.get("cancel") else "success"},
+             "status": "cancelled" if verified.get("cancel") else "success",
+             "result": result_text},
         )
         return result_text
 

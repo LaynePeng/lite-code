@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { DiffPre, DiffStats, isFileDiff } from "./FileDiff";
 import type { ContextStats, ContextTaskStats, Msg, ToolCardInfo } from "../types";
 
 function ToolIcon({ name }: { name: string }) {
@@ -31,50 +32,16 @@ function summarize(result: string): string {
 
 // ---------------------------------------------------------------- 文件修改展示（opencode 风格）
 
-// 解析 "[Patch Success]: 已更新 <path> (+N -M)" → 文件徽标
-function DiffStats({ text }: { text: string }) {
-  const m = text.match(/^\[Patch Success\]: 已更新 (.+?) \(\+(\d+) -(\d+)\)/);
-  if (!m) return null;
-  return (
-    <div className="diff-stats">
-      <span className="diff-file">📄 {m[1]}</span>
-      <span className="diff-add">+{m[2]}</span>
-      <span className="diff-del">−{m[3]}</span>
-    </div>
-  );
-}
-
-// 按行渲染 diff：+ 绿 / − 红 / @@ 高亮 / 文件头灰
-function DiffPre({ text }: { text: string }) {
-  const isDiff = text.includes("[Patch Success]") && text.includes("\n@@");
-  if (!isDiff) return <pre className="tool-result">{text}</pre>;
-  return (
-    <pre className="tool-result diff">
-      {text.split("\n").map((line, i) => {
-        const cls = line.startsWith("+++") || line.startsWith("---")
-          ? "diff-meta"
-          : line.startsWith("@@")
-            ? "diff-hunk"
-            : line.startsWith("+")
-              ? "diff-add"
-              : line.startsWith("-")
-                ? "diff-del"
-                : "";
-        return (
-          <span key={i} className={cls}>
-            {line}
-            {"\n"}
-          </span>
-        );
-      })}
-    </pre>
-  );
-}
-
 function ToolRow({ card }: { card: ToolCardInfo }) {
-  const [open, setOpen] = useState(false);
+  // 文件修改（diff）卡片默认展开，其他工具默认收起
+  const [open, setOpen] = useState(() => isFileDiff(card.result ?? ""));
   const running = card.status === "running";
   const summary = summarize(card.result ?? "");
+
+  // 实时卡片结果到达（tool:after_execute 携带 result）后自动展开 diff
+  useEffect(() => {
+    if (isFileDiff(card.result ?? "")) setOpen(true);
+  }, [card.result]);
 
   return (
     <div className={`tool-row ${running ? "running" : ""}`}>

@@ -18,7 +18,7 @@ lite-code/
 │   │   ├── session_store.py    # 会话持久化与恢复
 │   │   ├── token_counter.py    # Token 估算（第3课）
 │   │   ├── context_manager.py  # 上下文滑动裁剪（第3课）
-│   │   ├── system_prompt.py    # 静态 System Prompt 骨架（第3课概念 → 第17课落地）
+│   │   ├── system_prompt.py    # 静态 System Prompt 骨架（第3课）
 │   │   ├── state_tracker.py    # 死循环检测（第2课）
 │   │   ├── json_repair.py      # JSON 容错（第2课）
 │   │   ├── truncator.py        # 输出截断（第2课）

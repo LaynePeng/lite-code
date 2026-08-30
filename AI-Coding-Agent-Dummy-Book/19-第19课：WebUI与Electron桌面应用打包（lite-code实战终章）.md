@@ -173,10 +173,10 @@ function buildTurns(messages) {
 
 **后端新端点**：配套新增 `/api/agents` 返回 Agent 列表、`/api/workspace` 运行时切换工作区、`/api/fs/list` 浏览任意目录。
 
-**工具结果的 Diff 展示**：编辑工具（第 9 课）成功回执现在是 `[Patch Success]: 已更新 <path> (+N -M)` 摘要 + Unified Diff 正文，ToolPanel 据此做 opencode 风格的"文件修改"渲染。`DiffStats` 解析回执首行生成文件徽标与增删行数，`DiffPre` 把 diff 正文逐行着色：
+**工具结果的 Diff 展示**：编辑工具（第 9 课）成功回执现在是 `[Patch Success]: 已更新 <path> (+N -M)` 摘要 + Unified Diff 正文，前端据此做 opencode 风格的"文件修改"渲染。渲染逻辑抽成共享组件 `FileDiff.tsx`（`DiffStats` / `DiffPre`），**对话流工具卡片（ChatView）与右侧面板（ToolPanel）共用同一实现**；配套 `tool:after_execute` SSE 事件携带 `result` 字段，任务运行中就能立即展示 diff。`DiffStats` 解析回执首行生成文件徽标与增删行数，`DiffPre` 把 diff 正文逐行着色：
 
 ```tsx
-// ToolPanel.tsx —— 解析 "[Patch Success]: 已更新 <path> (+N -M)" → 文件徽标
+// FileDiff.tsx —— 解析 "[Patch Success]: 已更新 <path> (+N -M)" → 文件徽标
 function DiffStats({ text }: { text: string }) {
   const m = text.match(/^\[Patch Success\]: 已更新 (.+?) \(\+(\d+) -(\d+)\)/);
   if (!m) return null;
@@ -217,7 +217,7 @@ function DiffPre({ text }: { text: string }) {
 }
 ```
 
-配套 CSS（`styles.css`）：`.diff-add` 绿色 `#3fb950`、`.diff-del` 红色 `#f85149`（配浅色背景衬底）、`.diff-hunk` 用强调色、`.diff-meta` 用弱化灰。这样 Agent 每次改文件，工具面板都会出现一条"📄 文件 (+N −M)"的彩色 diff 卡片，一眼看清改了什么。
+配套 CSS（`styles.css`）：`.diff-add` 绿色 `#3fb950`、`.diff-del` 红色 `#f85149`（配浅色背景衬底）、`.diff-hunk` 用强调色、`.diff-meta` 用弱化灰。这样 Agent 每次改文件，对话流与右侧面板的工具卡片都会出现一条"📄 文件 (+N −M)"的彩色 diff，一眼看清改了什么。
 
 #### 3.6 上下文可观测性：`context:stats` 数据链路
 
