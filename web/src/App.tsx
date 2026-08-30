@@ -539,7 +539,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <ToolPanel messages={messages} streaming={streaming} running={running} contextStats={contextStats} />
+      <ToolPanel contextStats={contextStats} />
       {showSettings && (
         <SettingsModal
           onClose={() => setShowSettings(false)}

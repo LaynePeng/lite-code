@@ -134,20 +134,22 @@ es.onmessage = (e) => {
 
 在完成基础功能后，我们参考 OpenCode 的交互设计，对 UI 做了几项关键优化：
 
-**右侧工具面板**：工具调用卡片不再混在对话流中，而是被移到右侧独立面板（`ToolPanel.tsx`）。每个工具调用显示为紧凑单行（图标 + 名称 + 结果摘要），点击展开查看参数与结果。面板自动滚动到底部，条目过多时通过 `flex-shrink: 0` + `overflow-y: auto` 保证滚动而非压缩：
+**工具卡片与右侧面板的分工**：工具调用卡片直接渲染在对话流中（`ToolCard`，位于对应任务的 thinking 块下方），与消息上下文紧邻，便于对照"调用了什么 → 得到什么 → 得出什么结论"。右侧独立面板（`ToolPanel.tsx`）专注展示**上下文情况**（窗口占用、缓存命中率、压缩统计），不再重复工具调用列表：
 
 ```text
-┌─────── 对话区 ───────┐  ┌── 工具面板 ────┐
-│ 用户：帮我查启动原因    │  │ 列表: file_tree ▸│
-│                       │  │ 列表: git_status ▸│
-│ 思考过程 ▸             │  │ 列表: read_file ▸│
-│ (可折叠推理)          │  │ 列表: search_code▸│
-│                       │  │ 列表: read_file ▸│
-│ ⚡ 分析完成。          │  │ 列表: list_dir  ▸│
-│ 以下是完整报告…         │  │ 列表: read_file ▸│
-│                       │  └──────────────────┘
+┌─────── 对话区 ───────┐  ┌── 上下文面板 ──┐
+│ 用户：帮我查启动原因    │  │ 模型 · 窗口 128K │
+│                       │  │ ▓▓▓▓░░ 42%      │
+│ 思考过程 ▸             │  │ 命中率 87%       │
+│ [⚡ file_tree] 结果…   │  │ 压缩 2 次/节省…  │
+│ [⚡ git_status] 结果…  │  │ …               │
+│ [⚡ read_file] 结果…   │  │                  │
+│ ⚡ 分析完成。          │  └──────────────────┘
+│ 以下是完整报告…         │
 └───────────────────────┘
 ```
+
+工具卡片默认收起（仅显示工具名与状态），点击展开查看参数与结果；文件修改类（`[Patch Success]` 回执）卡片默认展开并渲染 opencode 风格 diff（见第 9 课）。
 
 **思考与回答分离**：历史上，每次模型调用工具的中间推理（`assistant` 消息同时携带 `content` 和 `tool_calls`）都会被渲染为独立气泡，导致对话区呈现"多个推理气泡 + 空气泡"的混乱状态。`buildTurns` 函数将整个用户任务下的所有中间推理文本合并为一个 **thinking 块**（`<details>` 折叠），最终回答才作为正常气泡显示：
 
@@ -231,7 +233,7 @@ TypedEventBus → TaskRunner 订阅 → asyncio.Queue
    ▼
 SSE /api/tasks/{id}/events  →  data: {"type":"context:stats", ...}
    ▼
-前端 ToolPanel 接收 → 更新「上下文情况」页签
+前端 ToolPanel 接收 → 更新「上下文情况」面板
 ```
 
 后端侧（第 17 课已实现）每轮推送：模型名、上下文窗口大小、本轮 `prompt_tokens`、累计 `cache_hit_tokens / cache_miss_tokens / cache_hit_rate`、压缩次数、压缩节省 Token、窗口占用比例 `usage_ratio`。TaskRunner 在转发前还会把任务内统计累加进会话级累计（`session` 段），因此面板同时展示"本次调用"与"会话累计"两个视角。
@@ -243,10 +245,10 @@ case "context:stats":     // 上下文情况面板（ToolPanel）
   setContextStats(ev.data);
 ```
 
-`ToolPanel.tsx` 的「上下文情况」页签渲染（关键指标 + 进度条）：
+`ToolPanel.tsx` 的「上下文情况」面板渲染（关键指标 + 进度条）：
 
 ```tsx
-// 上下文情况面板（关键部分，位于右侧面板第一个页签）
+// 上下文情况面板（关键部分，位于右侧面板）
 const ratio = stats?.task?.usage_ratio ?? 0;
 const danger = ratio >= 0.9;   // 达到模型窗口 90%，自动压缩已触发
 <div className="ctx-panel">

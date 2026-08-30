@@ -1851,7 +1851,8 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 14px;
+  /* 顶部 38px 是无边框窗口拖拽区，标题下移避开 */
+  padding: 40px 14px 8px;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-1);
@@ -1859,47 +1860,6 @@ button {
   text-transform: uppercase;
   letter-spacing: 0.4px;
   flex-shrink: 0;
-}
-
-.tool-panel-live {
-  font-size: 10px;
-  color: var(--green);
-  animation: pulse-dot 1.5s ease-in-out infinite;
-}
-
-/* 右面板页签：上下文情况 | 工具调用
-   顶部 38px 是无边框窗口拖拽区（-webkit-app-region: drag 不响应点击），
-   因此页签必须整体下移并标记 no-drag，否则按钮点不到。 */
-.tool-panel-tabs {
-  display: flex;
-  gap: 4px;
-  padding: 40px 8px 6px;
-  border-bottom: 1px solid var(--border);
-  flex-shrink: 0;
-}
-
-.tool-tab {
-  flex: 1;
-  padding: 5px 8px;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-2);
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  cursor: pointer;
-  transition: background 0.12s, color 0.12s;
-  -webkit-app-region: no-drag;
-}
-
-.tool-tab:hover {
-  background: var(--bg-2);
-}
-
-.tool-tab.active {
-  color: var(--text-1);
-  background: var(--bg-2);
-  border-color: var(--border);
 }
 
 /* 上下文情况面板 */
@@ -2034,10 +1994,6 @@ button {
   color: var(--text-3);
 }
 
-@keyframes pulse-dot {
-  50% { opacity: 0.4; }
-}
-
 .tool-panel-body {
   flex: 1;
   min-height: 0;
@@ -2053,101 +2009,4 @@ button {
   text-align: center;
   color: var(--text-3);
   font-size: 12px;
-}
-
-/* 紧凑工具行 */
-.tool-row {
-  border-radius: 6px;
-  overflow: hidden;
-  flex-shrink: 0;
-}
-
-.tool-row-main {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 4px 8px;
-  font-size: 12px;
-  color: var(--text-1);
-  border-radius: 6px;
-  text-align: left;
-  cursor: pointer;
-  background: transparent;
-  transition: background 0.12s;
-}
-
-.tool-row-main:hover {
-  background: var(--bg-2);
-  color: var(--text-0);
-}
-
-.tool-row-main.open {
-  background: var(--bg-2);
-}
-
-.tool-row .tool-icon {
-  width: 16px;
-  height: 16px;
-  display: grid;
-  place-items: center;
-  background: rgba(79, 140, 255, 0.14);
-  color: var(--accent);
-  border-radius: 4px;
-  font-size: 9px;
-  flex-shrink: 0;
-}
-
-.tool-row-name {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  font-weight: 600;
-  color: var(--text-0);
-  flex-shrink: 0;
-  max-width: 45%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.tool-row-summary {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-2);
-  font-size: 11px;
-  font-family: var(--font-mono);
-}
-
-.tool-row-spinner {
-  width: 10px;
-  height: 10px;
-  border: 2px solid var(--bg-3);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin 0.7s linear infinite;
-  flex-shrink: 0;
-}
-
-.tool-row-detail {
-  border-top: 1px solid var(--border);
-  padding: 6px 8px;
-  background: var(--bg-0);
-}
-
-.tool-row-detail .tool-block-label {
-  font-size: 9.5px;
-}
-
-.tool-row-detail pre {
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  color: var(--text-1);
-  white-space: pre-wrap;
-  word-break: break-word;
-  max-height: 140px;
-  overflow-y: auto;
-  line-height: 1.5;
 }
