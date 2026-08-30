@@ -7,6 +7,23 @@ def test_high_risk_rm_rf():
     assert r.level == ThreatLevel.HIGH
 
 
+def test_high_risk_macos_system_commands():
+    guard = SecurityGuard()
+    assert guard.check_shell_command("csrutil disable").level == ThreatLevel.HIGH
+    assert guard.check_shell_command("diskutil eraseDisk JHFS+ X disk2").level == ThreatLevel.HIGH
+    assert guard.check_shell_command("rm -rf ~").level == ThreatLevel.HIGH
+    assert guard.check_shell_command("rm -rf $HOME").level == ThreatLevel.HIGH
+
+
+def test_medium_risk_macos_commands():
+    guard = SecurityGuard()
+    assert guard.check_shell_command("fdesetup remove").level == ThreatLevel.MEDIUM
+    assert guard.check_shell_command("nvram -d boot-args").level == ThreatLevel.MEDIUM
+    assert guard.check_shell_command("security delete-generic-password -s svc").level == ThreatLevel.MEDIUM
+    assert guard.check_shell_command("osascript -e 'tell app \"Finder\" to quit'").level == ThreatLevel.MEDIUM
+    assert guard.check_shell_command("softwareupdate --install -a").level == ThreatLevel.MEDIUM
+
+
 def test_high_risk_fork_bomb_and_mkfs():
     guard = SecurityGuard()
     assert guard.check_shell_command("mkfs.ext4 /dev/sda1").level == ThreatLevel.HIGH

@@ -68,6 +68,9 @@ DEFAULT_HIGH_RISK_PATTERNS = [
     r"\bdel\b[^\n]*\s[A-Za-z]:\\\*",  # Windows: del /s /q C:\*（盘符根通配删除）
     r"\b(?:rmdir|rd)\b[^\n]*\s[A-Za-z]:\\",  # Windows: rmdir /rd /s /q C:\（删除盘符根目录）
     r"\bRemove-Item\b[^\n]*(?:-Recurse|-Force)[^\n]*\s[A-Za-z]:\\",  # PowerShell: Remove-Item -Recurse -Force C:\
+    r"\bcsrutil\b",  # macOS: 关闭 SIP（系统完整性保护）
+    r"\bdiskutil\b",  # macOS: 磁盘操作（eraseDisk/zeroDisk/secureErase 等）
+    r"\brm\s+-rf\s+(?:~|\$HOME)(?:\s|$)",  # macOS/Linux: 删除整个家目录（rm -rf ~ / $HOME）
 ]
 
 DEFAULT_MEDIUM_RISK_PATTERNS = [
@@ -78,6 +81,11 @@ DEFAULT_MEDIUM_RISK_PATTERNS = [
     r"\brmdir\b",  # Windows: 删除目录
     r"\brd\b",  # Windows: rmdir 别名（删除目录）
     r"\bos\.(?:remove|unlink)\b|\.unlink\(",  # Python 脚本删除文件
+    r"\bfdesetup\b",  # macOS: FileVault 加密管理（可移除磁盘加密）
+    r"\bnvram\s+(?:-d|-c)\b",  # macOS: 删除固件变量
+    r"\bsecurity\s+delete-(?:keychain|generic-password|internet-password)\b",  # macOS: 删除钥匙串凭据
+    r"\bosascript\b",  # macOS: AppleScript 执行（可控制系统与应用）
+    r"\bsoftwareupdate\b",  # macOS: 系统更新
     r"\bkill\s+-9\b",  # 强制终止进程
     r"\bcurl\b.*\|\s*(ba)?sh\b",  # 管道远程脚本
     r"\bsudo\b",  # 提权操作

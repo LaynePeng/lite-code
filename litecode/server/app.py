@@ -19,7 +19,7 @@ from .tasks import TaskManager
 
 logger = logging.getLogger("litecode.server")
 
-VERSION = "0.6.2rc0"
+VERSION = "0.6.3rc0"
 
 
 # ---------------------------------------------------------------- 请求模型
