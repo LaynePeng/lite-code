@@ -120,14 +120,22 @@ class AgentLoop:
                     return await self._finish("[Stopped]: 已由用户手动停止。", messages, stats, store_snapshot)
 
                 # A. 上下文裁剪（保护 system 与 assistant/tool 原子对）
-                #    有效上限 = min(预算, 90% × 模型上下文窗口)，到阈值自动压缩
+                #    有效上限 = max(预算下限, 90% × 模型窗口)，到阈值先尝试 LLM 摘要压缩
                 cap = self._effective_cap()
-                payload = self.context_manager.prune_messages(messages, hard_cap=cap)
-                if self.context_manager.last_prune.get("compressed"):
-                    self._compression_count += 1
-                    self._compressed_tokens += int(
-                        self.context_manager.last_prune.get("removed_tokens", 0)
-                    )
+                if TokenCounter.count_messages_tokens(messages) > cap:
+                    compacted = await self._try_compact(messages, cap)
+                    if compacted is not None:
+                        messages[:] = compacted
+                        payload = messages
+                    else:
+                        payload = self.context_manager.prune_messages(messages, hard_cap=cap)
+                        if self.context_manager.last_prune.get("compressed"):
+                            self._compression_count += 1
+                            self._compressed_tokens += int(
+                                self.context_manager.last_prune.get("removed_tokens", 0)
+                            )
+                else:
+                    payload = messages
 
                 # B. beforeLLM 管道（插件可修改消息）
                 processed = await self.kernel.before_llm.run(self.kernel.ctx, payload)
@@ -270,6 +278,56 @@ class AgentLoop:
         )
         return result_text
 
+    # ------------------------------------------------------------------ 上下文压缩
+
+    async def _try_compact(
+        self, messages: List[Message], cap: int
+    ) -> Optional[List[Message]]:
+        """opencode 风格压缩：旧轮次 LLM 摘要化，最近轮次原样保留。
+
+        摘要替换只发生一次（前缀失效一次），此后前缀逐字节稳定 → 缓存命中延续；
+        摘要失败时回退旧裁剪策略（prune_messages）。
+        """
+        plan = self.context_manager.split_for_compaction(messages, hard_cap=cap)
+        if plan is None:
+            return None
+        head, tail, head_tokens = plan
+        summary = await self._summarize_history(head)
+        if not summary:
+            return None
+        system = messages[0] if messages and messages[0].role == "system" else None
+        compacted = ([system] if system else []) + [
+            Message(role="user", content=f"[历史摘要] {summary}")
+        ] + tail
+        self._compression_count += 1
+        self._compressed_tokens += max(0, head_tokens - TokenCounter.count_text_tokens(summary))
+        logger.info("[AgentLoop] 上下文摘要压缩: 压缩 %s 条旧消息, 释放 %s tokens",
+                    len(head), head_tokens)
+        return compacted
+
+    async def _summarize_history(self, head: List[Message]) -> Optional[str]:
+        try:
+            text = "\n\n".join(f"[{m.role}] {m.content or ''}" for m in head)
+            if len(text) > 80_000:
+                text = text[:80_000] + "\n...[截断]"
+            system = (
+                "你是会话压缩器。将用户提供的对话历史压缩为一段精炼的中文摘要："
+                "保留已完成的决策与结论、修改过的文件清单、关键发现与未完成的任务，"
+                "丢弃过程性细节。直接输出摘要正文，不要任何前缀。"
+            )
+            content, _, _ = await self.adapter.chat_stream(
+                [
+                    Message(role="system", content=system),
+                    Message(role="user", content=f"请压缩以下对话历史：\n\n{text}"),
+                ],
+                [],
+                None,
+            )
+            return (content or "").strip() or None
+        except Exception:
+            logger.exception("[AgentLoop] 历史摘要失败，回退旧裁剪策略")
+            return None
+
     # ------------------------------------------------------------------ 收尾
 
     async def _finish(self, content: str, messages: List[Message], stats: Dict[str, Any],
@@ -304,9 +362,16 @@ class AgentLoop:
         }
 
     def _effective_cap(self) -> int:
-        """上下文有效上限 = min(预算, 90% × 模型上下文窗口)。"""
+        """上下文有效上限 = max(预算下限, 90% × 模型上下文窗口)。
+
+        opencode 风格：只在接近模型上限时才压缩——预算只作为小窗口模型的
+        兜底下限，避免任务中途频繁裁剪旧消息破坏缓存前缀（裁剪=前缀打洞=miss）。
+        """
+        budget = self.context_manager.max_allowed_tokens
         window_cap = int(0.9 * self.context_window)
-        return min(self.context_manager.max_allowed_tokens, window_cap)
+        if self.context_window >= int(budget / 0.9):
+            return window_cap
+        return min(budget, window_cap)
 
     async def _emit_context_stats(self, stats: Dict[str, Any]) -> None:
         """推送「上下文情况」统计（任务内实时，会话累计由 TaskHandle 合并）。"""

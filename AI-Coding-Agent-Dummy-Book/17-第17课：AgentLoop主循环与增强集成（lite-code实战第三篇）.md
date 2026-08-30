@@ -273,13 +273,23 @@ class AgentLoop:
             if self._check_abort():
                 return "[Stopped]: 已由用户手动停止。"
 
-            # A. 上下文裁剪（有效上限 = min(预算, 90% × 模型窗口)）
+            # A. 上下文压缩（有效上限 = max(预算下限, 90% × 模型窗口)）
+            #    超限优先 LLM 摘要化旧轮次（opencode 风格，前缀只失效一次）；
+            #    摘要失败才回退策略 B 两阶段裁剪
             cap = self._effective_cap()
-            payload = self.context_manager.prune_messages(messages, hard_cap=cap)
-            if self.context_manager.last_prune.get("compressed"):
-                self._compression_count += 1
-                self._compressed_tokens += int(
-                    self.context_manager.last_prune.get("removed_tokens", 0))
+            if TokenCounter.count_messages_tokens(messages) > cap:
+                compacted = await self._try_compact(messages, cap)
+                if compacted is not None:
+                    messages[:] = compacted
+                    payload = messages
+                else:
+                    payload = self.context_manager.prune_messages(messages, hard_cap=cap)
+                    if self.context_manager.last_prune.get("compressed"):
+                        self._compression_count += 1
+                        self._compressed_tokens += int(
+                            self.context_manager.last_prune.get("removed_tokens", 0))
+            else:
+                payload = messages
 
             # B. beforeLLM 管道（插件可修改消息）
             processed = await self.kernel.before_llm.run(self.kernel.ctx, payload)
@@ -355,9 +365,23 @@ class AgentLoop:
         return "[Loop Terminated]: 超出最大步骤限制。"
 
     def _effective_cap(self) -> int:
-        """上下文有效上限 = min(预算, 90% × 模型窗口)（第3课）。"""
+        """上下文有效上限 = max(预算下限, 90% × 模型窗口)（第3课）。
+
+        大窗口模型（如 DeepSeek V4 1M）不被默认预算锁死——压缩延迟到
+        90% × 窗口，避免任务中途频繁裁剪破坏缓存前缀。
+        """
+        budget = self.context_manager.max_allowed_tokens
         window_cap = int(0.9 * self.context_window)
-        return min(self.context_manager.max_allowed_tokens, window_cap)
+        if self.context_window >= int(budget / 0.9):
+            return window_cap
+        return min(budget, window_cap)
+
+    async def _try_compact(self, messages, cap):
+        """opencode 风格压缩：旧轮次 LLM 摘要化，最近轮次原样保留。
+
+        摘要替换只发生一次（前缀失效一次），此后前缀逐字节稳定 → 缓存命中延续；
+        摘要失败回退策略 B 两阶段裁剪。
+        """
 
     async def _emit_context_stats(self, stats: Dict[str, Any]) -> None:
         """推送「上下文情况」统计：缓存命中率 / 压缩次数 / 窗口占用比例。"""
@@ -422,7 +446,7 @@ class SubAgentRunner:
 
 1. 掌握了完整的 **Think-Act-Observe 状态机** 控制逻辑；
 2. 集成了第 2 课所有防御：**JSON 自愈**、**死循环 Hash 检测**、**输出截断**（截断结果落盘，上下文只放句柄）；
-3. 集成了第 3 课所有增强：**Token 预算估算**、**策略 B 两阶段滑动裁剪**（保护 system 与 tool 原子对、保留最近 K 轮、`min(预算, 90% × 模型窗口)` 有效上限）、**静态 System Prompt**（任务内构建一次，稳定前缀）；
+3. 集成了第 3 课所有增强：**Token 预算估算**、**策略 B 两阶段滑动裁剪**（保护 system 与 tool 原子对、保留最近 K 轮、`max(预算下限, 90% × 模型窗口)` 有效上限）、**LLM 摘要化压缩**（opencode 风格：旧轮次摘要替换、最近轮次原样保留，前缀只失效一次）、**静态 System Prompt**（任务内构建一次，稳定前缀）；
 4. 实现了 **beforeTool 安全管道**（第 18 课 SecurityPlugin 的接入点）；
 5. 实现了 **估算兜底 + 真实 usage 回填**（第 4 课）：用模型返回的 `prompt_cache_hit_tokens` 精确统计缓存命中率，并对 Anthropic 与 OpenAI 兼容接口使用不同的 miss 口径；
 6. 实现了 **上下文可观测性**：`context:stats` 事件把压缩次数、压缩节省 Token、命中率、窗口占用比例推给「上下文情况」面板；

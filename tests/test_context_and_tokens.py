@@ -184,6 +184,47 @@ def test_prune_stage2_drops_oldest_turn():
     assert TokenCounter.count_messages_tokens(pruned) <= TokenCounter.count_messages_tokens(messages)
 
 
+def test_split_for_compaction_head_tail():
+    """opencode 风格拆解：head 是更早轮次（待摘要），tail 是预算内最近轮次（原样保留）。"""
+    messages = _three_turn_chain()  # 总 1443 tokens
+    cm = ContextManager(max_allowed_tokens=700, keep_recent_full_turns=2)
+    plan = cm.split_for_compaction(messages)
+    assert plan is not None
+    head, tail, head_tokens = plan
+
+    # system 不进 head/tail（由调用方重组）
+    assert all(m.role != "system" for m in head + tail)
+    # head 是更早的轮次（问题一），tail 保留最新（问题三）
+    head_contents = {m.content for m in head}
+    tail_contents = {m.content for m in tail}
+    assert "问题一" in head_contents
+    assert "问题三" in tail_contents
+    assert head_tokens > 0
+    # tail + system 必须在预算内（system 由调用方补回，此处核算用占位）
+    sys_placeholder = Message(role="system", content="sys" * 300)
+    assert TokenCounter.count_message_tokens(sys_placeholder) + TokenCounter.count_messages_tokens(tail) <= 700
+    # tail 必须是完整轮次边界（不能从工具对中间切断）
+    roles = [m.role for m in tail]
+    assert roles[0] == "user"
+
+
+def test_split_for_compaction_within_budget_none():
+    messages = _three_turn_chain()
+    cm = ContextManager(max_allowed_tokens=10**6)
+    assert cm.split_for_compaction(messages) is None
+
+
+def test_split_for_compaction_keeps_at_least_last_turn():
+    """即使最新一轮也超预算，仍保留最新轮（opencode tail fallback）。"""
+    messages = _three_turn_chain()
+    cm = ContextManager(max_allowed_tokens=100)
+    plan = cm.split_for_compaction(messages)
+    assert plan is not None
+    head, tail, _ = plan
+    assert any(m.content == "问题三" for m in tail)
+    assert all(m.content != "问题三" for m in head)
+
+
 # ---------------------------------------------------------------- usage 解析
 
 

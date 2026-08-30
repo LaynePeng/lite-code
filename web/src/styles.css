@@ -1987,6 +1987,53 @@ button {
   font-variant-numeric: tabular-nums;
 }
 
+/* 工具结果 diff 展示（文件修改 + 增删行数，opencode 风格） */
+.diff-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.diff-file {
+  color: var(--text-1);
+  font-family: var(--font-mono);
+}
+
+.diff-add {
+  color: #3fb950;
+  font-weight: 700;
+}
+
+.diff-del {
+  color: #f85149;
+  font-weight: 700;
+}
+
+.tool-result.diff {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.tool-result.diff .diff-add {
+  color: #3fb950;
+  background: rgba(63, 185, 80, 0.08);
+}
+
+.tool-result.diff .diff-del {
+  color: #f85149;
+  background: rgba(248, 81, 73, 0.08);
+}
+
+.tool-result.diff .diff-hunk {
+  color: var(--accent);
+}
+
+.tool-result.diff .diff-meta {
+  color: var(--text-3);
+}
+
 @keyframes pulse-dot {
   50% { opacity: 0.4; }
 }

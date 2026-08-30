@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import difflib
 import os
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -172,4 +173,20 @@ class EditorTools:
 
         with open(full_path, "w", encoding="utf-8") as f:
             f.write(result)
-        return f"[Patch Success]: 已更新 {rel_path}。"
+        return self._diff_summary(rel_path, source, result)
+
+    def _diff_summary(self, rel_path: str, source: str, result: str) -> str:
+        """返回带文件路径与增删行数的结果（+N -M），并附 Unified Diff 供自检。"""
+        diff = list(difflib.unified_diff(
+            source.splitlines(), result.splitlines(),
+            fromfile=rel_path, tofile=rel_path, lineterm="",
+        ))
+        added = sum(1 for l in diff if l.startswith("+") and not l.startswith("+++"))
+        removed = sum(1 for l in diff if l.startswith("-") and not l.startswith("---"))
+        head = f"[Patch Success]: 已更新 {rel_path} (+{added} -{removed})"
+        if not diff:
+            return head
+        body = "\n".join(diff)
+        if len(body) > 4000:
+            body = body[:4000] + "\n...(diff 过长已截断)"
+        return f"{head}\n\n{body}"

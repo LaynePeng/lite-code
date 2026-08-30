@@ -173,6 +173,52 @@ function buildTurns(messages) {
 
 **后端新端点**：配套新增 `/api/agents` 返回 Agent 列表、`/api/workspace` 运行时切换工作区、`/api/fs/list` 浏览任意目录。
 
+**工具结果的 Diff 展示**：编辑工具（第 9 课）成功回执现在是 `[Patch Success]: 已更新 <path> (+N -M)` 摘要 + Unified Diff 正文，ToolPanel 据此做 opencode 风格的"文件修改"渲染。`DiffStats` 解析回执首行生成文件徽标与增删行数，`DiffPre` 把 diff 正文逐行着色：
+
+```tsx
+// ToolPanel.tsx —— 解析 "[Patch Success]: 已更新 <path> (+N -M)" → 文件徽标
+function DiffStats({ text }: { text: string }) {
+  const m = text.match(/^\[Patch Success\]: 已更新 (.+?) \(\+(\d+) -(\d+)\)/);
+  if (!m) return null;
+  return (
+    <div className="diff-stats">
+      <span className="diff-file">📄 {m[1]}</span>
+      <span className="diff-add">+{m[2]}</span>
+      <span className="diff-del">−{m[3]}</span>
+    </div>
+  );
+}
+
+// 按行渲染 diff：+ 绿 / − 红 / @@ 高亮 / 文件头灰
+function DiffPre({ text }: { text: string }) {
+  const isDiff = text.includes("[Patch Success]") && text.includes("\n@@");
+  if (!isDiff) return <pre className="tool-result">{text}</pre>;
+  return (
+    <pre className="tool-result diff">
+      {text.split("\n").map((line, i) => {
+        const cls = line.startsWith("+++") || line.startsWith("---")
+          ? "diff-meta"
+          : line.startsWith("@@")
+            ? "diff-hunk"
+            : line.startsWith("+")
+              ? "diff-add"
+              : line.startsWith("-")
+                ? "diff-del"
+                : "";
+        return (
+          <span key={i} className={cls}>
+            {line}
+            {"\n"}
+          </span>
+        );
+      })}
+    </pre>
+  );
+}
+```
+
+配套 CSS（`styles.css`）：`.diff-add` 绿色 `#3fb950`、`.diff-del` 红色 `#f85149`（配浅色背景衬底）、`.diff-hunk` 用强调色、`.diff-meta` 用弱化灰。这样 Agent 每次改文件，工具面板都会出现一条"📄 文件 (+N −M)"的彩色 diff 卡片，一眼看清改了什么。
+
 #### 3.6 上下文可观测性：`context:stats` 数据链路
 
 「上下文情况」面板的数据不是前端瞎猜的，而是 AgentLoop 每轮把真实统计通过事件总线推出来的（见第 17 课的 `_emit_context_stats`）。完整链路：
@@ -218,7 +264,7 @@ const danger = ratio >= 0.9;   // 达到模型窗口 90%，自动压缩已触发
 </div>
 ```
 
-**为什么值得做**：上下文压缩是"黑盒操作"——模型突然失忆时，如果面板显示"压缩 5 次、省了 30K token"，你能立刻定位到是 Stage 1 压缩工具细节还是 Stage 2 整轮删除导致的；缓存命中率骤降则说明 System Prompt 或工具定义在漂移、缓存断点被破坏了。**可观测性让"上下文管理"从玄学变成可排查的工程指标**。同时，窗口占用比例到达 **90%**（`usage_ratio >= 0.9`）时进度条变红，提示 AgentLoop 已在按 `min(预算, 90% × 模型窗口)` 自动压缩。
+**为什么值得做**：上下文压缩是"黑盒操作"——模型突然失忆时，如果面板显示"压缩 5 次、省了 30K token"，你能立刻定位到是 LLM 摘要压缩还是 Stage 1/Stage 2 裁剪导致的；缓存命中率骤降则说明 System Prompt 或工具定义在漂移、缓存断点被破坏了。**可观测性让"上下文管理"从玄学变成可排查的工程指标**。同时，窗口占用比例到达 **90%**（`usage_ratio >= 0.9`）时进度条变红，提示 AgentLoop 已在按 `max(预算下限, 90% × 模型窗口)` 自动压缩。
 
 **切换会话时回填累计**：SSE 只在任务运行期间推送，切回历史会话时面板需要恢复累计数据。前端在切换会话时调用 `GET /api/context/stats?session_id=...`（后端 `app.get_context_session_stats` 聚合落盘统计），把 `session` 段回填到面板：
 

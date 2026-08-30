@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from .token_counter import TokenCounter
 from .types import Message
@@ -99,6 +99,43 @@ class ContextManager:
             self.last_prune["stage"],
         )
         return result
+
+    def split_for_compaction(
+        self, messages: List[Message], hard_cap: Optional[int] = None
+    ) -> Optional[Tuple[List[Message], List[Message], int]]:
+        """opencode 风格：把超预算历史拆成 (head 待摘要, tail 原样保留, head_tokens)。
+
+        从最新轮次往前保留 tail（预算内、至少一轮），head 为更早轮次。
+        未超预算或 head 为空返回 None（调用方回退旧裁剪策略）。
+        """
+        cap = hard_cap or self.max_allowed_tokens
+        system, body = self._split_body(messages)
+        if not body:
+            return None
+        sys_tokens = TokenCounter.count_message_tokens(system) if system else 0
+        turns = self._turn_ranges(body)
+        sizes = [
+            sum(TokenCounter.count_message_tokens(m) for m in body[start:end])
+            for start, end in turns
+        ]
+        if sys_tokens + sum(sizes) <= cap:
+            return None
+        tail_start = turns[-1][0]
+        acc = sys_tokens
+        for i in range(len(turns) - 1, -1, -1):
+            start, end = turns[i]
+            if acc + sizes[i] <= cap:
+                acc += sizes[i]
+                tail_start = start
+            else:
+                break
+        if tail_start <= 0:
+            return None
+        head = body[:tail_start]
+        head_tokens = sum(TokenCounter.count_message_tokens(m) for m in head)
+        if head_tokens <= 0:
+            return None
+        return head, body[tail_start:], head_tokens
 
     # ------------------------------------------------------------------ 内部
 

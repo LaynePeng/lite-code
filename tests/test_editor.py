@@ -1,5 +1,8 @@
 """编辑器工具测试（对应第7课：Search-Replace 模糊退避 + Unified Diff 锚点偏移）。"""
-from litecode.tools.editor import BlockReplacer, DiffPatcher
+import asyncio
+import os
+
+from litecode.tools.editor import BlockReplacer, DiffPatcher, EditorTools
 
 
 def test_block_replacer_exact_match():
@@ -42,3 +45,33 @@ def test_diff_patcher_anchor_not_found():
     patch = "@@ -1,1 +1,1 @@\n-zzzz\n+yyyy\n"
     ok, _, error = DiffPatcher().apply_patch(src, patch)
     assert not ok and "锚点" in error
+
+
+def test_editor_result_contains_file_and_line_counts(tmp_path):
+    """修改结果必须带文件路径与增删行数（+N -M），并附 diff。"""
+    tools = EditorTools(str(tmp_path))
+    p = tmp_path / "a.ts"
+    p.write_text("line1\nline2\nline3\nline4\n", encoding="utf-8")
+
+    result = asyncio.run(tools.execute("apply_search_replace", {
+        "filePath": "a.ts",
+        "searchBlock": "line3",
+        "replaceBlock": "line3-new\nline3-extra",
+    }))
+    assert result.startswith("[Patch Success]: 已更新 a.ts (+2 -1)")
+    assert "a.ts" in result and "+++" in result and "@@" in result
+    assert p.read_text(encoding="utf-8") == "line1\nline2\nline3-new\nline3-extra\nline4\n"
+
+
+def test_editor_diff_stats_counts(tmp_path):
+    """增删计数正确：+3 -2（加 3 行删 2 行）。"""
+    tools = EditorTools(str(tmp_path))
+    p = tmp_path / "b.ts"
+    p.write_text("a\nb\nc\nd\n", encoding="utf-8")
+
+    result = asyncio.run(tools.execute("apply_search_replace", {
+        "filePath": "b.ts",
+        "searchBlock": "b\nc",
+        "replaceBlock": "b2\nc2\nc3",
+    }))
+    assert result.startswith("[Patch Success]: 已更新 b.ts (+3 -2)")

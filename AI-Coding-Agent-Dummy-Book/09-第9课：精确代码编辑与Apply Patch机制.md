@@ -172,8 +172,31 @@ async def execute_editor_tool(name: str, args: dict, cwd: str) -> str:
 
     with open(full_path, "w", encoding="utf-8") as f:
         f.write(result)
-    return f"[Patch Success]: 已更新 {args['filePath']}。"
+    return _diff_summary(args["filePath"], source, result)
+
+def _diff_summary(rel_path: str, source: str, result: str) -> str:
+    """返回带文件路径与增删行数的结果（+N -M），并附 Unified Diff 供 Agent 自检。"""
+    import difflib
+    diff = list(difflib.unified_diff(
+        source.splitlines(), result.splitlines(),
+        fromfile=rel_path, tofile=rel_path, lineterm="",
+    ))
+    added = sum(1 for l in diff if l.startswith("+") and not l.startswith("+++"))
+    removed = sum(1 for l in diff if l.startswith("-") and not l.startswith("---"))
+    head = f"[Patch Success]: 已更新 {rel_path} (+{added} -{removed})"
+    if not diff:
+        return head
+    body = "\n".join(diff)
+    if len(body) > 4000:
+        body = body[:4000] + "\n...(diff 过长已截断)"
+    return f"{head}\n\n{body}"
 ```
+
+**为什么成功回执要附上 Diff？** 编辑工具的成功回执不只是"告知写好了"，而是携带了**完整的 Unified Diff 正文与 `(+N -M)` 增删统计**（`_diff_summary`）：
+
+1. **Agent 自检**：模型拿到 diff 后可以"复核"自己刚做的修改是否符合预期，发现多余改动时主动补救，形成闭环；
+2. **前端渲染**：`(+N -M)` 徽标与 diff 高亮正是第 19 课 ToolPanel 中"文件修改卡片"的数据来源（`[Patch Success]: 已更新 xxx (+N -M)` 是前后端约定的契约格式）；
+3. **Token 可控**：diff 正文超过 4000 字符自动截断，避免长文件回执把上下文撑爆。
 
 ### 本课小结
 
@@ -182,6 +205,6 @@ async def execute_editor_tool(name: str, args: dict, cwd: str) -> str:
 1. 深入理解了 **Search-and-Replace Block** 与 **Unified Diff** 的各自适用场景；
 2. 实现了包含 **缩进保持** 与 **模糊行匹配** 的块替换器；
 3. 实现了带 **锚点自适应偏移** 的 Diff 应用器；
-4. 建立了 Patch 失败时的 **Agent 上下文自愈反馈链条**。
+4. 建立了 Patch 失败时的 **Agent 上下文自愈反馈链条**，成功时返回 `(+N -M)` + Unified Diff 供自检与前端渲染。
 
 下一次我们将开启 **第10课：标准 Model Context Protocol (MCP) 接入** —— 学习如何让我们的 Harness 接入 Anthropic 提出的标准 MCP 协议，无缝加载外部丰富的 Tool Server 生态！

@@ -7,7 +7,7 @@
 
 #### 1. Token 准确估算与计数器 (Token Counter)
 
-在 Python 生态中，若需绝对精准可以引入 `tiktoken`。这里我们先封装一个零依赖的 `TokenCounter` 模块，采用与实战一致的估算逻辑：
+在 Python 生态中，若需绝对精准可以引入 `tiktoken`。这里我们先封装一个零依赖的 `TokenCounter` 模块：
 
 ```python
 # utils/token_counter.py
@@ -251,16 +251,19 @@ class ContextManager:
 
 **为什么保留最近 K 轮？** 工具调用是链式推理（读了文件才能改、改了才能验证），删掉最近的决策链会让模型"失忆"，当前任务直接断线。`keep_recent_full_turns=2` 是实践中的经验值：既保住当前任务的连续推理，又能把更早的历史压缩成"对话主干"。
 
-**有效上限：min(预算, 90% × 模型窗口)**。模型上下文窗口是"输入 + 输出"的总预算，输入不能占满——必须给模型回复预留空间。所以实战中：
+**有效上限：max(预算下限, 90% × 模型窗口)**。模型上下文窗口是"输入 + 输出"的总预算，输入不能占满——必须给模型回复预留空间。但预算**不能把大窗口模型锁死**：DeepSeek V4 有 1M 窗口，若按 48K 默认预算每轮裁剪，任务中途频繁删旧消息 = 缓存前缀反复打洞 = 命中率趋近于零。opencode 的实践是"只在接近模型上限时压缩一次"，因此实战中：
 
 ```python
 def _effective_cap(self) -> int:
-    """上下文有效上限 = min(预算, 90% × 模型上下文窗口)。"""
+    """上下文有效上限 = max(预算下限, 90% × 模型上下文窗口)。"""
+    budget = self.context_manager.max_allowed_tokens
     window_cap = int(0.9 * self.context_window)
-    return min(self.context_manager.max_allowed_tokens, window_cap)
+    if self.context_window >= int(budget / 0.9):
+        return window_cap          # 大窗口：压缩延迟到 90% × 窗口（opencode 同款）
+    return min(budget, window_cap)  # 小窗口：预算兜底，保持 90% 安全边际
 ```
 
-预留 10% 给输出（以及工具结果的瞬时波动），否则模型会被"挤"得只能输出几个 Token。
+预留 10% 给输出（以及工具结果的瞬时波动），否则模型会被"挤"得只能输出几个 Token。此外，压缩手段也升级为**先 LLM 摘要化、后整轮裁剪**（第 17 课：摘要替换旧轮次，最近轮次原样保留——前缀只在压缩时失效一次）。
 
 #### 3. 手写 Dynamic System Prompt 动态组装器
 
@@ -397,6 +400,6 @@ async def run_context_aware_agent(user_prompt: str, tools, tool_executor):
 
 1. 学会了纯手写流式 Tool Calling 拼接；
 2. 实现了 JSON 自愈、死循环 Hash 预警与工具输出截断；
-3. 掌握了 Token 估算、保护 `assistant-tool` 完整性的**策略 B 两阶段裁剪**算法，以及动态注入环境信息的 System Prompt。
+3. 掌握了 Token 估算、保护 `assistant-tool` 完整性的**策略 B 两阶段裁剪**算法，理解了感知环境的 System Prompt 设计，以及它与缓存前缀的张力与取舍（实战落地为静态骨架，见第 17 课）。
 
 在下一课中，我们将进入 **第4课：Prompt 缓存机制** —— 学习如何让稳定前缀命中供应商的 KV 缓存，把输入 Token 成本砍到 10%。

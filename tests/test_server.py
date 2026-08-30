@@ -27,7 +27,8 @@ async def live_client(tmp_path):
     config = uvicorn.Config(fast_app, host="127.0.0.1", port=0, log_level="error")
     server = uvicorn.Server(config)
     server_task = asyncio.create_task(server.serve())
-    for _ in range(100):
+    # lifespan 内含 models.dev 网络同步（失败静默降级），启动可能被拖慢到 ~10s
+    for _ in range(400):
         if server.started:
             break
         await asyncio.sleep(0.05)

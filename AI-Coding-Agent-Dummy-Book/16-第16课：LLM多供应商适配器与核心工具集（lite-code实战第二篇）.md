@@ -215,7 +215,7 @@ class LLMRegistry:
 
 #### 5. 模型元数据服务 (`litecode/llm/model_meta.py`)
 
-上下文窗口长度（`context_window`）直接决定第 17 课的压缩阈值（`min(预算, 90% × 窗口)`）与「上下文情况」面板的占用率计算——而它随模型而异（DeepSeek V4 是 1M，Kimi K2 是 262K，GLM-4-Long 也是 1M）。各厂商的 `/models` 接口并不返回上下文长度，业界标准做法（OpenCode 同款）是使用社区模型元数据库 **models.dev**：
+上下文窗口长度（`context_window`）直接决定第 17 课的压缩阈值（`max(预算下限, 90% × 窗口)`）与「上下文情况」面板的占用率计算——而它随模型而异（DeepSeek V4 是 1M，Kimi K2 是 262K，GLM-4-Long 也是 1M）。各厂商的 `/models` 接口并不返回上下文长度，业界标准做法（OpenCode 同款）是使用社区模型元数据库 **models.dev**：
 
 ```python
 # litecode/llm/model_meta.py（核心）
@@ -321,7 +321,7 @@ class ASTAnalyzer:
         ...
 ```
 
-**精确编辑工具**（`tools/editor.py`）：Search-and-Replace 模糊退避 + Unified Diff 锚点偏移：
+**精确编辑工具**（`tools/editor.py`）：Search-and-Replace 模糊退避 + Unified Diff 锚点偏移。成功回执不再只是 `[Patch Success]: 已更新 <path>。`，而是用 `difflib.unified_diff` 生成 `[Patch Success]: 已更新 <path> (+N -M)` 增删统计并附上 diff 正文（超 4000 字符截断）——既让 Agent 自检刚做的修改，又为第 19 课 ToolPanel 的"文件修改卡片"提供渲染数据：
 
 ```python
 class BlockReplacer:
