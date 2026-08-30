@@ -122,33 +122,39 @@ function StreamingTurn({
   cards: ToolCardInfo[];
   turn?: number;
 }) {
+  // 工具调用进行中（content 为空、已有卡片）不渲染空气泡，只显示工具卡片
+  const showBubble = !!content || cards.length === 0;
   return (
-    <div className="msg-row assistant">
-      <div className="assistant-avatar">⚡</div>
-      <div className="bubble assistant-bubble streaming">
-        {!content && !cards.length && (
-          <div className="thinking">
-            <span className="dot" />
-            <span className="dot" />
-            <span className="dot" />
-            <span className="thinking-text">思考中…{turn ? ` (第 ${turn} 轮)` : ""}</span>
+    <>
+      {showBubble && (
+        <div className="msg-row assistant">
+          <div className="assistant-avatar">⚡</div>
+          <div className="bubble assistant-bubble streaming">
+            {!content && !cards.length && (
+              <div className="thinking">
+                <span className="dot" />
+                <span className="dot" />
+                <span className="dot" />
+                <span className="thinking-text">思考中…{turn ? ` (第 ${turn} 轮)` : ""}</span>
+              </div>
+            )}
+            {content && <Markdown text={content} />}
+            {content && (
+              <span className="cursor-bar">
+                <span className="cursor" />
+              </span>
+            )}
           </div>
-        )}
-        {content && <Markdown text={content} />}
-        {cards.length > 0 && (
-          <div className="tool-cards">
-            {cards.map((c) => (
-              <ToolCard key={c.id} card={c} />
-            ))}
-          </div>
-        )}
-        {content && (
-          <span className="cursor-bar">
-            <span className="cursor" />
-          </span>
-        )}
-      </div>
-    </div>
+        </div>
+      )}
+      {cards.length > 0 && (
+        <div className="tool-cards">
+          {cards.map((c) => (
+            <ToolCard key={c.id} card={c} />
+          ))}
+        </div>
+      )}
+    </>
   );
 }
 

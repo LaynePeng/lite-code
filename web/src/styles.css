@@ -743,12 +743,14 @@ button {
   }
 }
 
-/* 工具卡片 */
+/* 工具卡片：与回复气泡同宽、同居中约束 */
 .tool-cards {
   display: flex;
   flex-direction: column;
   gap: 8px;
   margin-bottom: 12px;
+  /* 与 .msg-row 一致的居中约束 */
+  padding: 0 max(24px, calc((100% - 820px) / 2));
 }
 
 .tool-card {
@@ -757,6 +759,8 @@ button {
   overflow: hidden;
   background: var(--bg-2);
   transition: border-color 0.15s;
+  /* 与回复气泡同宽上限 */
+  max-width: 76%;
 }
 
 .tool-card.running {
