@@ -65,10 +65,19 @@ DEFAULT_HIGH_RISK_PATTERNS = [
     r"git\s+clean\s+-f[dx]?",  # 清理未跟踪文件
     r"\brm\s+-rf\s+(~/|\./)?\*\b",
     r"\bkillall\s+.*(?:node|python|npm)",  # 批量杀进程
+    r"\bdel\b[^\n]*\s[A-Za-z]:\\\*",  # Windows: del /s /q C:\*（盘符根通配删除）
+    r"\b(?:rmdir|rd)\b[^\n]*\s[A-Za-z]:\\",  # Windows: rmdir /rd /s /q C:\（删除盘符根目录）
+    r"\bRemove-Item\b[^\n]*(?:-Recurse|-Force)[^\n]*\s[A-Za-z]:\\",  # PowerShell: Remove-Item -Recurse -Force C:\
 ]
 
 DEFAULT_MEDIUM_RISK_PATTERNS = [
-    r"\brm\b",  # 普通删除操作
+    r"\brm\b",  # 普通删除操作（Unix / PowerShell）
+    r"\bdel\b",  # Windows: 删除文件（cmd / PowerShell 别名）
+    r"\berase\b",  # Windows: 删除文件（cmd / PowerShell 别名）
+    r"\bRemove-Item\b",  # Windows: PowerShell 删除（含 -Recurse/-Force）
+    r"\brmdir\b",  # Windows: 删除目录
+    r"\brd\b",  # Windows: rmdir 别名（删除目录）
+    r"\bos\.(?:remove|unlink)\b|\.unlink\(",  # Python 脚本删除文件
     r"\bkill\s+-9\b",  # 强制终止进程
     r"\bcurl\b.*\|\s*(ba)?sh\b",  # 管道远程脚本
     r"\bsudo\b",  # 提权操作

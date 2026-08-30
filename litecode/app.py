@@ -301,13 +301,18 @@ class AgentApp:
     def create_kernel(self, session_id: str, registry: Optional[ToolRegistry] = None) -> Kernel:
         """Cordis 内核装配：工具插件 + 安全插件全部挂载，服务进入依赖注入容器。
 
-        registry 为 None 时挂载全量工具；传入 Agent 裁剪后的 registry 时，
-        内核的 tools 服务与 AgentLoop 执行的工具集保持一致。
+        - registry 为 None：挂载全量工具（默认内核）。
+        - registry 已传入（build_registry 按 Agent 裁剪后的）：直接挂为 tools 服务，
+          不再重复安装工具插件——否则插件会把被裁剪掉的工具重新注册进
+          registry（无 tool_filter 服务时插件全量注册），plan 只读模式失效。
         """
         kernel = Kernel(session_id)
-        kernel.register_service(TOOLS_SERVICE, registry or ToolRegistry())
-        for plugin in self.tool_plugins():
-            kernel.use(plugin)
+        if registry is not None:
+            kernel.register_service(TOOLS_SERVICE, registry)
+        else:
+            kernel.register_service(TOOLS_SERVICE, ToolRegistry())
+            for plugin in self.tool_plugins():
+                kernel.use(plugin)
         kernel.use(SecurityPlugin(self.guard, self.approval_gate))
         kernel.register_service("app", self)
         return kernel
