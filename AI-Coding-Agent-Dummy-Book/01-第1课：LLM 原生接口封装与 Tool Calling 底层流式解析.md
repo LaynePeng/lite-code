@@ -1,10 +1,10 @@
-在构建 Agent Harness 时，首要规则是：**不要使用 LangChain、LlamaIndex 等高层抽象框架**。高层框架封印了底层状态机，掩盖了消息流动的细节，导致后续无法做极致的上下文控制、工具拦截与插件化解耦。
+构建 Agent Harness 的首要规则是：**不要使用 LangChain、LlamaIndex 等高层抽象框架**。高层框架封装了底层状态机，掩盖了消息流动的细节，后续无法进行细粒度的上下文控制、工具拦截与插件化解耦。
 
 本课将使用 **Python** 纯手写实现底层 LLM API 调用机制，并从 Byte/Token 级解析大模型在流式输出（Streaming）下的 **Tool Calling 增量拼接**。
 
 #### 1. 深入理解 Message 状态与 JSON Schema 协议
 
-LLM 的 Tool Calling 不是魔术，本质是按照约定好的 JSON Schema 返回特定格式的文本字符串。
+LLM 的 Tool Calling 本质上就是按照约定的 JSON Schema 返回特定格式的文本字符串。
 
 一个标准的 Tool Calling 通信包含以下关键类型：
 
@@ -145,7 +145,7 @@ class LLMProvider:
 
 #### 2.5 多字节 UTF-8 增量解码（中文乱码的根因）
 
-上面的 `buffer += chunk.decode("utf-8", errors="replace")` 在中文回复下**必踩坑**：`chunk` 是网络层切分的原始字节，可能把一个多字节字符**拦腰截断**。
+上面的 `buffer += chunk.decode("utf-8", errors="replace")` 在中文回复下**必然出错**：`chunk` 是网络层切分的原始字节，可能把一个多字节字符**拦腰截断**。
 
 UTF-8 中文字符通常是 3 字节（如 `看` = `E7 9C 8B`）。当 chunk 边界恰好在字符中间，比如第一个 chunk 只带 `E7`、第二个才带 `9C 8B`：
 

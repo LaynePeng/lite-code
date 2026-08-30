@@ -3,10 +3,10 @@
 但是直接在宿主机（Host Machine）上运行 Agent 生成的 Shell 指令是极度危险的。LLM 可能会产生以下风险：
 
 1. **破坏性指令**：误执行 `rm -rf /` 或改写关键系统环境变量；
-2. **资源耗尽**：运行了死循环代码（如 `while True`）导致宿主机 CPU / 内存爆满；
+2. **资源耗尽**：运行了死循环代码（如 `while True`）导致宿主机 CPU / 内存耗尽；
 3. **网络与数据外泄**：恶意代码尝试连接外部未知 Server 上传敏感环境变量（`.env`）。
 
-本课我们将手写一个基于 **进程隔离** 的安全沙箱控制器（Execution Sandbox），为 Agent Harness 提供安全的"轻量隔离圈"。
+本课手写一个基于 **进程隔离** 的安全沙箱控制器（Execution Sandbox），为 Agent Harness 提供一层轻量隔离。
 
 #### 1. 沙箱隔离的核心设计要求
 
@@ -159,4 +159,4 @@ async def execute_sandbox_tool(name: str, args: dict, sandbox: LocalProcessSandb
 3. 增加了 **硬超时摧毁机制** 与 **高危命令过滤**；
 4. 屏蔽了底层 API Key 环境变量在 Shell 进程中的泄漏风险。
 
-下一次我们将进入 **第9课：精确代码编辑与 Apply Patch 机制** —— 学习解决 LLM 频繁写错代码行号的问题，手写高效且具备重试能力的代码编辑与 Patch 校验工具！
+下一课进入 **第9课：精确代码编辑与 Apply Patch 机制** —— 学习解决 LLM 频繁写错代码行号的问题，手写高效且具备重试能力的代码编辑与 Patch 校验工具。

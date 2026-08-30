@@ -1,6 +1,6 @@
-在前三课中，我们已经构建了一个完整的 Agent 控制循环：LLM 流式调用、JSON 自愈、死循环检测、Token 预算控制、滑动窗口裁剪、感知环境的 System Prompt。但在实际生产环境中，有一个被严重低估的优化手段——**Prompt 缓存（Prompt Caching）**。
+在前三课中，我们已经构建了一个完整的 Agent 控制循环：LLM 流式调用、JSON 自愈、死循环检测、Token 预算控制、滑动窗口裁剪、感知环境的 System Prompt。但在实际生产环境中，还有一个常被忽视的优化手段——**Prompt 缓存（Prompt Caching）**。
 
-本课我们会深入：
+本课内容：
 1. 什么是 Prompt 缓存？为什么它能带来 **90% 的输入 Token 成本削减**？
 2. 主流供应商（Anthropic、DeepSeek、OpenAI）的缓存机制对比；
 3. 缓存命中的关键：**稳定前缀（Stable Prefix）**；
@@ -149,7 +149,7 @@ DeepSeek 的响应中也会包含缓存命中信息：
 
 #### 7. 度量缓存：估算与真实 usage 混用
 
-缓存命中率不是玄学，必须用模型返回的 **usage 字段**精确度量。我们的做法是「首次估算兜底，之后真实回填」：
+缓存命中率必须用模型返回的 **usage 字段**精确度量，不能依赖估算。做法是「首次估算兜底，之后真实回填」：
 
 ```python
 # AgentLoop 内（D2 阶段，core/agent_loop.py）
@@ -190,4 +190,4 @@ if usage:
 3. 在 Anthropic 和 OpenAI 兼容适配器中实际接入了缓存标注；
 4. 学会了**缓存感知的 Token 预算管理**，以及**缓存友好**的代码设计约束。
 
-在下一课中，我们将更进一步，学习**Token 节省策略**——从 OpenSquilla 的 13 层 Token 节省机制中提炼最适合我们的 Harness 的模式，并在不破坏缓存的前提下实现多级压缩。
+下一课学习**Token 节省策略**——从 OpenSquilla 的 13 层 Token 节省机制中提炼最适合本 Harness 的模式，并在不破坏缓存的前提下实现多级压缩。
