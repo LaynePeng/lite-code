@@ -99,10 +99,12 @@ web/src/
 ├── types.ts           # 类型定义
 ├── styles.css         # 深色主题样式
 └── components/
-    ├── ChatView.tsx   # 聊天区：流式 Markdown + 工具卡片 + 审批
-    ├── Composer.tsx   # 输入框
-    ├── Sidebar.tsx    # 侧边栏：会话/文件/统计/打开项目
-    └── SettingsModal.tsx  # LLM 设置弹窗
+    ├── ChatView.tsx       # 聊天区：流式 Markdown + 工具卡片 + 审批
+    ├── Composer.tsx       # 输入框
+    ├── FileDiff.tsx       # 文件修改 diff 渲染（DiffStats / DiffPre）
+    ├── Sidebar.tsx        # 侧边栏：会话/文件/统计/打开项目
+    ├── SettingsModal.tsx  # LLM 设置弹窗
+    └── ToolPanel.tsx      # 右侧面板：上下文情况（窗口占用/缓存命中率/压缩统计）
 ```
 
 **SSE 事件处理流程**（`App.tsx`）：
@@ -163,7 +165,7 @@ function buildTurns(messages) {
 
 **Tab 快捷键切换 Agent**：全局 `keydown` 监听，按 Tab 在 Build/Plan 间循环切换，`preventDefault` 阻止焦点跳转——输入框始终聚焦，可连续打字 + 切 Agent + 发送。
 
-**停止按钮合一**：任务运行时，发送按钮（➤）变为红色停止按钮（■），点击即停止。不再有独立的悬浮停止条，避免遮挡。
+**停止按钮合一**：任务运行时，发送按钮（➤）变为红色停止按钮（■），点击即停止。不再有独立的悬浮停止条，避免遮挡。停止请求发出后按钮进入 `stopping` 状态（显示"正在停止…"并禁用，防止重复点击）；后端 `TaskHandle.stop()` 先置协作式中止信号 `abort_event`，再 `task.cancel()` 强杀挂起的 asyncio 任务——LLM 流卡住时也能解套。
 
 **目录树打开项目**：浏览器模式下，点击"打开项目"弹出 `ProjectPicker` 目录树选择器，通过 `/api/fs/list` 后端接口逐层浏览文件系统，选完后自动切换工作区并跳转到文件 tab。
 
@@ -175,7 +177,7 @@ function buildTurns(messages) {
 
 **后端新端点**：配套新增 `/api/agents` 返回 Agent 列表、`/api/workspace` 运行时切换工作区、`/api/fs/list` 浏览任意目录。
 
-**工具结果的 Diff 展示**：编辑工具（第 9 课）成功回执现在是 `[Patch Success]: 已更新 <path> (+N -M)` 摘要 + Unified Diff 正文，前端据此做 opencode 风格的"文件修改"渲染。渲染逻辑抽成共享组件 `FileDiff.tsx`（`DiffStats` / `DiffPre`），**对话流工具卡片（ChatView）与右侧面板（ToolPanel）共用同一实现**；配套 `tool:after_execute` SSE 事件携带 `result` 字段，任务运行中就能立即展示 diff。`DiffStats` 解析回执首行生成文件徽标与增删行数，`DiffPre` 把 diff 正文逐行着色：
+**工具结果的 Diff 展示**：编辑工具（第 9 课）成功回执现在是 `[Patch Success]: 已更新 <path> (+N -M)` 摘要 + Unified Diff 正文，前端据此做 opencode 风格的"文件修改"渲染。渲染逻辑抽成共享组件 `FileDiff.tsx`（`DiffStats` / `DiffPre`），供**对话流工具卡片**（`ChatView`）复用；配套 `tool:after_execute` SSE 事件携带 `result` 字段，任务运行中就能立即展示 diff。`DiffStats` 解析回执首行生成文件徽标与增删行数，`DiffPre` 把 diff 正文逐行着色：
 
 ```tsx
 // FileDiff.tsx —— 解析 "[Patch Success]: 已更新 <path> (+N -M)" → 文件徽标
@@ -219,7 +221,9 @@ function DiffPre({ text }: { text: string }) {
 }
 ```
 
-配套 CSS（`styles.css`）：`.diff-add` 绿色 `#3fb950`、`.diff-del` 红色 `#f85149`（配浅色背景衬底）、`.diff-hunk` 用强调色、`.diff-meta` 用弱化灰。这样 Agent 每次改文件，对话流与右侧面板的工具卡片都会出现一条"📄 文件 (+N −M)"的彩色 diff，一眼看清改了什么。
+配套 CSS（`styles.css`）：`.diff-add` 绿色 `#3fb950`、`.diff-del` 红色 `#f85149`（配浅色背景衬底）、`.diff-hunk` 用强调色、`.diff-meta` 用弱化灰。这样 Agent 每次改文件，对话流的工具卡片都会出现一条"📄 文件 (+N −M)"的彩色 diff，一眼看清改了什么。
+
+工具卡片与回复气泡使用同一套宽度约束：`.tool-cards` 沿用 `.msg-row` 的居中 padding（`max(24px, calc((100% - 820px) / 2))`），`.tool-card` 设 `max-width: 76%` 与 `.bubble` 一致——工具调用内容不再铺满整行，而是与一般回答/思考气泡同样宽、同样左对齐，视觉上统一。
 
 #### 3.6 上下文可观测性：`context:stats` 数据链路
 
