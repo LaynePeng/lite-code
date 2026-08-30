@@ -31,6 +31,8 @@ class TaskHandle:
         self.queue: asyncio.Queue = asyncio.Queue(maxsize=512)
         self.abort_event = asyncio.Event()
         self.loop.abort_event = self.abort_event
+        self.task: Optional[asyncio.Task] = None
+        self.stopping = False
         self.running = False
         self.done = False
         self.subscription = None
@@ -74,7 +76,11 @@ class TaskHandle:
             await self.queue.put(None)  # SSE 结束哨兵
 
     def stop(self) -> None:
+        """先置协作式中止信号，再强杀挂起的 asyncio 任务（LLM 流卡住时靠它解套）。"""
+        self.stopping = True
         self.abort_event.set()
+        if self.task is not None and not self.task.done():
+            self.task.cancel()
 
 
 class TaskManager:
@@ -97,7 +103,7 @@ class TaskManager:
         handle = TaskHandle(task_id, kernel, registry, loop, self.app)
         handle.agent_id = agent_id or "build"
         self.tasks[task_id] = handle
-        asyncio.get_event_loop().create_task(handle.run(prompt))
+        handle.task = asyncio.get_event_loop().create_task(handle.run(prompt))
         return handle
 
     def get(self, task_id: str) -> Optional[TaskHandle]:

@@ -38,6 +38,7 @@ export default function App() {
   const [sidebarTab, setSidebarTab] = useState<"sessions" | "files" | "stats">("sessions");
   const [loading, setLoading] = useState(true);
   const [stalled, setStalled] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
@@ -288,6 +289,7 @@ export default function App() {
           setStreaming(null);
           setRunning(false);
           setTurn(0);
+          setStopping(false);
           closeStream();
           pushLog("■ 任务结束");
           void (async () => {
@@ -302,6 +304,7 @@ export default function App() {
           pushLog(`✗ 任务错误: ${ev.data.message}`);
           cancelStreamFlush();
           setRunning(false);
+          setStopping(false);
           closeStream();
           void refreshSessions();
           break;
@@ -371,10 +374,12 @@ export default function App() {
   );
 
   const stop = useCallback(() => {
-    if (taskIdRef.current) {
-      void api.stopTask(taskIdRef.current).catch(() => {});
-    }
-  }, []);
+    const tid = taskIdRef.current;
+    if (!tid) return;
+    setStopping(true);
+    pushLog("■ 请求停止任务…");
+    void api.stopTask(tid).catch(() => setStopping(false));
+  }, [pushLog]);
 
   const approve = useCallback(
     async (approved: boolean) => {
@@ -504,8 +509,8 @@ export default function App() {
         {stalled && running && (
           <div className="error-banner stalled">
             <span>⚠ 任务长时间无响应（可能 LLM 超时或网络问题）</span>
-            <button onClick={() => { if (taskIdRef.current) void api.stopTask(taskIdRef.current).catch(() => {}); }}>
-              ■ 停止任务
+            <button onClick={stop} disabled={stopping}>
+              {stopping ? "正在停止…" : "■ 停止任务"}
             </button>
           </div>
         )}
