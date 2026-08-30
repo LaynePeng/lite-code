@@ -32,7 +32,7 @@
 |                       | [第 13 课](<13-第13课：多Agent协作与子Agent调度（Sub-agent Orchestration）.md>) | 子 Agent 编排                         |
 |                       | [第 14 课](<14-第14课：Agent类型与自定义机制（Build与Plan与用户扩展）.md>)      | Build/Plan 双默认 Agent / 自定义 Agent 机制 |
 | **模块四：手写实战**          | [第 15 课](<15-第15课：核心Core内核编码（lite-code实战第一篇）.md>)                  | Python Core 内核                     |
-|                       | [第 16 课](<16-第16课：LLM多供应商适配器与核心工具集（lite-code实战第二篇）.md>)             | 多 LLM + models.dev 元数据 + 17 工具              |
+|                       | [第 16 课](<16-第16课：LLM多供应商适配器与核心工具集（lite-code实战第二篇）.md>)             | 多 LLM + models.dev 元数据 + 19 工具（含 Web 抓取）              |
 |                       | [第 17 课](<17-第17课：AgentLoop主循环与增强集成（lite-code实战第三篇）.md>)            | AgentLoop 主循环（策略 B 集成 + 上下文可观测性）                      |
 |                       | [第 18 课](<18-第18课：安全沙箱与高危拦截实战（lite-code实战第四篇）.md>)                   | 安全沙箱 + Web 审批                      |
 |                       | [第 19 课](<19-第19课：WebUI与Electron桌面应用打包（lite-code实战终章）.md>)       | Web UI（上下文情况面板）+ Electron + 打包             |

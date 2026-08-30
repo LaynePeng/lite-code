@@ -56,7 +56,8 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], ...)
 @app.post("/api/llm/config")     # LLM 配置更新
 @app.post("/api/llm/test")       # 测试连接
 @app.get("/api/context/stats")   # 会话级上下文统计（切换会话时回填面板）
-@app.get("/api/workspace/tree")  # 文件树
+@app.get("/api/workspace/tree")  # 文件树（旧：文本 ASCII 树）
+@app.get("/api/workspace/tree-json")  # 结构化目录树：按路径懒加载 + git 状态字母
 ```
 
 **SSE 流式推送**：每个任务创建独立的 `asyncio.Queue`，AgentLoop 运行时通过 `TypedEventBus` 广播事件（`llm:stream`、`tool:before_execute`、`approval:request` 等），`TaskRunner` 订阅事件并推送到队列，SSE 端点从队列消费：
@@ -75,11 +76,13 @@ return StreamingResponse(_stream(), media_type="text/event-stream")
 ```python
 # litecode/server/tasks.py（核心）
 def start(self, session_id, prompt, agent_id=None):
-    kernel = self.app.create_kernel(session_id)
+    # 按 Agent 配置裁剪工具集（build 全量 / plan 只读 / 自定义）
+    registry = self.app.create_agent_registry(agent_id or "build")
+    # Cordis 内核装配：工具插件 + 安全插件全部挂载，tools 服务与 registry 一致
+    kernel = self.app.create_kernel(session_id, registry=registry)
     snapshot = self.app.session_store.load(session_id)   # 恢复历史
     if snapshot and snapshot.messages:
         kernel.ctx.messages = list(snapshot.messages)    # 续上上一轮对话
-    registry = self.app.create_agent_registry(agent_id or "build")
     loop = self.app.create_loop(kernel, registry, agent_id=agent_id)
     ...
 ```
@@ -102,10 +105,16 @@ web/src/
     ├── ChatView.tsx       # 聊天区：流式 Markdown + 工具卡片 + 审批
     ├── Composer.tsx       # 输入框
     ├── FileDiff.tsx       # 文件修改 diff 渲染（DiffStats / DiffPre）
-    ├── Sidebar.tsx        # 侧边栏：会话/文件/统计/打开项目
+    ├── Sidebar.tsx        # 侧边栏：会话/文件/统计/打开项目（含真实目录树 + git 状态徽标）
     ├── SettingsModal.tsx  # LLM 设置弹窗
     └── ToolPanel.tsx      # 右侧面板：上下文情况（窗口占用/缓存命中率/压缩统计）
 ```
+
+**侧边栏「文件」页签（真实目录树 + git 状态）**：对标 OpenCode 的左侧文件树——
+
+- **真实交互树**：目录可展开/折叠，子目录懒加载（点开才请求 `/api/workspace/tree-json?path=…`），目录在前、文件在后按名排序，gitignore 感知自动过滤 node_modules/.venv 等；
+- **git 状态徽标**：后端 `litecode/server/tree.py` 解析 `git status --porcelain -z` → 每个文件显示状态字母，配色对齐 OpenCode——**M 黄（修改）/ A 绿（新增）/ D 红（删除，划线显示）/ U 灰（未跟踪）/ R 青（重命名）/ C 紫（冲突）**；已删除文件仍显示在树中；目录内含改动时显示高亮圆点；头部展示当前分支；git 状态带 3 秒 TTL 缓存避免频繁刷新拉起 git 进程；
+- **动态刷新**：`App.tsx` 监听 SSE——写工具执行完（`write_file` / `apply_search_replace` / `apply_unified_diff` / `execute_command` / `git_commit`）、任务结束、子 Agent 完成时递增 `treeRevision`，`Sidebar` 的 `FileTree` 收到后自动重拉所有已展开目录，无需手动刷新。
 
 **SSE 事件处理流程**（`App.tsx`）：
 

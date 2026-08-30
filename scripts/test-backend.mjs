@@ -1,4 +1,4 @@
-// 跨平台运行后端测试：解析 venv 内的 python 执行 pytest
+// Cross-platform backend test runner: resolve python inside venv and run pytest
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -11,7 +11,7 @@ const python = isWindows
   : path.join(root, ".venv", "bin", "python");
 
 if (!fs.existsSync(python)) {
-  console.error(`[test] 未找到 venv Python: ${python}`);
+  console.error(`[test] venv Python not found: ${python}`);
   process.exit(1);
 }
 

@@ -230,4 +230,14 @@ class SecurityGuard:
                 result = self.check_path(path)
                 if result.level != ThreatLevel.SAFE:
                     return result
+        if tool_name in ("webfetch", "webfetch_batch"):
+            urls = [args.get("url")] if tool_name == "webfetch" else (args.get("urls") or [])
+            if not isinstance(urls, list):
+                urls = [urls]
+            for u in urls:
+                if u and not str(u).lower().startswith(("http://", "https://")):
+                    return SecurityCheckResult(
+                        ThreatLevel.HIGH,
+                        f'webfetch 仅允许 http/https 协议: {str(u)[:100]}',
+                    )
         return SecurityCheckResult(ThreatLevel.SAFE)

@@ -17,7 +17,7 @@ Electron 桌面外壳
 Python 后端（litecode/）
 ├── core/       内核（事件总线 / 洋葱中间件 / Kernel / AgentLoop / Token 预算 / 上下文裁剪）
 ├── llm/        LLM 多供应商适配器（DeepSeek / OpenAI / Anthropic / 通义千问 / 等 7 个）
-├── tools/      17 个工具（文件 / 代码搜索 / AST / 精确编辑 / Shell / Git / 审查 / 子 Agent）
+├── tools/      19 个工具（文件 / 代码搜索 / AST / 精确编辑 / Shell / Git / 审查 / 子 Agent / Web 抓取）
 ├── security/   安全沙箱（动态黑白名单 / 三级风险 / Web 审批卡）
 ├── server/     FastAPI 服务（REST + SSE 流式推送）
 └── orchestration/  子 Agent 编排（角色裁剪工具集）
@@ -25,7 +25,7 @@ Python 后端（litecode/）
 
 ## 功能特性
 
-- **17 个内置工具**：文件读写、Ripgrep 搜索、Tree-sitter AST 大纲、Search-Replace 精确编辑、Unified Diff、受限 Shell、Git 五件套、代码审查、子 Agent 编排
+- **19 个内置工具**：文件读写、Ripgrep 搜索、Tree-sitter AST 大纲、Search-Replace 精确编辑、Unified Diff、受限 Shell、Git 五件套、代码审查、子 Agent 编排、Web 抓取（webfetch / webfetch_batch，带磁盘缓存与批量并发）
 - **多 LLM 供应商**：DeepSeek / OpenAI / Kimi / 通义千问 / 智谱 GLM / Anthropic Claude / 自定义
 - **安全防御**：三级风险模型（SAFE / MEDIUM / HIGH）+ 动态黑白名单热加载 + Web 审批卡
 - **Agent 增强**：JSON 自愈、死循环检测、OpenCode 风格输出截断（落盘句柄）、Token 预算裁剪、动态 System Prompt

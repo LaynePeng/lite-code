@@ -196,6 +196,7 @@ def default_plan_agent() -> AgentProfile:
             "read_file", "list_dir", "file_tree", "search_code",
             "get_file_outline", "read_focused_symbol",
             "git_status", "git_diff", "git_log", "git_branch", "review_code",
+            "webfetch", "webfetch_batch",
         ],
         # 权限兜底：即使被授予写工具也强制 deny
         permissions={"write_file": PERM_DENY, "apply_search_replace": PERM_DENY,

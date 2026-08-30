@@ -1,4 +1,4 @@
-// 跨平台启动本地 Core（dev 模式）：解析 venv 内的 python 路径
+// Cross-platform local Core launcher (dev mode): resolve python inside venv
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -11,8 +11,8 @@ const python = isWindows
   : path.join(root, ".venv", "bin", "python");
 
 if (!fs.existsSync(python)) {
-  console.error(`[dev] 未找到 venv Python: ${python}`);
-  console.error("[dev] 请先执行: python -m venv .venv && .venv/Scripts/pip install -e .");
+  console.error(`[dev] venv Python not found: ${python}`);
+  console.error("[dev] Run first: python -m venv .venv && .venv/Scripts/pip install -e .");
   process.exit(1);
 }
 

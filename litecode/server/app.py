@@ -19,7 +19,7 @@ from .tasks import TaskManager
 
 logger = logging.getLogger("litecode.server")
 
-VERSION = "0.5.0rc0"
+VERSION = "0.6.0rc0"
 
 
 # ---------------------------------------------------------------- 请求模型
@@ -276,6 +276,25 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
 
         fs = FileSystemTools(app.workspace)
         return {"workspace": app.workspace, "tree": fs._file_tree({"maxDepth": depth})}
+
+    @fast_app.get("/api/workspace/tree-json")
+    async def workspace_tree_json(path: str = "", request: Request = None):
+        """结构化目录树（侧边栏文件页签）：按路径懒加载 + git 状态字母。"""
+        if request:
+            _check_auth(request)
+        from .tree import list_tree
+
+        rel = path.strip().lstrip("/\\") or ""
+        try:
+            data = await asyncio.to_thread(list_tree, app.workspace, rel)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        return {
+            "workspace": app.workspace,
+            "path": rel,
+            "git": {"branch": data["branch"], "has_repo": data["has_repo"]},
+            "entries": data["entries"],
+        }
 
     # ------------------------------------------------------------ Agent 配置
 

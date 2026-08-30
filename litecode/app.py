@@ -11,19 +11,26 @@ from .core.agent_profile import AgentProfile, AgentRegistry
 from .core.context_manager import ContextManager
 from .core.kernel import Kernel
 from .core.session_store import SessionStore
+from .core.types import Plugin
 from .llm.base import BaseLLMAdapter
 from .llm.registry import LLMRegistry
 from .security.approval import ApprovalGate
 from .security.guard import SecurityGuard
 from .security.plugin import SecurityPlugin
-from .tools.ast_tools import ASTTools
-from .tools.codebase import CodebaseTools
-from .tools.editor import EditorTools
-from .tools.filesystem import FileSystemTools
-from .tools.git import GitTools
+from .tools.plugin import (
+    ASTPlugin,
+    CodebasePlugin,
+    EditorPlugin,
+    FileSystemPlugin,
+    GitPlugin,
+    ReviewPlugin,
+    ShellPlugin,
+    SubAgentPlugin,
+    TOOL_FILTER_SERVICE,
+    TOOLS_SERVICE,
+    WebFetchPlugin,
+)
 from .tools.registry import ToolRegistry
-from .tools.review import ReviewTools
-from .tools.shell import ShellTools
 
 logger = logging.getLogger("litecode.app")
 
@@ -43,6 +50,7 @@ TOOL_NAMES = [
     "apply_search_replace", "apply_unified_diff",
     "execute_command", "git_status", "git_diff", "git_log",
     "git_commit", "git_branch", "review_code", "spawn_sub_agent",
+    "webfetch", "webfetch_batch",
 ]
 
 
@@ -236,20 +244,27 @@ class AgentApp:
 
     # ------------------------------------------------------------ 工具
 
-    def build_registry(
-        self,
-        allowed: Optional[List[str]] = None,
-        exclude: Optional[List[str]] = None,
-        permissions: Optional[Dict[str, str]] = None,
-    ) -> ToolRegistry:
-        registry = ToolRegistry()
-        fs_tools = FileSystemTools(self.workspace)
-        codebase = CodebaseTools(self.workspace)
-        ast_tools = ASTTools(self.workspace)
-        editor = EditorTools(self.workspace)
-        shell = ShellTools(self.workspace)
-        git = GitTools(self.workspace)
-        review = ReviewTools(self.workspace)
+    def tool_plugins(self) -> List[Plugin]:
+        """Cordis 风格工具插件清单（空间解耦：工具能力全部由插件提供）。"""
+        return [
+            FileSystemPlugin(self.workspace),
+            CodebasePlugin(self.workspace),
+            ASTPlugin(self.workspace),
+            EditorPlugin(self.workspace),
+            ShellPlugin(self.workspace),
+            GitPlugin(self.workspace),
+            ReviewPlugin(self.workspace),
+            WebFetchPlugin(cache_dir=os.path.join(self.config_dir, "webfetch_cache")),
+            SubAgentPlugin(self),
+        ]
+
+    @staticmethod
+    def _tool_filter(
+        allowed: Optional[List[str]],
+        exclude: Optional[List[str]],
+        permissions: Optional[Dict[str, str]],
+    ):
+        """构造工具裁剪策略（Agent 配置：allowed / exclude / deny 权限）。"""
 
         def allow(name: str) -> bool:
             if allowed is not None and name not in allowed:
@@ -260,63 +275,39 @@ class AgentApp:
                 return False
             return True
 
-        if allow("read_file") or allow("write_file") or allow("list_dir") or allow("file_tree"):
-            for t in fs_tools.get_tools():
-                if allow(t.name):
-                    registry.register(t.name, t.description, t.parameters,
-                                      lambda args, n=t.name: fs_tools.execute(n, args))
-        if allow("search_code"):
-            registry.register("search_code", codebase.get_tools()[0].description,
-                              codebase.get_tools()[0].parameters,
-                              lambda args: codebase.execute("search_code", args))
-        if allow("get_file_outline") or allow("read_focused_symbol"):
-            for t in ast_tools.get_tools():
-                if allow(t.name):
-                    registry.register(t.name, t.description, t.parameters,
-                                      lambda args, n=t.name: ast_tools.execute(n, args))
-        if allow("apply_search_replace") or allow("apply_unified_diff"):
-            for t in editor.get_tools():
-                if allow(t.name):
-                    registry.register(t.name, t.description, t.parameters,
-                                      lambda args, n=t.name: editor.execute(n, args))
-        if allow("execute_command"):
-            registry.register("execute_command", shell.get_tools()[0].description,
-                              shell.get_tools()[0].parameters,
-                              lambda args: shell.execute("execute_command", args))
-        for t in git.get_tools():
-            if allow(t.name):
-                registry.register(t.name, t.description, t.parameters,
-                                  lambda args, n=t.name: git.execute(n, args))
-        if allow("review_code"):
-            registry.register("review_code", review.get_tools()[0].description,
-                              review.get_tools()[0].parameters,
-                              lambda args: review.execute("review_code", args))
-        if allow("spawn_sub_agent"):
-            from .tools.sub_agent import make_sub_agent_handler
-            t = registry.__class__.__name__  # noqa: F841
-            registry.register(
-                "spawn_sub_agent",
-                "派生一个独立且上下文隔离的子 Agent 执行耗时的调研/测试/重构子任务，返回汇总报告",
-                {
-                    "type": "object",
-                    "properties": {
-                        "taskDescription": {"type": "string", "description": "指派给子 Agent 的具体任务指令"},
-                        "roleType": {
-                            "type": "string",
-                            "enum": ["explorer", "tester", "refactor", "general"],
-                            "description": "子 Agent 角色：explorer(只读调研)/tester(测试执行)/refactor(完整重构)",
-                        },
-                    },
-                    "required": ["taskDescription"],
-                },
-                make_sub_agent_handler(self),
-            )
+        return allow
+
+    def build_registry(
+        self,
+        allowed: Optional[List[str]] = None,
+        exclude: Optional[List[str]] = None,
+        permissions: Optional[Dict[str, str]] = None,
+    ) -> ToolRegistry:
+        """通过 Cordis 内核组装工具集：插件安装到引导内核，注册进 tools 服务。
+
+        与 AgentLoop 一致：内核持有 tools 服务（ToolRegistry），
+        插件通过依赖注入获取并注册自己的工具。
+        """
+        kernel = Kernel(session_id="tool-bootstrap")
+        registry = ToolRegistry()
+        kernel.register_service(TOOLS_SERVICE, registry)
+        kernel.register_service(TOOL_FILTER_SERVICE, self._tool_filter(allowed, exclude, permissions))
+        for plugin in self.tool_plugins():
+            kernel.use(plugin)
         return registry
 
     # ------------------------------------------------------------ 内核
 
-    def create_kernel(self, session_id: str) -> Kernel:
+    def create_kernel(self, session_id: str, registry: Optional[ToolRegistry] = None) -> Kernel:
+        """Cordis 内核装配：工具插件 + 安全插件全部挂载，服务进入依赖注入容器。
+
+        registry 为 None 时挂载全量工具；传入 Agent 裁剪后的 registry 时，
+        内核的 tools 服务与 AgentLoop 执行的工具集保持一致。
+        """
         kernel = Kernel(session_id)
+        kernel.register_service(TOOLS_SERVICE, registry or ToolRegistry())
+        for plugin in self.tool_plugins():
+            kernel.use(plugin)
         kernel.use(SecurityPlugin(self.guard, self.approval_gate))
         kernel.register_service("app", self)
         return kernel

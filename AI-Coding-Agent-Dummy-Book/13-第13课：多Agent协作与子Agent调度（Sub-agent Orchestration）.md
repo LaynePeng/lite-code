@@ -59,7 +59,8 @@ ROLE_PROMPTS = {
 ROLE_TOOLS: Dict[str, Optional[List[str]]] = {
     "explorer": ["read_file", "list_dir", "file_tree", "search_code",
                  "get_file_outline", "read_focused_symbol",
-                 "git_status", "git_diff", "git_log", "git_branch"],
+                 "git_status", "git_diff", "git_log", "git_branch",
+                 "review_code", "webfetch", "webfetch_batch"],
     "tester": ["read_file", "list_dir", "file_tree", "search_code",
                "execute_command", "git_status", "git_diff", "git_log"],
     "refactor": None,   # 全部工具

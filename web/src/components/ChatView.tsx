@@ -25,7 +25,9 @@ function ToolIcon({ name }: { name: string }) {
           ? "⚡"
           : name === "spawn_sub_agent"
             ? "◈"
-            : "☰";
+            : name === "webfetch" || name === "webfetch_batch"
+              ? "➤"
+              : "☰";
   return <span className="tool-icon">{emoji}</span>;
 }
 

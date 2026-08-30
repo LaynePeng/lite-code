@@ -358,11 +358,36 @@ class ReviewTools:
             ...
 ```
 
-#### 7. 装配层 (`litecode/app.py`)
-
-`AgentApp` 负责把内核、LLM 注册表、工具集、安全组件装配在一起：
+**Web 抓取工具**（`tools/web.py`）：对标 OpenCode 的 `webfetch`，解决 Agent 缺少联网能力时凭记忆/臆测回答外部信息的问题：
 
 ```python
+class WebFetchTools:
+    # webfetch        : 抓取单个 URL → HTML 转 Markdown（纯标准库转换，不依赖 bs4）
+    # webfetch_batch  : 批量抓取最多 8 个 URL（信号量并发 4），单页失败不影响其余
+    def validate_url(self, url):
+        # 1. 协议白名单：仅 http/https（拦 file:// 等本地协议）
+        # 2. SSRF 防护：解析主机名后拒绝回环/私网/链路本地/保留地址
+        ...
+    # 磁盘缓存：.lite-code/webfetch_cache/ 按 URL SHA256 存 JSON，默认 TTL 1 小时
+    # 输出上限：2MB 读取上限 + maxChars 截断，防止爆上下文
+```
+
+#### 7. 装配层 (`litecode/app.py`)
+
+`AgentApp` 负责把内核、LLM 注册表、工具集、安全组件装配在一起。工具集采用第 11 课的 **Cordis 插件模式**：内核只持有 `tools` 服务（`ToolRegistry`）与裁剪策略服务（`tool_filter`），具体工具全部由 `tools/plugin.py` 的 `ToolPlugin` 插件在 install 时注册：
+
+```python
+# litecode/tools/plugin.py（第 11 课「空间解耦」落地）
+class ToolPlugin(Plugin):
+    def install(self, kernel):
+        registry = kernel.get_service("tools")       # 依赖注入：取内核服务
+        allow = kernel.get_service("tool_filter")    # Agent 裁剪策略
+        for tool in self.get_tools():
+            if allow is not None and not allow(tool.name):
+                continue
+            registry.register(tool.name, tool.description, tool.parameters,
+                              lambda args, n=tool.name: self.execute(n, args))
+
 class AgentApp:
     def __init__(self, workspace, ...):
         self.llm_registry = LLMRegistry()
@@ -371,11 +396,22 @@ class AgentApp:
         self.approval_gate = ApprovalGate()
         self.sub_agent_runner = SubAgentRunner(self)  # 第13课，延迟绑定
 
-    def build_registry(self, allowed=None, exclude=None) -> ToolRegistry:
-        # 注册全部 17 个工具，支持按角色裁剪
-        fs_tools = FileSystemTools(self.workspace)
-        codebase = CodebaseTools(self.workspace)
-        ...
+    def tool_plugins(self):   # 9 个工具插件：文件/搜索/AST/编辑/Shell/Git/审查/Web/子 Agent
+        return [FileSystemPlugin(self.workspace), CodebasePlugin(self.workspace),
+                ASTPlugin(self.workspace), EditorPlugin(self.workspace),
+                ShellPlugin(self.workspace), GitPlugin(self.workspace),
+                ReviewPlugin(self.workspace), WebFetchPlugin(cache_dir=...),
+                SubAgentPlugin(self)]
+
+    def build_registry(self, allowed=None, exclude=None, permissions=None) -> ToolRegistry:
+        # 引导内核组装：tools 服务 + tool_filter 服务 + 全部工具插件
+        kernel = Kernel(session_id="tool-bootstrap")
+        registry = ToolRegistry()
+        kernel.register_service("tools", registry)
+        kernel.register_service("tool_filter", self._tool_filter(allowed, exclude, permissions))
+        for plugin in self.tool_plugins():
+            kernel.use(plugin)
+        return registry
 ```
 
 #### 本课小结
@@ -385,7 +421,7 @@ class AgentApp:
 1. 实现了**纯手写 httpx SSE 流式解析器**，支持 OpenAI 兼容接口与 Anthropic 两种协议，并从流式事件中提取真实 usage（`prompt_cache_hit_tokens`），供第 4 课的缓存命中率度量使用；
 2. 设计了**多供应商注册表**，预置 7 个供应商，支持环境变量兜底、配置热加载、测试连接；
 3. 接入 **models.dev 模型元数据服务**：启动同步 + 7 天磁盘缓存 + 内置表兜底，`get_context_window` 四级解析上下文窗口；
-4. 编写了**17 个核心工具**，覆盖文件读写、代码搜索、AST 分析、精确编辑、Shell 执行、Git 操作、代码审查；
+4. 编写了**19 个核心工具**，覆盖文件读写、代码搜索、AST 分析、精确编辑、Shell 执行、Git 操作、代码审查、Web 抓取（webfetch / webfetch_batch，带磁盘缓存与批量并发）；
 5. 通过 `AgentApp` 装配层将所有模块组合在一起。
 
 下一次我们将开启 **第17课：AgentLoop 主循环 (`lite-code` 实战第三篇)** —— 实现驱动整个 ReAct 循环的核心状态机，并把第 2-5 课的所有增强机制（JSON 自愈、死循环检测、Token 预算、静态 System Prompt、缓存感知截断）全部集成！

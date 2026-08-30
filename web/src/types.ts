@@ -40,6 +40,22 @@ export interface ToolDef {
   parameters: Record<string, unknown>;
 }
 
+// 目录树条目（/api/workspace/tree-json）
+export interface TreeEntry {
+  name: string;
+  path: string;
+  type: "dir" | "file";
+  status?: string | null; // git 状态字母: A/M/D/U/R/C
+  has_changes?: boolean; // 目录下是否包含改动
+}
+
+export interface TreeResponse {
+  workspace: string;
+  path: string;
+  git: { branch: string | null; has_repo: boolean };
+  entries: TreeEntry[];
+}
+
 export interface Stats {
   input_tokens: number;
   output_tokens: number;

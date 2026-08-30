@@ -189,6 +189,8 @@ trajectory = ctx.get_service("trajectory")
 print("Recorded steps count:", len(trajectory["get_history"]()))
 ```
 
+> 💡 **实战落地**：本课架构图里的「Tools Plugin」在最终项目 `lite-code` 中真实实现了——`litecode/tools/plugin.py` 定义 `ToolPlugin` 基类（install 时把自己的 `ToolDefinition` 注册进内核的 `tools` 服务），文件/搜索/AST/编辑/Shell/Git/审查/Web 抓取/子 Agent 共 9 个工具插件全部挂载到内核；`AgentApp.build_registry` 通过一个引导内核把插件组装成按 Agent 裁剪后的 `ToolRegistry`（详见第 16 课装配层）。
+
 ### 本课小结
 
 在本课中，我们掌握了微内核 Harness 的精髓设计：

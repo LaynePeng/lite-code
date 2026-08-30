@@ -1,11 +1,11 @@
-// 跨平台启动 Electron（dev 模式）：注入 LITECODE_DEV_URL 指向 Vite dev server
+// Cross-platform Electron launcher (dev mode): inject LITECODE_DEV_URL pointing to the Vite dev server
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-// electron 包导出的字符串即真实二进制路径（Windows 为 dist/electron.exe）
+// The string exported by the electron package is the real binary path (dist/electron.exe on Windows)
 const require = createRequire(import.meta.url);
 const electronPath = require("electron");
 const child = spawn(electronPath, ["."], {

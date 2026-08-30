@@ -13,10 +13,8 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from ..core.agent_loop import AgentLoop
-from ..core.kernel import Kernel
 from ..core.system_prompt import SystemPromptBuilder
 from ..core.types import Message, ToolDefinition
-from ..security.plugin import SecurityPlugin
 
 logger = logging.getLogger("litecode.orchestration")
 
@@ -31,7 +29,7 @@ ROLE_PROMPTS = {
 ROLE_TOOLS: Dict[str, List[str]] = {
     "explorer": ["read_file", "list_dir", "file_tree", "search_code", "get_file_outline",
                  "read_focused_symbol", "git_status", "git_diff", "git_log", "git_branch",
-                 "review_code"],
+                 "review_code", "webfetch", "webfetch_batch"],
     "tester": ["read_file", "list_dir", "file_tree", "search_code", "get_file_outline",
                "read_focused_symbol", "execute_command", "git_status", "git_diff", "git_log",
                "git_branch"],
@@ -61,9 +59,6 @@ class SubAgentRunner:
         system_prompt: Optional[str] = None,
         max_steps: int = 12,
     ) -> Dict[str, Any]:
-        sub_kernel = Kernel(session_id=f"sub_{uuid.uuid4().hex[:8]}")
-        sub_kernel.use(SecurityPlugin(self.app.guard, self.app.approval_gate))
-
         profile = self._resolve_role(role)
         if profile is not None:
             allowed = profile.tools
@@ -79,6 +74,7 @@ class SubAgentRunner:
             exclude=["spawn_sub_agent"],  # 子 Agent 不再嵌套派生，防止失控
             permissions=permissions,
         )
+        sub_kernel = self.app.create_kernel(f"sub_{uuid.uuid4().hex[:8]}", registry=registry)
         tools: List[ToolDefinition] = registry.get_tools()
 
         system = (

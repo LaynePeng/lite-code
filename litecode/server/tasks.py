@@ -90,14 +90,14 @@ class TaskManager:
 
     def start(self, session_id: str, prompt: str, agent_id: Optional[str] = None) -> TaskHandle:
         task_id = uuid.uuid4().hex[:12]
-        kernel = self.app.create_kernel(session_id)
+        # 按 Agent 配置裁剪工具集（build 全量 / plan 只读 / 自定义）
+        registry = self.app.create_agent_registry(agent_id or "build")
+        kernel = self.app.create_kernel(session_id, registry=registry)
         # 多轮对话：加载该 session 已落盘的历史消息到上下文，
         # 避免每轮新建 kernel 时从空上下文开始、落盘覆盖上一轮对话
         snapshot = self.app.session_store.load(session_id)
         if snapshot and snapshot.messages:
             kernel.ctx.messages = list(snapshot.messages)
-        # 按 Agent 配置裁剪工具集（build 全量 / plan 只读 / 自定义）
-        registry = self.app.create_agent_registry(agent_id or "build")
         loop = self.app.create_loop(kernel, registry, agent_id=agent_id)
 
         handle = TaskHandle(task_id, kernel, registry, loop, self.app)

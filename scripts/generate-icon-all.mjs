@@ -1,5 +1,5 @@
-// 跨平台图标生成：app-icon.svg → PNG（sharp）→ .icns（macOS）/ .ico（Windows）/ .png（Linux）
-// 依赖 sharp（SVG 渲染）与 app-builder-bin（ICNS/ICO 转换），均为 devDependencies。
+// Cross-platform icon generation: app-icon.svg -> PNG (sharp) -> .icns (macOS) / .ico (Windows) / .png (Linux)
+// Depends on sharp (SVG rendering) and app-builder-bin (ICNS/ICO conversion), both devDependencies.
 import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -22,33 +22,33 @@ function appBuilderBin() {
       ? path.join(base, "mac", `app-builder_${arch}`)
       : path.join(base, "linux", `app-builder_${arch}`);
   if (fs.existsSync(bin)) return bin;
-  return "app-builder"; // PATH 兜底
+  return "app-builder"; // PATH fallback
 }
 
 async function main() {
-  console.log("[icon] 1/3: SVG → 1024 PNG (sharp)");
+  console.log("[icon] 1/3: SVG -> 1024 PNG (sharp)");
   await sharp(svg).resize(1024, 1024).png().toFile(png1024);
 
   const builder = appBuilderBin();
 
-  console.log("[icon] 2/3: 生成各平台图标");
+  console.log("[icon] 2/3: Generate platform icons");
   if (process.platform === "darwin") {
     execSync(`"${builder}" icon -i "${png1024}" -f icns --out "${outDir}"`, { stdio: "inherit" });
   } else {
-    // Windows / Linux：生成 .ico（electron-builder win 配置引用）
+    // Windows / Linux: generate .ico (referenced by the electron-builder win config)
     execSync(`"${builder}" icon -i "${png1024}" -f ico --out "${outDir}"`, { stdio: "inherit" });
   }
 
-  // 同时保留 1024 PNG（Linux / 通用备用）
+  // Keep the 1024 PNG as well (Linux / general fallback)
   const png = path.join(outDir, "app-icon.png");
   fs.copyFileSync(png1024, png);
-  console.log("[icon] 完成:");
+  console.log("[icon] Done:");
   for (const f of fs.readdirSync(outDir)) {
     if (f.includes("app-icon")) console.log(`   release/resources/${f}`);
   }
 }
 
 main().catch((err) => {
-  console.error("[icon] 生成失败:", err.message);
+  console.error("[icon] Generation failed:", err.message);
   process.exit(1);
 });

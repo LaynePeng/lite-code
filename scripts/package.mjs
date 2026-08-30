@@ -1,11 +1,11 @@
-// 完整打包：PyInstaller 后端 → electron-builder --dir 产出 .app → hdiutil 手动打 DMG
-// 说明：
-// - electron-builder 直接打 DMG 在某些环境会产出空 .app（被 macOS 判定为损坏/恶意软件），
-//   因此改为两步：先生成 .app（--dir），再用 hdiutil create 手动封装 DMG。
-// - 网络受限环境（国内）需设置镜像环境变量，否则 electron-builder 下载二进制会卡住无输出。
-//   用法: ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/" \
-//         ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-builder-binaries/" \
-//         node scripts/package.mjs
+// Full packaging: PyInstaller backend -> electron-builder --dir produces .app -> hdiutil manually builds the DMG
+// Notes:
+// - electron-builder producing the DMG directly can yield an empty .app (flagged by macOS as damaged/malware),
+//   so we do it in two steps: generate the .app first (--dir), then wrap it with hdiutil create.
+// - On restricted networks (CN), set mirror env vars, otherwise electron-builder hangs while downloading binaries.
+//   Usage: ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/" \
+//          ELECTRON_BUILDER_BINARIES_MIRROR="https://npmmirror.com/mirrors/electron-builder-binaries/" \
+//          node scripts/package.mjs
 import { execSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -18,29 +18,29 @@ const version = pkg.version;
 
 const env = { ...process.env };
 
-// 国内用户可预设 ELECTRON_MIRROR 等镜像环境变量，避免 electron-builder 下载卡死
-// 这里给一个默认镜像兜底（仅当用户未设置时），不会覆盖已有环境变量
+// CN users can preset ELECTRON_MIRROR etc. to avoid electron-builder download hangs.
+// Provide a default mirror fallback (only when unset); never override existing env vars.
 if (!env.ELECTRON_MIRROR && !env.ELECTRON_BUILDER_BINARIES_MIRROR) {
   env.ELECTRON_MIRROR = "https://npmmirror.com/mirrors/electron/";
   env.ELECTRON_BUILDER_BINARIES_MIRROR = "https://npmmirror.com/mirrors/electron-builder-binaries/";
 }
 
-console.log("[package] 步骤0/4: 生成应用图标");
+console.log("[package] Step 0/4: Generate app icon");
 execSync("node scripts/generate-icon.mjs", { cwd: root, stdio: "inherit" });
 
-console.log("[package] 步骤1/4: 打包后端二进制");
+console.log("[package] Step 1/4: Package backend binary");
 execSync("node scripts/package-backend.mjs", { cwd: root, stdio: "inherit" });
 
-console.log("[package] 步骤2/4: electron-builder --dir 产出 .app");
+console.log("[package] Step 2/4: electron-builder --dir produces .app");
 execSync("npx electron-builder --mac --dir --publish never", { cwd: root, stdio: "inherit", env });
 
 const appDir = path.join(root, "release", "mac-arm64", "lite-code.app");
 if (!fs.existsSync(path.join(appDir, "Contents", "MacOS", "lite-code"))) {
-  console.error("[package] 生成的 .app 不完整，请检查 electron-builder 输出");
+  console.error("[package] Generated .app is incomplete. Check the electron-builder output");
   process.exit(1);
 }
 
-console.log("[package] 步骤3/4: hdiutil 手动封装 DMG");
+console.log("[package] Step 3/4: Wrap DMG with hdiutil");
 const staging = fs.mkdtempSync(path.join(os.tmpdir(), "lc-dmg-"));
 const dmgName = `lite-code-${version}-arm64.dmg`;
 const dmgPath = path.join(root, "release", dmgName);
@@ -48,7 +48,7 @@ const dmgPath = path.join(root, "release", dmgName);
 try {
   fs.copyFileSync(path.join(appDir, "Contents", "Resources", "app-icon.icns"),
     path.join(staging, ".VolumeIcon.icns"));
-} catch { /* 图标可选 */ }
+} catch { /* icon is optional */ }
 execSync(`cp -R "${appDir}" "${staging}/lite-code.app"`, { cwd: root, stdio: "inherit" });
 fs.symlinkSync("/Applications", path.join(staging, "Applications"), "dir");
 
@@ -58,4 +58,4 @@ execSync(
 );
 
 fs.rmSync(staging, { recursive: true, force: true });
-console.log(`[package] 完成 → release/${dmgName}`);
+console.log(`[package] Done -> release/${dmgName}`);

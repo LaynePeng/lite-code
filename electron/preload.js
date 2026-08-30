@@ -3,7 +3,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 contextBridge.exposeInMainWorld("liteCode", {
   platform: process.platform,
-  version: process.env.LITECODE_VERSION || "0.5.0-rc0",
+  version: process.env.LITECODE_VERSION || "0.6.0-rc0",
   /**
    * 打开系统目录选择框并切换工作区。
    * 返回 { ok: true, url } 或 { ok: false, error }；用户在对话框取消时返回 { ok: false, error: "cancelled" }。

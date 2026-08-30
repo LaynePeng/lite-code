@@ -20,6 +20,15 @@ interface StreamingState {
   turn?: number;
 }
 
+// 会改动工作区的工具：执行后触发侧边栏目录树动态刷新
+const TREE_TOUCH_TOOLS = new Set([
+  "write_file",
+  "apply_search_replace",
+  "apply_unified_diff",
+  "execute_command",
+  "git_commit",
+]);
+
 export default function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
@@ -44,6 +53,7 @@ export default function App() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [currentAgent, setCurrentAgent] = useState<string>("build");
   const [contextStats, setContextStats] = useState<ContextStats | null>(null);
+  const [treeRevision, setTreeRevision] = useState(0);
 
   const esRef = useRef<EventSource | null>(null);
   const taskIdRef = useRef<string | null>(null);
@@ -244,6 +254,7 @@ export default function App() {
         }
         case "tool:after_execute": {
           log(`✔ ${ev.data.toolName} (${ev.data.durationMs}ms)`);
+          if (TREE_TOUCH_TOOLS.has(ev.data.toolName)) setTreeRevision((v) => v + 1);
           const cur = streamingRef.current;
           if (!cur) break;
           const cards = cur.cards.map((c) =>
@@ -278,6 +289,7 @@ export default function App() {
         }
         case "task:done": {
           setStats(ev.data.stats);
+          setTreeRevision((v) => v + 1);
           const cur = streamingRef.current;
           const finalMsg: Msg = {
             role: "assistant",
@@ -306,7 +318,13 @@ export default function App() {
           setRunning(false);
           setStopping(false);
           closeStream();
+          setTreeRevision((v) => v + 1);
           void refreshSessions();
+          break;
+        }
+        case "subagent:completed": {
+          // 子 Agent（refactor 等）可能改动文件 → 目录树刷新
+          setTreeRevision((v) => v + 1);
           break;
         }
         default:
@@ -474,6 +492,7 @@ export default function App() {
         workspace={status?.workspace ?? "…"}
         stats={stats}
         tab={sidebarTab}
+        treeRevision={treeRevision}
         onTabChange={setSidebarTab}
         onSelectSession={(id) => void selectSession(id)}
         onNewSession={() => void newSession()}

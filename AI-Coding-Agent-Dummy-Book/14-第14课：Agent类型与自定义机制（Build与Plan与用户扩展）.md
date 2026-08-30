@@ -206,7 +206,7 @@ def create_loop(self, kernel, registry, agent_id=None) -> AgentLoop:
 ```python
 app = AgentApp(workspace="/path")
 print(app.get_agent("plan").tools)      # 只读工具
-print(len(app.create_agent_registry("build").get_tools()))  # 17 个工具
+print(len(app.create_agent_registry("build").get_tools()))  # 19 个工具（含 webfetch / webfetch_batch）
 ```
 
 #### 7. 与子 Agent 编排打通

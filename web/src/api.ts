@@ -1,4 +1,4 @@
-import type { AgentInfo, AppConfig, LLMConfig, LLMProviderMeta, ServerStatus, SessionInfo, ToolDef } from "./types";
+import type { AgentInfo, AppConfig, LLMConfig, LLMProviderMeta, ServerStatus, SessionInfo, ToolDef, TreeResponse } from "./types";
 
 const TIMEOUT = 15000;
 
@@ -41,8 +41,8 @@ export const api = {
     req<{ ok: boolean }>(`/api/sessions/${id}`, { method: "DELETE" }),
 
   tools: () => req<ToolDef[]>("/api/tools"),
-  workspaceTree: (depth = 4) =>
-    req<{ workspace: string; tree: string }>(`/api/workspace/tree?depth=${depth}`),
+  workspaceTree: (path?: string) =>
+    req<TreeResponse>(`/api/workspace/tree-json${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   fsList: (path?: string) =>
     req<{ path: string; parent: string | null; home: string; is_workspace: boolean; dirs: string[]; files: string[]; truncated: boolean }>(
       `/api/fs/list${path ? `?path=${encodeURIComponent(path)}` : ""}`
