@@ -14,7 +14,7 @@ import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from .context_manager import ContextManager
+from .context_manager import ContextManager, repair_tool_call_pairs
 from .json_repair import safe_json_parse
 from .kernel import Kernel
 from .session_store import SessionStore
@@ -102,6 +102,9 @@ class AgentLoop:
         else:
             messages[0].content = system_prompt
 
+        # 1.5 修复历史中可能不完整的工具调用链（任务被停止时落盘的不完整历史）
+        messages[:] = repair_tool_call_pairs(messages)
+
         # 2. 用户消息入链
         user_message = Message(role="user", content=prompt)
         messages.append(user_message)
@@ -139,6 +142,8 @@ class AgentLoop:
 
                 # B. beforeLLM 管道（插件可修改消息）
                 processed = await self.kernel.before_llm.run(self.kernel.ctx, payload)
+                # B2. 兜底修复：确保发给 LLM 的消息链满足原子对约束（压缩/裁剪兜底）
+                processed = repair_tool_call_pairs(processed)
                 if not self._last_usage:
                     stats["input_tokens"] += TokenCounter.count_messages_tokens(processed)
 
@@ -256,7 +261,11 @@ class AgentLoop:
                 raw = f"[Tool Timeout]: 工具 {tool_name} 执行超过 {self.tool_timeout}s 被终止。"
             except Exception as exc:  # 注册表内已捕获，这里兜底
                 raw = f"[Execution Exception]: {exc}"
-            result_text = truncate_tool_output(raw, output_dir=self.truncation_dir).content
+            try:
+                result_text = truncate_tool_output(raw, output_dir=self.truncation_dir).content
+            except Exception:  # 落盘失败等极端情况：不阻断工具链，降级为原样输出
+                logger.exception("[AgentLoop] 工具输出截断失败，原样返回")
+                result_text = raw[:50_000]
             stats["tool_calls"] += 1
 
         duration_ms = int((time.time() - start_time) * 1000)

@@ -14,12 +14,76 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from typing import Dict, List, Optional, Tuple
 
 from .token_counter import TokenCounter
 from .types import Message
 
 logger = logging.getLogger("litecode.context")
+
+
+def repair_tool_call_pairs(messages: List[Message]) -> List[Message]:
+    """修复消息链中的工具调用原子对（OpenAI 兼容 API 硬约束）。
+
+    约束：assistant(tool_calls) 之后必须为每个 tool_call_id 跟一条 tool 消息，
+    否则 API 返回 HTTP 400。修复策略：
+    - 完整配对：原样保留；
+    - assistant(tool_calls) 缺少部分/全部 tool 结果 → 整条丢弃（连同其后的孤儿 tool 消息）；
+    - 无主的 tool 消息（前面没有匹配的 assistant tool_calls）→ 丢弃；
+    - 空 id 历史（旧版本适配器 bug 残留）：assistant 与 tool 消息都缺 id 时按顺序配对，
+      并为双方补齐一致的合成 id —— 否则 API 无法匹配，照样 400。
+
+    典型触发场景：任务被停止/中止时落盘了不完整历史，续聊恢复后发送被拒。
+    """
+    repaired: List[Message] = []
+    i = 0
+    n = len(messages)
+    while i < n:
+        m = messages[i]
+        if m.role == "assistant" and m.tool_calls:
+            calls = list(m.tool_calls)
+            has_empty = any(not c.id for c in calls)
+            ids = {c.id for c in calls if c.id}
+            j = i + 1
+            matched: List[Message] = []
+            while j < n and messages[j].role == "tool":
+                tid = messages[j].tool_call_id
+                if has_empty:
+                    # 空 id 链：按顺序与空 id 的 tool 消息配对
+                    if tid:
+                        break
+                elif tid not in ids:
+                    break
+                matched.append(messages[j])
+                j += 1
+            if len(matched) >= len(calls):
+                if has_empty:
+                    # 补齐一致的合成 id（按位置配对），超出部分视为孤儿丢弃
+                    matched = matched[: len(calls)]
+                    for c in calls:
+                        if not c.id:
+                            c.id = f"call_{uuid.uuid4().hex[:12]}"
+                    for k, t in enumerate(matched):
+                        if not t.tool_call_id:
+                            t.tool_call_id = calls[k].id
+                repaired.append(m)
+                repaired.extend(matched)
+            else:
+                logger.warning(
+                    "[Repair] 丢弃不完整的 tool_calls 消息（%s 个 tool_call_id，仅 %s 条 tool 结果）",
+                    len(calls), len(matched),
+                )
+            i = j
+            continue
+        if m.role == "tool":
+            # 无主的 tool 消息（缺少前置 assistant tool_calls）
+            logger.warning("[Repair] 丢弃无主的 tool 消息: %s", m.tool_call_id)
+            i += 1
+            continue
+        repaired.append(m)
+        i += 1
+    return repaired
 
 
 class ContextManager:

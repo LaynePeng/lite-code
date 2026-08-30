@@ -24,7 +24,15 @@ if ($Insecure) {
 function Invoke-Step([string]$Name, [scriptblock]$Block) {
     Write-Host "==> $Name"
     $global:LASTEXITCODE = 0
-    & $Block
+    # PS 5.1 下原生命令的 stderr 在 ErrorActionPreference=Stop 时会变成致命错误
+    # （例如 pip 的升级提示），这里仅在步骤内临时降级，成功与否只看退出码
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $Block
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "!! $Name failed (exit $LASTEXITCODE)" -ForegroundColor Red
         exit $LASTEXITCODE

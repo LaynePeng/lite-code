@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -248,7 +249,12 @@ class AnthropicAdapter(BaseLLMAdapter):
                 elif ev_type == "content_block_stop":
                     current_tool = None
 
-        return full_content, [tc for tc in tool_calls if tc.name], usage
+        calls = [tc for tc in tool_calls if tc.name]
+        # 兜底：补齐缺失的 tool_use id（正常情况下 Anthropic 一定带 id）
+        for tc in calls:
+            if not tc.id:
+                tc.id = f"call_{uuid.uuid4().hex[:12]}"
+        return full_content, calls, usage
 
     async def test_connection(self) -> Tuple[bool, str, float]:
         start = time.time()

@@ -143,6 +143,20 @@ class LLMProvider:
                             }
 ```
 
+这个累加器还有一类**更隐蔽的坑**：`id` 只随首个 chunk 出现一次，甚至**部分供应商（Kimi/GLM/通义等）在流式响应里从头到尾都不携带 `id`**。空 id 的 `assistant(tool_calls)` 发出的 tool 消息在 API 侧无法匹配，会直接报 `HTTP 400: insufficient tool messages following tool_calls message`（第 1 课结论 1 的典型翻车现场）。因此**流收尾时必须兜底**——缺失的 id 用合成值补齐：
+
+```python
+def finalize_tool_calls(pending_tool_calls: Dict[int, ToolCall]) -> List[ToolCall]:
+    calls = [pending_tool_calls[i] for i in sorted(pending_tool_calls)]
+    calls = [c for c in calls if c.name]          # 丢弃从未拼出 name 的空壳
+    for c in calls:
+        if not c.id:                               # 供应商缺 id → 合成兜底
+            c.id = f"call_{uuid.uuid4().hex[:12]}"
+    return calls
+```
+
+> 实测教训（lite-code v0.6.1 修复）：某兼容供应商的流式响应不带 `tool_call id`，用户连续两次"网上查一下"都触发 webfetch 后二次请求 400。根因不在 webfetch 工具本身，而在解析层放行了空 id——补齐合成 id 后闭环恢复。
+
 #### 2.5 多字节 UTF-8 增量解码（中文乱码的根因）
 
 上面的 `buffer += chunk.decode("utf-8", errors="replace")` 在中文回复下**必然出错**：`chunk` 是网络层切分的原始字节，可能把一个多字节字符**拦腰截断**。
@@ -275,6 +289,6 @@ async def start_minimal_agent(user_prompt: str):
 
 ### 第一课的核心结论与注意事项
 
-1. **`tool_call_id` 强关联性**：当插入 `role: "tool"` 消息时，必须严格对应前一条 `assistant` 消息返回的 `tool_call_id`。如果 ID 丢损或错位，OpenAI/DeepSeek API 会直接抛出 HTTP 400 状态码。
+1. **`tool_call_id` 强关联性**：当插入 `role: "tool"` 消息时，必须严格对应前一条 `assistant` 消息返回的 `tool_call_id`。如果 ID 丢损或错位，OpenAI/DeepSeek API 会直接抛出 HTTP 400 状态码。**更隐蔽的是"空 id"**：部分供应商流式响应不携带 id，必须像上文 `finalize_tool_calls` 那样在流收尾时补齐合成 id，否则 tool 消息同样无法匹配。
 2. **Arguments 延迟解析**：流式推送过程中，`call.arguments` 是逐字增长的**非合法 JSON 串**。绝对不能在 Stream 中途调用 `json.loads`，必须等待整个 Turn 的流事件接收完毕后再解析。
 3. **状态队列不可丢失**：Harness 的完整会话历史是一个由 `system` → `user` → `assistant(tool_calls)` → `tool(result)` → `assistant` 构成的严格状态链条。任何一环丢失都会破坏 LLM 的上下文认知。

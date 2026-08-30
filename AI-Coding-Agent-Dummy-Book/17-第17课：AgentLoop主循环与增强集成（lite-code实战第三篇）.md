@@ -84,6 +84,45 @@ def truncate_tool_output(output, max_lines=2000, max_bytes=51200,
     ...
 ```
 
+**工具调用原子对修复（`core/context_manager.py`）**：前三个防御都是"执行前拦截"，这一个是**发送前兜底**。OpenAI 兼容 API 硬性要求 `assistant(tool_calls)` 后必须为每个 `tool_call_id` 跟一条 tool 消息，缺一条就报 `HTTP 400`。但现实中链会破：任务被用户停止时落盘了不完整历史、供应商缺 id（第 1 课的坑）、压缩边界意外切断了原子对。主循环在**恢复历史后**和**每次调用 LLM 前**各跑一遍修复（`repair_tool_call_pairs`）：完整配对原样保留；残缺对连同孤儿 tool 消息一起丢弃；空 id 链按位置补齐一致的合成 id——宁可丢一轮旧工具细节，也不能把非法链发给 API：
+
+```python
+def repair_tool_call_pairs(messages) -> List[Message]:
+    repaired = []
+    i = 0
+    while i < len(messages):
+        m = messages[i]
+        if m.role == "assistant" and m.tool_calls:
+            ids = {c.id for c in m.tool_calls if c.id}
+            j = i + 1
+            matched = []
+            # 收集紧随的 tool 结果：正常链按 id 匹配，空 id 链按顺序匹配
+            while j < len(messages) and messages[j].role == "tool":
+                if ids and messages[j].tool_call_id not in ids:
+                    break
+                if not ids and messages[j].tool_call_id:
+                    break
+                matched.append(messages[j]); j += 1
+            if len(matched) >= len(m.tool_calls):
+                # 完整配对 → 保留；空 id 链按位置补齐一致的合成 id
+                if not ids:
+                    for c in m.tool_calls:
+                        if not c.id:
+                            c.id = f"call_{uuid.uuid4().hex[:12]}"
+                    for k, t in enumerate(matched[: len(m.tool_calls)]):
+                        if not t.tool_call_id:
+                            t.tool_call_id = m.tool_calls[k].id
+                repaired.append(m)
+                repaired.extend(matched[: len(m.tool_calls)])
+            # 残缺对 → 整对丢弃，绝不让非法链出站
+            i = j
+        elif m.role == "tool":
+            i += 1                      # 无主 tool 消息 → 丢弃
+        else:
+            repaired.append(m); i += 1
+    return repaired
+```
+
 #### 3. 第 3 课增强机制集成
 
 **Token 预算估算（`core/token_counter.py`）**：中文加权启发式，1 Token ≈ 4 英文字符 / 0.75 中文字符：
@@ -293,6 +332,8 @@ class AgentLoop:
 
             # B. beforeLLM 管道（插件可修改消息）
             processed = await self.kernel.before_llm.run(self.kernel.ctx, payload)
+            # B2. 发送前兜底：修复工具调用原子对（停止/压缩/缺 id 可能破坏链）
+            processed = repair_tool_call_pairs(processed)
 
             # D. 调用 LLM（流式，内部 emit llm:stream）
             content, tool_calls, usage = await self.adapter.chat_stream(
@@ -445,7 +486,7 @@ class SubAgentRunner:
 在本课中，我们实现了 `lite-code` 的灵魂模块——**AgentLoop 主循环**：
 
 1. 掌握了完整的 **Think-Act-Observe 状态机** 控制逻辑；
-2. 集成了第 2 课所有防御：**JSON 自愈**、**死循环 Hash 检测**、**输出截断**（截断结果落盘，上下文只放句柄）；
+2. 集成了第 2 课所有防御：**JSON 自愈**、**死循环 Hash 检测**、**输出截断**（截断结果落盘，上下文只放句柄），并新增**工具调用原子对修复**（恢复历史后 + 每次调用 LLM 前各跑一遍，残缺/无主/空 id 链一律不出站）；
 3. 集成了第 3 课所有增强：**Token 预算估算**、**策略 B 两阶段滑动裁剪**（保护 system 与 tool 原子对、保留最近 K 轮、`max(预算下限, 90% × 模型窗口)` 有效上限）、**LLM 摘要化压缩**（opencode 风格：旧轮次摘要替换、最近轮次原样保留，前缀只失效一次）、**静态 System Prompt**（任务内构建一次，稳定前缀）；
 4. 实现了 **beforeTool 安全管道**（SecurityPlugin 的接入点，插件本体在第 18 课实现）；
 5. 实现了 **估算兜底 + 真实 usage 回填**（第 4 课）：用模型返回的 `prompt_cache_hit_tokens` 精确统计缓存命中率，并对 Anthropic 与 OpenAI 兼容接口使用不同的 miss 口径；

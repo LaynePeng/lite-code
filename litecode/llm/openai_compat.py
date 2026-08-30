@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -178,7 +179,14 @@ class OpenAICompatAdapter(BaseLLMAdapter):
     @staticmethod
     def _finalize_tool_calls(tool_calls_map: Dict[int, ToolCall]) -> List[ToolCall]:
         calls = [tool_calls_map[i] for i in sorted(tool_calls_map)]
-        return [c for c in calls if c.name]
+        calls = [c for c in calls if c.name]
+        # 部分供应商（Kimi/GLM/通义等）流式响应可能不携带 tool_call id：
+        # 补齐合成 id，否则 assistant(tool_calls) 无法与后续 tool 消息匹配，
+        # API 直接返回 "insufficient tool messages following tool_calls message"。
+        for c in calls:
+            if not c.id:
+                c.id = f"call_{uuid.uuid4().hex[:12]}"
+        return calls
 
     async def test_connection(self) -> Tuple[bool, str, float]:
         start = time.time()
