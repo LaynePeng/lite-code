@@ -1,3 +1,3 @@
 """lite-code：手写 Code 开发 Agent。"""
 
-__version__ = "0.8.1"
+__version__ = "0.9.1rc0"

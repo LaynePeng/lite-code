@@ -130,6 +130,8 @@ export interface LLMProviderSettings {
   has_key: boolean;
   base_url: string;
   model: string;
+  models: string[];
+  name?: string;
   temperature: number;
   context_window?: number | null;
 }
@@ -152,6 +154,7 @@ export type SSEEvent =
   | { type: "task:error"; data: { message: string } }
   | { type: "stats:update"; data: Stats }
   | { type: "context:stats"; data: ContextStats }
+  | { type: "subagent:started"; data: { task: string; role: string } }
   | { type: "subagent:completed"; data: Record<string, unknown> };
 
 // Electron 注入的原生能力（浏览器模式下不存在）

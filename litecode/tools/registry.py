@@ -27,6 +27,11 @@ class ToolRegistry:
     def has(self, name: str) -> bool:
         return name in self._tools
 
+    def set_handler(self, name: str, handler: Handler) -> None:
+        if name not in self._tools:
+            raise KeyError(f'未注册的工具 "{name}"')
+        self._handlers[name] = handler
+
     def names(self) -> List[str]:
         return list(self._tools.keys())
 

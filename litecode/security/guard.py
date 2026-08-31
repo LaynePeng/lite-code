@@ -210,6 +210,13 @@ class SecurityGuard:
                 )
         return SecurityCheckResult(ThreatLevel.SAFE)
 
+    def is_external_path(self, workspace: str, file_path: str) -> bool:
+        """判断路径是否位于当前项目之外（不改变敏感路径检查结果）。"""
+        raw = os.path.expanduser(str(file_path))
+        target = os.path.abspath(raw if os.path.isabs(raw) else os.path.join(workspace, raw))
+        root = os.path.abspath(workspace)
+        return target != root and not target.startswith(root + os.sep)
+
     # ------------------------------------------------------------ 命令检查
 
     def check_shell_command(self, command: str) -> SecurityCheckResult:

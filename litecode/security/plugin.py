@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from ..core.kernel import Kernel
@@ -21,9 +22,10 @@ logger = logging.getLogger("litecode.security")
 class SecurityPlugin(Plugin):
     name = "security-plugin"
 
-    def __init__(self, guard: SecurityGuard, approval_gate: ApprovalGate) -> None:
+    def __init__(self, guard: SecurityGuard, approval_gate: ApprovalGate, workspace: str) -> None:
         self.guard = guard
         self.approval_gate = approval_gate
+        self.workspace = os.path.abspath(workspace)
 
     def install(self, kernel: Kernel) -> None:
         @kernel.before_tool.use
@@ -37,6 +39,27 @@ class SecurityPlugin(Plugin):
                 data["cancel"] = True
                 data["reason"] = f"[SecurityGuard]: {path_result.reason}"
                 return await next(data)
+
+            # 项目外文件默认不访问。读取和写入是两种独立授权，且授权只
+            # 附着于本次调用的精确路径，不能被后续调用复用或升级。
+            if tool_name in {
+                "read_file", "list_dir", "get_file_outline", "read_focused_symbol",
+            } or tool_name in {"write_file", "apply_search_replace", "apply_unified_diff"}:
+                path = args.get("filePath") or args.get("path") or ""
+                if path and self.guard.is_external_path(self.workspace, path):
+                    write = tool_name in {"write_file", "apply_search_replace", "apply_unified_diff"}
+                    access = "写入" if write else "读取"
+                    approved = await self._request_approval(
+                        kernel,
+                        f'{access}项目外路径 "{path}"',
+                        f'工具 {tool_name} 请求{access}项目目录之外的路径。'
+                        + ("写入需要单独授权。" if write else "批准后仅允许本次读取。"),
+                    )
+                    if not approved:
+                        data["cancel"] = True
+                        data["reason"] = f"[User Rejected]: 项目外路径{access}已被拒绝。"
+                        return await next(data)
+                    args["_approved_external_access"] = "write" if write else "read"
 
             # Shell 指令过滤
             if tool_name == "execute_command":

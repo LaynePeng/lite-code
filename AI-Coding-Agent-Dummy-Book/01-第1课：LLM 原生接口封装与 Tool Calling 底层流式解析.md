@@ -172,7 +172,7 @@ text2 = chunk2.decode("utf-8", errors="replace")   # → "��" ← 又两个�
 
 `errors="replace"` 会把残缺字节替换成 U+FFFD（``），导致 "先看根" 变成 "先�根"。
 
-**正确做法**：做**字节级增量解码**——保留末尾最多 3 字节（UTF-8 单字符最长 4 字节，被截断时最多剩 3），等下一个 chunk 到了再拼起来解码：
+**正确做法**：做**字节级增量解码**。不要直接对每个网络 chunk 调用 `decode(errors="replace")`，而是把上次未完成的字节与本次 chunk 合并；如果解码器报告末尾字符不完整，只保留从错误位置开始的字节，等下一个 chunk 到达后再拼接。
 
 ```python
 def decode_utf8_incremental(buffer: bytes, chunk: bytes):
@@ -180,11 +180,12 @@ def decode_utf8_incremental(buffer: bytes, chunk: bytes):
     data = buffer + chunk
     try:
         return data.decode("utf-8"), b""   # 全部是完整字符
-    except UnicodeDecodeError:
-        # 末尾可能是不完整的多字节字符，保留至多 3 字节到下一轮
-        keep = min(3, len(data))
-        text = data[:-keep].decode("utf-8", errors="replace")
-        return text, data[-keep:]
+    except UnicodeDecodeError as exc:
+        # 只有确实未完成的末尾字符才缓存；不能固定截掉最后 3 字节。
+        if exc.reason == "unexpected end of data" and exc.start < len(data):
+            return data[:exc.start].decode("utf-8"), data[exc.start:]
+        # 中间出现非法字节时，替换该非法输入并继续，避免缓存合法文本。
+        return data.decode("utf-8", errors="replace"), b""
 
 # 在 SSE 解析中配合行缓冲使用
 byte_buffer = b""
@@ -198,6 +199,8 @@ async for chunk in response.aiter_bytes():
 ```
 
 这个模式对**任何**多字节编码的流式协议都通用（中文、emoji、韩文等），也值得抽取为公共工具函数放在适配器基类中，让所有供应商复用——我们在实战篇中就会这样做。
+
+> UTF-8 解码只负责保证字节转换正确，Web UI 还需要独立保证高频增量事件的状态累积正确。前端状态管理的处理方式见第 19 课。
 
 #### 3. 编写最简 Agent 主循环 (Agent Loop)
 

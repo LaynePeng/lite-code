@@ -164,6 +164,7 @@ class SubAgentPlugin(ToolPlugin):
     def __init__(self, app) -> None:
         from .sub_agent import make_sub_agent_handler
 
+        self._app = app
         self._handler = make_sub_agent_handler(app)
         self._tool = ToolDefinition(
             name="spawn_sub_agent",

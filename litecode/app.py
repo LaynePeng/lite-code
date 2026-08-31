@@ -194,7 +194,12 @@ class AgentApp:
         if providers:
             for pid, settings in providers.items():
                 if pid not in self.llm_registry.providers:
-                    continue
+                    if not pid.startswith("custom_"):
+                        continue
+                    self.llm_registry.providers[pid] = {
+                        "name": settings.get("name") or pid, "api_key": "",
+                        "base_url": "", "model": "", "models": [], "temperature": 0.2,
+                    }
                 current = self.llm_registry.providers[pid]
                 # 跳过脱敏 api_key（含 … 或 **** 视为未修改）
                 if settings.get("api_key") and ("…" in settings["api_key"] or settings["api_key"] == "****"):
@@ -206,7 +211,18 @@ class AgentApp:
                 # 空/无效的 context_window（手动覆盖）视为未设置
                 if settings.get("context_window") in (None, "", 0):
                     settings.pop("context_window", None)
-                self.llm_registry.providers[pid] = {**current, **settings}
+                merged = {**current, **settings}
+                if pid.startswith("custom_"):
+                    merged["name"] = str(merged.get("name") or pid).strip()
+                self.llm_registry.providers[pid] = merged
+        # UI 提交的是完整列表；未提交的自定义实例表示用户删除了它。
+        if providers is not None:
+            kept = set(providers)
+            for pid in list(self.llm_registry.providers):
+                if pid.startswith("custom_") and pid not in kept:
+                    del self.llm_registry.providers[pid]
+        if self.llm_registry.active not in self.llm_registry.providers:
+            self.llm_registry.active = "deepseek"
         self.llm_registry.reset_adapter()
         self._persist_config()
         return self.llm_registry.to_config()
@@ -309,11 +325,17 @@ class AgentApp:
         kernel = Kernel(session_id)
         if registry is not None:
             kernel.register_service(TOOLS_SERVICE, registry)
+            if registry.has("spawn_sub_agent"):
+                from .tools.sub_agent import make_sub_agent_handler
+
+                registry.set_handler(
+                    "spawn_sub_agent", make_sub_agent_handler(self, kernel.events)
+                )
         else:
             kernel.register_service(TOOLS_SERVICE, ToolRegistry())
             for plugin in self.tool_plugins():
                 kernel.use(plugin)
-        kernel.use(SecurityPlugin(self.guard, self.approval_gate))
+        kernel.use(SecurityPlugin(self.guard, self.approval_gate, self.workspace))
         kernel.register_service("app", self)
         return kernel
 

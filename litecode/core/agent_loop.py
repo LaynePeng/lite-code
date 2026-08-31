@@ -110,6 +110,10 @@ class AgentLoop:
         messages.append(user_message)
         await self.kernel.events.emit("message:added", {"message": user_message.to_dict()})
 
+        # 首条消息立即落盘，避免 session 创建后、首轮 LLM 完成前刷新列表时消失。
+        if store_snapshot:
+            self._save_session()
+
         await self.kernel.events.emit("task:start", {"session_id": self.kernel.session_id})
 
         current_step = 0
@@ -351,9 +355,11 @@ class AgentLoop:
     def _save_session(self) -> None:
         if self.session_store is not None:
             try:
+                existing = self.session_store.load(self.kernel.session_id)
+                meta = dict(existing.metadata) if existing is not None else {}
+                meta["updated_by"] = "agent_loop"
                 self.session_store.save(
-                    self.kernel.session_id, self.kernel.ctx.messages,
-                    {"updated_by": "agent_loop"},
+                    self.kernel.session_id, self.kernel.ctx.messages, meta,
                 )
             except Exception:
                 logger.exception("[AgentLoop] 会话落盘失败")

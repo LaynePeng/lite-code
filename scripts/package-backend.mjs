@@ -11,6 +11,7 @@ const python = isWindows
   ? path.join(root, ".venv", "Scripts", "python.exe")
   : path.join(root, ".venv", "bin", "python");
 const outDir = path.join(root, "release", "backend");
+const clean = process.argv.includes("--clean") || process.env.LITECODE_PYINSTALLER_CLEAN === "1";
 
 if (!fs.existsSync(python)) {
   console.error(
@@ -34,7 +35,7 @@ const sep = isWindows ? ";" : ":";
 
 const specArgs = [
   "--noconfirm",
-  "--clean",
+  ...(clean ? ["--clean"] : []),
   "--onedir",
   "--name", "lite-code-backend",
   "--distpath", outDir,
@@ -66,12 +67,14 @@ const specArgs = [
 console.log("[package] Packaging backend with PyInstaller...");
 console.log(`  python: ${python}`);
 console.log(`  output: ${outDir}/lite-code-backend/ (--onedir, faster than onefile)`);
-console.log(`  mode: --onedir (this may take 30-90s)`);
+console.log(`  mode: --onedir${clean ? " --clean" : " (incremental cache)"}`);
+const startedAt = Date.now();
 execSync([python, "-m", "PyInstaller", ...specArgs].join(" "), {
   cwd: root,
   stdio: "inherit",
   env: { ...process.env, PYTHONPATH: root },
 });
+console.log(`  elapsed: ${((Date.now() - startedAt) / 1000).toFixed(1)}s`);
 
 const outDirName = isWindows ? "lite-code-backend.exe" : "lite-code-backend";
 const binary = path.join(outDir, "lite-code-backend", outDirName);

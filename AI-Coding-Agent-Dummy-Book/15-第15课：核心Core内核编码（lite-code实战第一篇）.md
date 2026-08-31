@@ -276,6 +276,8 @@ class SessionStore:
 
 **增强点**：这里加了**原子写盘**（`os.replace`），并支持 `list()`（用于 Web UI 的会话列表）与 `delete()`。
 
+在最终项目中，`metadata` 与消息一起持久化。更新会话时必须在已有 metadata 上合并新字段，不能用新字典覆盖它，否则会丢失工作区绑定等信息。Web UI 只在用户发送第一条消息时创建 session；没有用户消息的占位 Tab 不会写入 SessionStore。
+
 #### 7. 工程初始化与验证
 
 创建 Python 虚拟环境并安装依赖（`pyproject.toml`）：

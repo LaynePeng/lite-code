@@ -37,8 +37,8 @@ export const api = {
     const url = workspace ? `/api/sessions?workspace=${encodeURIComponent(workspace)}` : "/api/sessions";
     return req<SessionInfo[]>(url);
   },
-  createSession: () =>
-    req<{ session_id: string }>("/api/sessions", { method: "POST", body: JSON.stringify({}) }),
+  createSession: (name?: string) =>
+    req<{ session_id: string }>("/api/sessions", { method: "POST", body: JSON.stringify(name ? { name } : {}) }),
   getSession: (id: string) => req<{ messages: import("./types").Msg[] }>(`/api/sessions/${id}`),
   deleteSession: (id: string) =>
     req<{ ok: boolean }>(`/api/sessions/${id}`, { method: "DELETE" }),

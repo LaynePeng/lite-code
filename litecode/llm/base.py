@@ -1,7 +1,7 @@
 """LLM 适配器抽象基类。"""
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 from ..core.events import TypedEventBus
 from ..core.types import Message, ToolCall, ToolDefinition
@@ -11,10 +11,12 @@ def decode_utf8_incremental(buffer: bytes, chunk: bytes) -> Tuple[str, bytes]:
     data = buffer + chunk
     try:
         return data.decode("utf-8"), b""
-    except UnicodeDecodeError:
-        keep = min(3, len(data))
-        text = data[:-keep].decode("utf-8", errors="replace")
-        return text, data[-keep:]
+    except UnicodeDecodeError as exc:
+        # 只缓存确实未完成的字符。固定保留末尾 3 字节会在一个 chunk
+        # 同时包含合法文本和半个汉字时，把前面的完整字符错误地替换掉。
+        if exc.reason == "unexpected end of data" and exc.start < len(data):
+            return data[:exc.start].decode("utf-8"), data[exc.start:]
+        return data.decode("utf-8", errors="replace"), b""
 
 
 class LLMError(Exception):

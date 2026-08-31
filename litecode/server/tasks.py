@@ -17,7 +17,7 @@ EVENT_FORWARD = {
     "llm:stream", "llm:turn_start", "message:added", "tool:before_execute",
     "tool:after_execute", "approval:request", "approval:resolved", "task:start",
     "task:done", "task:error", "stats:update", "subagent:completed",
-    "context:stats",
+    "context:stats", "subagent:started",
 }
 
 

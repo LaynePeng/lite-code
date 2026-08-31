@@ -58,7 +58,10 @@ class SubAgentRunner:
         role: str = "general",
         system_prompt: Optional[str] = None,
         max_steps: int = 12,
+        parent_events=None,
     ) -> Dict[str, Any]:
+        if role == "explore":
+            role = "explorer"
         profile = self._resolve_role(role)
         if profile is not None:
             allowed = profile.tools
@@ -99,6 +102,12 @@ class SubAgentRunner:
         logger.info('[SubAgent] 派生子 Agent role=%s task="%s..."',
                     role, task_description[:60])
 
+        if parent_events is not None:
+            await parent_events.emit("subagent:started", {
+                "task": task_description,
+                "role": role,
+            })
+
         summary, stats = await loop.run_task(
             f"请完成以下子任务并输出精炼总结（不要向用户提问，直接执行）：\n{task_description}",
             system_prompt=system,
@@ -106,13 +115,16 @@ class SubAgentRunner:
             store_snapshot=False,
         )
 
-        await sub_kernel.events.emit("subagent:completed", {
+        completed_payload = {
             "task": task_description,
             "role": role,
             "tokens_used": stats["input_tokens"] + stats["output_tokens"],
             "turns": stats["turns"],
             "summary": summary,
-        })
+        }
+        await sub_kernel.events.emit("subagent:completed", completed_payload)
+        if parent_events is not None:
+            await parent_events.emit("subagent:completed", completed_payload)
 
         logger.info('[SubAgent] 完成 role=%s turns=%s tokens=%s',
                     role, stats["turns"], stats["input_tokens"] + stats["output_tokens"])

@@ -261,4 +261,4 @@ async def run_robust_agent_loop(
 - 通过 **Action Hash Tracking** 杜绝 Agent 的卡死与陷入死循环；
 - **Truncator** 防范工具输出过大导致的上下文溢出。
 
-下一课进入 **第3课：上下文管理、Token 动态计算与 Dynamic System Prompt** —— 学习如何控制不断增长的对话历史，用滑动窗口与感知环境的 System Prompt 让 Agent 在大型代码库中保持上下文可控。
+下一课进入 **第3课：上下文管理、Token 动态计算与环境感知 System Prompt** —— 学习如何控制不断增长的对话历史，用滑动窗口和稳定的环境提示让 Agent 在大型代码库中保持上下文可控。

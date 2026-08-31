@@ -2,7 +2,7 @@
 
 本课实现三部分内容：
 1. **轻量 Token 准确计数器** 与滑动窗口（Sliding Window）裁剪策略；
-2. **Dynamic System Prompt 动态组装器**（注入环境状态、Git 分支、代码库摘要）；
+2. **环境感知 System Prompt 组装器**（注入稳定环境信息，动态状态由工具查询）；
 3. **上下文保留策略**（在裁剪历史时，如何保留关键的 System Prompt 与最近的决策链）。
 
 #### 1. Token 准确估算与计数器 (Token Counter)
@@ -263,44 +263,28 @@ def _effective_cap(self) -> int:
     return min(budget, window_cap)  # 小窗口：预算兜底，保持 90% 安全边际
 ```
 
-预留 10% 给输出（以及工具结果的瞬时波动），否则模型可用的输出空间会被压缩到只剩几个 Token。此外，压缩手段也升级为**先 LLM 摘要化、后整轮裁剪**（第 17 课实现：旧轮次摘要替换、最近轮次原样保留，前缀只在压缩时失效一次）。
+预留 10% 给输出（以及工具结果的瞬时波动），否则模型可用的输出空间会被压缩到只剩几个 Token。实现先尝试用 LLM 摘要化旧轮次，失败时回退到整轮裁剪；最近轮次保持完整，缓存前缀只在摘要替换时失效一次。
 
-#### 3. 手写 Dynamic System Prompt 动态组装器
+#### 3. 手写环境感知 System Prompt 组装器
 
-在软件开发 Harness 中，System Prompt 需要**感知环境信息**——操作系统、工作目录、Git 状态、可用工具，这些上下文直接影响 Agent 的决策质量。
+在软件开发 Harness 中，System Prompt 需要提供稳定的环境上下文——操作系统、工作目录和可用工具会直接影响 Agent 的决策质量。与此同时，System Prompt 也是缓存前缀的一部分，因此不能把每轮都会变化的 Git 状态写进去。
 
-每次调用 LLM 前，Dynamic System Prompt 会实时收集：
+System Prompt Builder 在任务开始时收集：
 - 当前工作目录（CWD）
-- 当前 Git 分支与未提交的文件改动摘要
+- 当前 Git 状态不放入 System Prompt，由 `git_status` 工具按需查询
 - 操作系统类型与可用 Shell
 - 当前已经加载激活的 Tools 列表
 
-> 此处的动态组装是**概念演示**——它体现"环境感知"的价值，也与缓存前缀稳定性的要求相冲突（见下文「设计决策」）；第 17 课的实战实现会把它收敛为**静态骨架 + 工具按需获取**。
+> 实现采用**任务级静态骨架 + 工具按需获取动态状态**：一次任务内 System Prompt 不变，Git 状态等动态信息由工具实时返回。
 
 ```python
 # prompt/system_prompt.py
 import os
 import platform
-import subprocess
 from typing import List
 
 class SystemPromptBuilder:
-    """动态获取当前环境信息并生成 System Prompt。"""
-
-    @staticmethod
-    def _git_info(cwd: str) -> str:
-        try:
-            branch = subprocess.run(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                cwd=cwd, capture_output=True, text=True, timeout=3)
-            branch_name = branch.stdout.strip() if branch.returncode == 0 else "N/A"
-            status = subprocess.run(
-                ["git", "status", "--short"],
-                cwd=cwd, capture_output=True, text=True, timeout=3)
-            changed = len([l for l in status.stdout.splitlines() if l.strip()])
-            return f"分支: {branch_name} | 未提交改动文件数: {changed}"
-        except Exception:
-            return "不是 Git 仓库 / Git 不可用"
+    """在任务开始时生成稳定的环境感知 System Prompt。"""
 
     @classmethod
     def build(cls, cwd: str, tools: List[ToolDefinition]) -> str:
@@ -312,7 +296,6 @@ class SystemPromptBuilder:
 ### 环境信息 (Environment Context)
 - **操作系统**: {os_name}
 - **当前工作目录**: `{cwd}`
-- **Git 状态**: {cls._git_info(cwd)}
 
 ### 可用工具 (Available Tools)
 {tools_summary}
@@ -325,17 +308,17 @@ class SystemPromptBuilder:
 """
 ```
 
-**设计决策：动态 System Prompt 与缓存红线的张力**
+**设计决策：稳定 System Prompt 与动态环境信息的分工**
 
-注意这里的问题：`_git_info()` 的结果每次调用都在变（新增文件、`git commit` 后清零），如果每轮都用新文本**整体替换** `payload[0]`，那么 system 前缀就永远不稳定——这与第 5 课将强调的「缓存断点之前不能动一个字节」红线直接冲突。
+Git 状态会随文件操作和提交变化。如果每轮都把它写入 `payload[0]`，System 前缀就会不断变化，缓存断点之前的内容无法保持稳定。
 
-本教程在第 17 课的实战实现中采用：**静态骨架 + 工具按需获取**。理由：
+实现采用：**静态骨架 + 工具按需获取**。理由：
 
 1. 动态内容并非都要进 System——`git_status`、`file_tree` 等工具返回的信息**永远比 System 里预埋的快照新鲜**，把"当前状态"交给工具查询，System 只保留角色、环境常量与规则；
 2. 对缓存而言，system 前缀逐字节稳定是硬前提：Anthropic 断点标注与 DeepSeek 自动前缀缓存都要求**断点前一个字节都不能变**，每轮重渲染等于让整段前缀缓存永远 miss；
 3. 真正会变化的环境信息（操作系统、工作目录、工具列表）在**单个任务内是恒定的**，放进 System 不影响前缀稳定性——只有 git 状态这类随工具执行而变的内容需要剥离。
 
-这个取舍值得记录：**「保新鲜」还是「保缓存」**——答案不是二选一，而是**区分静态与动态**：静态部分进 System 吃缓存，动态部分交给工具实时查询。这与第 4 课将讲的「稳定前缀」原则一致，并会在第 17 课的 AgentLoop 中落地为静态 System Prompt。
+这个取舍的原则是**区分静态与动态**：静态部分进入 System Prompt，动态部分交给工具实时查询。这样既保持环境信息可用，也满足第 4 课的稳定前缀原则。
 
 #### 4. 集成：完整的上下文受控 Agent 循环
 
@@ -349,7 +332,7 @@ async def run_context_aware_agent(user_prompt: str, tools, tool_executor):
     provider = LLMProvider(api_key=os.environ.get("DEEPSEEK_API_KEY", ""))
     context_manager = ContextManager(16000)  # 限制 Token 预算为 16k
 
-    # 1. 动态生成 System Prompt
+    # 1. 任务开始时生成稳定的 System Prompt
     system_prompt_content = SystemPromptBuilder.build(cwd=os.getcwd(), tools=tools)
 
     messages: List[Message] = [
@@ -358,7 +341,7 @@ async def run_context_aware_agent(user_prompt: str, tools, tool_executor):
     ]
 
     for turn in range(10):
-        # 2. 关键步骤：发送前执行动态滑动裁剪，防爆框
+    # 2. 关键步骤：发送前执行滑动裁剪，防止上下文超限
         messages = context_manager.prune_messages(messages)
         print(f"\n--- [Turn {turn+1}] Context Size: {len(messages)} msgs ---")
 
@@ -400,6 +383,6 @@ async def run_context_aware_agent(user_prompt: str, tools, tool_executor):
 
 1. 学会了纯手写流式 Tool Calling 拼接；
 2. 实现了 JSON 自愈、死循环 Hash 预警与工具输出截断；
-3. 掌握了 Token 估算、保护 `assistant-tool` 完整性的**策略 B 两阶段裁剪**算法，理解了感知环境的 System Prompt 设计，以及它与缓存前缀的张力与取舍（第 17 课实战将落地为静态骨架）。
+3. 掌握了 Token 估算、保护 `assistant-tool` 完整性的**策略 B 两阶段裁剪**算法，以及稳定 System Prompt 与动态工具信息的分工。
 
 在下一课中，我们将进入 **第4课：Prompt 缓存机制** —— 学习如何让稳定前缀命中供应商的 KV 缓存，把输入 Token 成本砍到 10%。

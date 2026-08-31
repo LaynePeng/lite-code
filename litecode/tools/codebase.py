@@ -40,9 +40,12 @@ class CodebaseTools:
         include = args.get("includePattern")
         max_results = max(1, int(args.get("maxResults") or 50))
 
-        rg = shutil.which("rg")
+        rg = self._resolve_rg()
         if not rg:
-            return "[Error]: 未检测到 ripgrep (rg)，无法执行高性能搜索。"
+            return (
+                "[Error]: 未检测到 ripgrep (rg)。已检查 PATH 及常见安装目录；"
+                "请安装 ripgrep，或通过 LITECODE_RG_PATH 指定可执行文件。"
+            )
 
         cmd = [
             rg, "--line-number", "--column", "--color=never", "--smart-case",
@@ -71,3 +74,21 @@ class CodebaseTools:
             return "[Error]: 搜索超时（30s）。"
         except Exception as exc:
             return f"[Error]: 搜索执行失败: {exc}"
+
+    @staticmethod
+    def _resolve_rg() -> str | None:
+        """兼容从 Finder/Electron 启动时缺少 shell PATH 的环境。"""
+        configured = os.environ.get("LITECODE_RG_PATH", "").strip()
+        candidates = [
+            configured,
+            shutil.which("rg") or "",
+            "/opt/homebrew/bin/rg",
+            "/usr/local/bin/rg",
+            "/opt/local/bin/rg",
+            os.path.expanduser("~/.cargo/bin/rg"),
+            os.path.expanduser("~/.local/bin/rg"),
+        ]
+        for candidate in candidates:
+            if candidate and os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return candidate
+        return None

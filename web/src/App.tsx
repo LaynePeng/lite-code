@@ -66,11 +66,13 @@ export default function App() {
 
   const esRef = useRef<EventSource | null>(null);
   const taskIdRef = useRef<string | null>(null);
+  const stopRequestedRef = useRef(false);
   const streamingRef = useRef<StreamingState | null>(null);
   const lastEventTimeRef = useRef<number>(Date.now());
   const flushTimerRef = useRef<number | null>(null);
   const chatStatesRef = useRef<Record<string, ChatSessionState>>({});
   const tabsRef = useRef<TabItem[]>([]);
+  const sessionsRequestRef = useRef(0);
 
   useEffect(() => { chatStatesRef.current = chatStates; }, [chatStates]);
   useEffect(() => { tabsRef.current = tabs; }, [tabs]);
@@ -116,8 +118,11 @@ export default function App() {
   // ------------------------------------------------------------ 会话列表
 
   const refreshSessions = useCallback(async (ws?: string) => {
+    const requestId = ++sessionsRequestRef.current;
     try {
-      setSessions(await api.sessions(ws ?? status?.workspace));
+      const next = await api.sessions(ws ?? status?.workspace);
+      // 多个任务结束/切换项目时请求可能乱序返回，旧响应不能覆盖新列表。
+      if (requestId === sessionsRequestRef.current) setSessions(next);
     } catch {
       /* ignore */
     }
@@ -234,13 +239,15 @@ export default function App() {
     [activeTabId]
   );
 
-  const newChatTab = useCallback(async () => {
+  const newChatTab = useCallback(() => {
+    // 占位 tab：不创建后端 session，首条消息发送时才创建并绑定（见 send）
     closeStream();
-    const { session_id } = await api.createSession();
-    await refreshSessions();
-    patchChat(session_id, { ...EMPTY_CHAT, messages: [] });
-    openSessionTab(session_id, "新会话");
-  }, [closeStream, refreshSessions, patchChat, openSessionTab]);
+    setTabs((prev) => {
+      const tab: TabItem = { id: nextTabId(), kind: "chat", title: "新会话" };
+      setActiveTabId(tab.id);
+      return [...prev, tab];
+    });
+  }, [closeStream]);
 
   const selectSession = useCallback(
     async (sid: string) => {
@@ -270,7 +277,7 @@ export default function App() {
         setTabs((prev) => {
           const next = prev.filter((t) => t.sessionId !== id);
           if (next.length === 0) {
-            void newChatTab();
+            newChatTab();
             return prev;
           }
           if (activeTabId === id || prev.find((t) => t.id === activeTabId)?.sessionId === id) {
@@ -294,7 +301,10 @@ export default function App() {
         if (!result.ok && result.error !== "cancelled") {
           patchActiveChat({ error: result.error ?? "无法切换项目" });
         }
-        if (result.ok) window.location.reload();
+        if (result.ok) {
+          // Electron 模式刷新页面会丢状态：reload 后启动逻辑直接新建会话
+          window.location.reload();
+        }
       } catch (e) {
         patchActiveChat({ error: (e as Error).message });
       }
@@ -318,28 +328,21 @@ export default function App() {
           setChatStates({});
           chatStatesRef.current = {};
 
-          if (confirm(`已切换到项目: ${res.workspace}。是否新建会话？`)) {
-            const { session_id } = await api.createSession();
-            openSessionTab(session_id, "新会话");
-            await refreshSessions();
-          } else {
-            setTabs([{ id: nextTabId(), kind: "chat", title: "新会话" }]);
-            setActiveTabId("");
-            setSidebarTab("sessions");
-          }
+          // 切换项目后只刷新历史会话列表，会话由用户按需新建（首条消息才落盘）
+          newChatTab();
+          await refreshSessions(res.workspace);
         }
       } catch (e) {
         setErrorPublic((e as Error).message);
       }
     },
-    [pushLog, refreshSessions, closeStream, openSessionTab, patchActiveChat]
+    [pushLog, refreshSessions, closeStream, newChatTab, patchActiveChat]
   );
 
-  // 首次启动：新建一个会话 tab
+  // 首次启动：打开一个占位会话 tab
   useEffect(() => {
-    if (!loading && tabsRef.current.length === 0) {
-      void newChatTab();
-    }
+    if (loading || tabsRef.current.length > 0) return;
+    newChatTab();
   }, [loading, newChatTab]);
 
   // 会话刷新后同步 chat Tab 标题（用会话名而非 session ID）
@@ -390,14 +393,16 @@ export default function App() {
 
       switch (ev.type) {
         case "llm:stream": {
-          const cur = getChat(sid).streaming ?? { content: "", cards: [] };
+          // SSE chunk 的到达速度高于 React state 提交速度。必须从 ref 读取
+          // 已累积内容，否则连续 chunk 会基于旧 state 互相覆盖并缺字。
+          const cur = streamingRef.current ?? getChat(sid).streaming ?? { content: "", cards: [] };
           streamingRef.current = { ...cur, content: cur.content + ev.data.chunk };
           scheduleStreamFlush();
           break;
         }
         case "llm:turn_start": {
           log(`⟳ 第 ${ev.data.turn} 轮`);
-          const cur = getChat(sid).streaming ?? { content: "", cards: [] };
+          const cur = streamingRef.current ?? getChat(sid).streaming ?? { content: "", cards: [] };
           streamingRef.current = { ...cur, turn: ev.data.turn };
           patchChat(sid, { streaming: { ...streamingRef.current } });
           break;
@@ -410,7 +415,7 @@ export default function App() {
             args: ev.data.args,
             status: "running",
           };
-          const cur = getChat(sid).streaming ?? { content: "", cards: [] };
+          const cur = streamingRef.current ?? getChat(sid).streaming ?? { content: "", cards: [] };
           streamingRef.current = { ...cur, cards: [...cur.cards, card] };
           patchChat(sid, { streaming: { ...streamingRef.current } });
           break;
@@ -418,7 +423,7 @@ export default function App() {
         case "tool:after_execute": {
           log(`✔ ${ev.data.toolName} (${ev.data.durationMs}ms)`);
           if (TREE_TOUCH_TOOLS.has(ev.data.toolName)) setTreeRevision((v) => v + 1);
-          const cur = getChat(sid).streaming;
+          const cur = streamingRef.current ?? getChat(sid).streaming;
           if (!cur) break;
           const cards = cur.cards.map((c) =>
             c.name === ev.data.toolName && c.status === "running"
@@ -464,6 +469,7 @@ export default function App() {
           cancelStreamFlush();
           streamingRef.current = null;
           closeStream();
+          taskIdRef.current = null;
           pushLog("■ 任务结束");
           void (async () => {
             const snap = await api.getSession(sid);
@@ -477,12 +483,18 @@ export default function App() {
           patchChat(sid, { error: ev.data.message, running: false });
           cancelStreamFlush();
           closeStream();
+          taskIdRef.current = null;
           setTreeRevision((v) => v + 1);
           void refreshSessions();
           break;
         }
         case "subagent:completed": {
           setTreeRevision((v) => v + 1);
+          log(`◈ 子 Agent ${String(ev.data.role ?? "general")} 已完成`);
+          break;
+        }
+        case "subagent:started": {
+          log(`◈ 启动子 Agent ${ev.data.role}`);
           break;
         }
         default:
@@ -496,16 +508,19 @@ export default function App() {
 
   const send = useCallback(
     async (prompt: string) => {
+      taskIdRef.current = null;
+      stopRequestedRef.current = false;
       let sid = activeTabId ? tabsRef.current.find((t) => t.id === activeTabId)?.sessionId : null;
+      let createdSession = false;
       if (!sid) {
         // 当前 tab 尚无 session（newChatTab 的占位），首次发送时创建并绑定到该 tab
         const { session_id } = await api.createSession();
         sid = session_id;
+        createdSession = true;
         patchChat(session_id, { ...EMPTY_CHAT, messages: [] });
         setTabs((prev) => prev.map((t) =>
           t.id === activeTabId ? { ...t, sessionId: session_id } : t
         ));
-        await refreshSessions();
       }
       const base = getChat(sid);
       patchChat(sid, {
@@ -545,21 +560,45 @@ export default function App() {
         pushLog("➤ 提交任务…");
         const { task_id } = await api.chat(sid, prompt, currentAgent);
         taskIdRef.current = task_id;
+        if (stopRequestedRef.current) {
+          stopRequestedRef.current = false;
+          pushLog("■ 任务已提交，立即请求停止…");
+          await api.stopTask(task_id).catch(() => {});
+        }
         connect(task_id);
       } catch (e) {
+        // 创建 session 后提交失败时不留下空历史记录
+        if (createdSession && sid) {
+          await api.deleteSession(sid).catch(() => {});
+          setTabs((prev) => prev.map((tab) =>
+            tab.sessionId === sid ? { ...tab, sessionId: undefined, title: "新会话" } : tab
+          ));
+          void refreshSessions();
+        }
         patchChat(sid, { error: (e as Error).message, running: false, streaming: null });
         pushLog(`✗ 提交失败: ${(e as Error).message}`);
       }
     },
-    [activeTabId, getChat, patchChat, openSessionTab, refreshSessions, cancelStreamFlush, handleSSEEvent, pushLog, currentAgent]
+    [activeTabId, getChat, patchChat, refreshSessions, cancelStreamFlush, handleSSEEvent, pushLog, currentAgent]
   );
 
-  const stop = useCallback(() => {
+  const stop = useCallback(async () => {
     const tid = taskIdRef.current;
-    if (!tid) return;
+    stopRequestedRef.current = true;
     pushLog("■ 请求停止任务…");
-    void api.stopTask(tid).catch(() => {});
-  }, [pushLog]);
+    if (!tid) {
+      patchActiveChat({ running: false, streaming: null });
+      pushLog("■ 任务尚未提交，已取消发送");
+      return;
+    }
+    try {
+      await api.stopTask(tid);
+      patchActiveChat({ running: false, streaming: null, pendingApproval: null });
+      pushLog("■ 停止请求已发送");
+    } catch (e) {
+      pushLog(`✗ 停止失败: ${(e as Error).message}`);
+    }
+  }, [patchActiveChat, pushLog]);
 
   const approve = useCallback(
     async (approved: boolean) => {
@@ -624,7 +663,7 @@ export default function App() {
         treeRevision={treeRevision}
         onTabChange={setSidebarTab}
         onSelectSession={(id) => void selectSession(id)}
-        onNewSession={() => void newChatTab()}
+        onNewSession={newChatTab}
         onDeleteSession={(id) => void deleteSession(id)}
         onOpenProject={() => void openProject()}
         onOpenSettings={() => setShowSettings(true)}
@@ -702,7 +741,7 @@ export default function App() {
       {showSettings && (
         <SettingsModal
           onClose={() => setShowSettings(false)}
-          onSaved={() => { setShowSettings(false); void refreshAll(); }}
+          onSaved={() => { void refreshAll(); }}
         />
       )}
       {showPicker && (

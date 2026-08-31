@@ -36,7 +36,10 @@ console.log("[package] Step 0/4: Generate app icon");
 step("icon", () => execSync("node scripts/generate-icon.mjs", { cwd: root, stdio: "inherit" }));
 
 console.log("[package] Step 1/4: Package backend binary");
-step("PyInstaller --onefile", () => execSync("node scripts/package-backend.mjs", { cwd: root, stdio: "inherit" }));
+const backendCleanArg = process.argv.includes("--clean") ? " --clean" : "";
+step(`PyInstaller --onedir${backendCleanArg}`, () =>
+  execSync(`node scripts/package-backend.mjs${backendCleanArg}`, { cwd: root, stdio: "inherit" })
+);
 
 console.log("[package] Step 2/4: electron-builder --dir produces .app");
 step("electron-builder", () => execSync("npx electron-builder --mac --dir --publish never", { cwd: root, stdio: "inherit", env }));

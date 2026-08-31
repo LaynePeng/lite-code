@@ -146,6 +146,7 @@ class LLMRegistry:
                 "api_key": "",
                 "base_url": meta["default_base_url"],
                 "model": meta["default_model"],
+                "models": list(meta.get("models", [])),
                 "temperature": 0.2,
             }
             for pid, meta in PROVIDER_META.items()
@@ -181,13 +182,33 @@ class LLMRegistry:
         if config.get("active"):
             self.active = config["active"]
         for pid, settings in (config.get("providers") or {}).items():
-            if pid not in self.providers:
+            if not isinstance(settings, dict):
                 continue
+            if pid not in self.providers:
+                if not (pid.startswith("custom_") or settings.get("kind") == "openai"):
+                    continue
+                self.providers[pid] = {
+                    "name": settings.get("name") or pid,
+                    "api_key": "",
+                    "base_url": "",
+                    "model": "",
+                    "models": [],
+                    "temperature": 0.2,
+                }
             # 跳过脱敏 / 空的 api_key，防止用「sk-c…1f74」这种脱敏值覆盖真实 key
             api_key = settings.get("api_key")
             if api_key is None or api_key == "" or _is_masked_key(api_key):
                 settings = {k: v for k, v in settings.items() if k != "api_key"}
             merged = {**self.providers[pid], **{k: v for k, v in settings.items() if v is not None}}
+            # 旧配置只有 model；新配置保留多个可选模型并继续用 model 表示当前选择。
+            configured_models = merged.get("models")
+            if not isinstance(configured_models, list):
+                configured_models = []
+            configured_models = [str(m).strip() for m in configured_models if str(m).strip()]
+            selected = str(merged.get("model") or "").strip()
+            if selected and selected not in configured_models:
+                configured_models.insert(0, selected)
+            merged["models"] = configured_models
             self.providers[pid] = merged
         # 环境变量兜底（配置为空时）
         self._apply_env_defaults()
@@ -201,10 +222,12 @@ class LLMRegistry:
         providers = {}
         for pid, p in self.providers.items():
             providers[pid] = {
+                **({"name": p.get("name", pid)} if pid.startswith("custom_") else {}),
                 "api_key": p.get("api_key", "") if persist_key else "",
                 "has_key": bool(p.get("api_key")),
                 "base_url": p.get("base_url", ""),
                 "model": p.get("model", ""),
+                "models": p.get("models", []),
                 "temperature": p.get("temperature", 0.2),
                 "context_window": p.get("context_window"),
             }
@@ -212,13 +235,18 @@ class LLMRegistry:
 
     def provider_meta(self) -> List[Dict[str, Any]]:
         out = []
-        for pid, meta in PROVIDER_META.items():
+        all_ids = list(PROVIDER_META) + [pid for pid in self.providers if pid not in PROVIDER_META]
+        for pid in all_ids:
+            meta = PROVIDER_META.get(pid, {
+                "name": self.providers.get(pid, {}).get("name", pid),
+                "kind": "openai", "default_base_url": "", "models": [],
+            })
             p = self.providers.get(pid, {})
             out.append({
                 "id": pid,
                 "name": meta["name"],
                 "kind": meta["kind"],
-                "models": meta["models"],
+                "models": p.get("models") or meta.get("models", []),
                 "default_base_url": meta["default_base_url"],
                 "has_key": bool(p.get("api_key")),
                 "model": p.get("model", ""),
@@ -267,7 +295,10 @@ class LLMRegistry:
 
     def build_adapter(self, provider_id: Optional[str] = None, overrides: Optional[Dict[str, Any]] = None) -> BaseLLMAdapter:
         pid = provider_id or self.active
-        meta = PROVIDER_META.get(pid, PROVIDER_META["custom"])
+        meta = PROVIDER_META.get(pid, {
+            "name": self.providers.get(pid, {}).get("name", pid),
+            "kind": "openai", "default_base_url": "", "default_model": "",
+        })
         settings = {**self.providers.get(pid, {}), **(overrides or {})}
         api_key = settings.get("api_key", "")
         # 兜底：overrides 传入脱敏 key 视为未配置，避免「sk-c…1f74」进入真实请求

@@ -24,6 +24,38 @@ def test_manual_override_wins():
     assert r.get_context_window("deepseek", "deepseek-v4-flash") == 65536
 
 
+def test_provider_keeps_multiple_models_and_selected_model():
+    r = LLMRegistry({"providers": {
+        "custom": {"model": "gpt-5.6-sol", "models": ["gpt-5.5", "gpt-5.6-sol"]},
+    }})
+    assert r.providers["custom"]["model"] == "gpt-5.6-sol"
+    assert r.providers["custom"]["models"] == ["gpt-5.5", "gpt-5.6-sol"]
+    assert r.to_config()["providers"]["custom"]["models"] == ["gpt-5.5", "gpt-5.6-sol"]
+
+
+def test_legacy_single_model_is_migrated_to_model_list():
+    r = LLMRegistry({"providers": {
+        "custom": {"model": "legacy-model"},
+    }})
+    assert r.providers["custom"]["models"] == ["legacy-model"]
+
+
+def test_custom_provider_instances_keep_independent_connections():
+    r = LLMRegistry({"active": "custom_yibu", "providers": {
+        "custom_yibu": {
+            "name": "Yibu API", "api_key": "key-one", "base_url": "https://yibuapi.com/v1",
+            "model": "gpt-5.6-terra", "models": ["gpt-5.5", "gpt-5.6-terra"],
+        },
+        "custom_other": {
+            "name": "Other API", "api_key": "key-two", "base_url": "https://example.com/v1",
+            "model": "other-model", "models": ["other-model"],
+        },
+    }})
+    assert r.build_adapter().base_url == "https://yibuapi.com/v1"
+    assert r.providers["custom_other"]["api_key"] == "key-two"
+    assert [p["name"] for p in r.provider_meta() if p["id"].startswith("custom_")] == ["Yibu API", "Other API"]
+
+
 def test_models_dev_cache_used_and_fallback(tmp_path):
     # 有缓存 → 用缓存值
     cache = tmp_path / "models.dev.json"

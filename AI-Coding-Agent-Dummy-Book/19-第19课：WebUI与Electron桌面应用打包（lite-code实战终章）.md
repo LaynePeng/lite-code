@@ -15,7 +15,7 @@
 +------------------------------------------------------------+
 |                    Electron 桌面外壳                        |
 |  +------------------------------------------------------+  |
-|  |  React Web UI (sidecar 浏览器窗口)                    |  |
+|  |  React Web UI (Electron BrowserWindow)                 |  |
 |  |  ┌──────────────────────────────────────────────────┐ |  |
 |  |  │ 左栏：会话/文件树/成本  │ 主区：聊天/流式/审批  │ |  |
 |  |  └──────────────────────────────────────────────────┘ |  |
@@ -82,7 +82,7 @@ async def fs_read(path: str, request: Request = None):
             "lines": len(content.split("\n")), "size": len(content), "diff": diff_text}
 ```
 
-**SSE 流式推送**：每个任务创建独立的 `asyncio.Queue`，AgentLoop 运行时通过 `TypedEventBus` 广播事件（`llm:stream`、`tool:before_execute`、`approval:request` 等），`TaskRunner` 订阅事件并推送到队列，SSE 端点从队列消费：
+**SSE 流式推送**：每个任务创建独立的 `asyncio.Queue`，AgentLoop 运行时通过 `TypedEventBus` 广播事件（`llm:stream`、`tool:before_execute`、`approval:request` 等），`TaskHandle` 订阅事件并推送到队列，SSE 端点从队列消费：
 
 ```python
 async def _stream():
@@ -92,6 +92,45 @@ async def _stream():
 
 return StreamingResponse(_stream(), media_type="text/event-stream")
 ```
+
+**流式文本完整性：不要用 React state 作为增量缓冲区**：SSE 事件可能在一次浏览器任务中连续到达，而 React 的 `setState` 是异步且会批处理更新。如果每个事件都从旧 state 读取内容，后一个 chunk 会基于旧值拼接并覆盖前一个 chunk：
+
+```tsx
+// 错误示例：高频 SSE 到达时，content 可能仍是旧值
+const [content, setContent] = useState("");
+
+function onStream(chunk: string) {
+  setContent(content + chunk); // 闭包里的 content 不是最新值
+}
+```
+
+实时显示内容与任务结束后固化的完整消息可能出现不一致，因此实时副本应使用独立的、不会受 React 渲染时序影响的累积缓冲区。
+
+正确做法是将 `useRef` 作为实时缓冲区，React state 只负责定时刷新画面：
+
+```tsx
+const streamingRef = useRef({ content: "", cards: [] });
+const flushTimerRef = useRef<number | null>(null);
+
+function onStream(chunk: string) {
+  const current = streamingRef.current;
+  streamingRef.current = {
+    ...current,
+    content: current.content + chunk,
+  };
+
+  if (flushTimerRef.current === null) {
+    flushTimerRef.current = window.setTimeout(() => {
+      flushTimerRef.current = null;
+      setStreaming({ ...streamingRef.current });
+    }, 80);
+  }
+}
+```
+
+工具开始、工具完成、轮次切换等事件也必须从同一个 ref 读取最新对象，不能分别从 React state 读取，否则工具卡片更新仍可能把思考文本回退到旧版本。任务结束时，再使用后端完整消息或当前 ref 快照固化最终内容。
+
+这个原则也适用于工具参数增量、日志流、进度事件等所有高频 SSE 数据：**可变的实时累积数据放在 ref，React state 保存可渲染快照**。
 
 **多轮对话历史加载**：每次任务都会新建 Kernel，如果从空上下文开始，新任务的落盘会覆盖上一轮历史。`TaskManager.start` 在启动任务前先从 `SessionStore` 恢复该会话的历史消息，再注入新 Kernel：
 
@@ -163,11 +202,11 @@ es.onmessage = (e) => {
 
 **深色主题**（`styles.css`）：VS Code 暗色基底 + 蓝紫渐变强调色，256 行 CSS 自定义样式。
 
-#### 3.5 OpenCode 风格交互优化
+#### 3.5 交互设计
 
-在完成基础功能后，我们参考 OpenCode 的交互设计，对 UI 做了几项关键优化：
+UI 采用以下交互约定：
 
-**工具卡片与右侧面板的分工**：工具调用卡片直接渲染在对话流中（`ToolCard`，位于对应任务的 thinking 块下方），与消息上下文紧邻，便于对照"调用了什么 → 得到什么 → 得出什么结论"。右侧独立面板（`ToolPanel.tsx`）专注展示**上下文情况**（窗口占用、缓存命中率、压缩统计），不再重复工具调用列表：
+**工具卡片与右侧面板的分工**：工具调用卡片直接渲染在对话流中（`ToolCard`，位于对应任务的 thinking 块下方），与消息上下文紧邻，便于对照"调用了什么 → 得到什么 → 得出什么结论"。右侧独立面板（`ToolPanel.tsx`）专注展示**上下文情况**（窗口占用、缓存命中率、压缩统计）：
 
 ```text
 ┌─────── 对话区 ───────┐  ┌── 上下文面板 ──┐
@@ -184,7 +223,7 @@ es.onmessage = (e) => {
 
 工具卡片默认收起（仅显示工具名与状态），点击展开查看参数与结果；文件修改类（`[Patch Success]` 回执）卡片默认展开并渲染 opencode 风格 diff（见第 9 课）。
 
-**思考与回答分离**：历史上，每次模型调用工具的中间推理（`assistant` 消息同时携带 `content` 和 `tool_calls`）都会被渲染为独立气泡，导致对话区呈现"多个推理气泡 + 空气泡"的混乱状态。`buildTurns` 函数将整个用户任务下的所有中间推理文本合并为一个 **thinking 块**（`<details>` 折叠），最终回答才作为正常气泡显示：
+**思考与回答分离**：模型调用工具时产生的中间内容归入一个 **thinking 块**（`<details>` 折叠），最终回答作为正常气泡显示。`buildTurns` 按每个 user 消息组织对应的 thinking 与回答：
 
 ```javascript
 function buildTurns(messages) {
@@ -196,13 +235,13 @@ function buildTurns(messages) {
 
 **Tab 快捷键切换 Agent**：全局 `keydown` 监听，按 Tab 在 Build/Plan 间循环切换，`preventDefault` 阻止焦点跳转——输入框始终聚焦，可连续打字 + 切 Agent + 发送。
 
-**停止按钮合一**：任务运行时，发送按钮（➤）变为红色停止按钮（■），点击即停止。不再有独立的悬浮停止条，避免遮挡。停止请求发出后按钮进入 `stopping` 状态（显示"正在停止…"并禁用，防止重复点击）；后端 `TaskHandle.stop()` 先置协作式中止信号 `abort_event`，再 `task.cancel()` 强杀挂起的 asyncio 任务——LLM 流卡住时也能解套。
+**停止按钮合一**：任务运行时，发送按钮（➤）变为停止按钮（■）。前端保存当前 `task_id`，调用 `POST /api/tasks/{task_id}/stop`；后端 `TaskHandle.stop()` 先设置 `abort_event`，再取消挂起的 asyncio 任务。若用户在 `POST /api/chat` 返回 task ID 前点击停止，前端会记录停止意图，拿到 ID 后立即补发停止请求；任务结束后清理旧 ID，避免误停下一任务。
 
 **目录树打开项目**：浏览器模式下，点击"打开项目"弹出 `ProjectPicker` 目录树选择器，通过 `/api/fs/list` 后端接口逐层浏览文件系统，选完后自动切换工作区并跳转到文件 tab。
 
 **单换行与表格美化**：通过 `remark-breaks` 插件让 Markdown 单换行（`\n`）渲染为 `<br>`，步骤性输出自然分行。表格加 `display: block + overflow-x: auto`，超宽表格横向滚动。
 
-**Session 首句标题**：会话标题不再显示 `session_xxx`，而是取首条用户消息的前 40 字（由 `_session_title` 在后端完成），更直观。
+**Session 首句标题**：会话标题取首条用户消息的前 40 字；如果 metadata 中有显式名称则优先使用，空会话显示为“新会话”。没有用户消息的 session 不进入历史列表。
 
 **Build/Plan 前端切换**：`Composer.tsx` 加入 Agent 选择栏，显示 Build / Plan 两个按钮，当前选中的高亮。右侧显示 `Tab` 小标签提示快捷键。
 
@@ -241,7 +280,7 @@ export default function UnifiedDiff({ diff }: { diff: string }) {
 
 **文件查看器 FileViewer**：目录树文件双击 → 打开文件 Tab（`openFileTab`），该 Tab 不放对话。`FileViewer` 组件根据后端 `/api/fs/read` 返回的数据决定展示模式——有 git diff 时直接显示 `UnifiedDiff` 行级视图（只显示修改部分，不显示全量文件），无 diff 时显示普通文件内容（带行号的代码渲染）。顶部头部展示文件路径、语言徽标、行数、`+N −M` 增删徽标：
 
-工具卡片与回复气泡使用同一套宽度约束：`.tool-cards` 沿用 `.msg-row` 的居中 padding（`max(24px, calc((100% - 820px) / 2))`），`.tool-card` 设 `max-width: 76%` 与 `.bubble` 一致——工具调用内容不再铺满整行，而是与一般回答/思考气泡同样宽、同样左对齐，视觉上统一。
+工具卡片与回复气泡使用同一套宽度约束：`.tool-cards` 沿用 `.msg-row` 的居中 padding（`max(24px, calc((100% - 820px) / 2))`），`.tool-card` 设 `max-width: 76%` 与 `.bubble` 一致，使工具调用与回答/思考气泡同宽、同样左对齐。
 
 #### 3.6 上下文可观测性：`context:stats` 数据链路
 
@@ -251,14 +290,14 @@ export default function UnifiedDiff({ diff }: { diff: string }) {
 AgentLoop._emit_context_stats()
    │  kernel.events.emit("context:stats", {...})
    ▼
-TypedEventBus → TaskRunner 订阅 → asyncio.Queue
+TypedEventBus → TaskHandle 订阅 → asyncio.Queue
    ▼
 SSE /api/tasks/{id}/events  →  data: {"type":"context:stats", ...}
    ▼
 前端 ToolPanel 接收 → 更新「上下文情况」面板
 ```
 
-后端侧（第 17 课已实现）每轮推送：模型名、上下文窗口大小、本轮 `prompt_tokens`、累计 `cache_hit_tokens / cache_miss_tokens / cache_hit_rate`、压缩次数、压缩节省 Token、窗口占用比例 `usage_ratio`。TaskRunner 在转发前还会把任务内统计累加进会话级累计（`session` 段），因此面板同时展示"本次调用"与"会话累计"两个视角。
+后端侧（第 17 课已实现）每轮推送：模型名、上下文窗口大小、本轮 `prompt_tokens`、累计 `cache_hit_tokens / cache_miss_tokens / cache_hit_rate`、压缩次数、压缩节省 Token、窗口占用比例 `usage_ratio`。`TaskHandle` 在转发前还会把任务内统计累加进会话级累计（`session` 段），因此面板同时展示"本次调用"与"会话累计"两个视角。
 
 前端 `App.tsx` 的 SSE 处理只需加一个 case：
 
@@ -302,9 +341,9 @@ if (ctx.session && Object.keys(ctx.session).length > 0) {
 
 #### 3.7 多 Tab 工作台（对话 / 文件 Tab 系统）
 
-在基础功能完成后，我们做了一个重要的架构升级——从**单会话模型**升级为**多 Tab 工作台**，每个 Tab 可以是一个对话会话或一个打开的文件，Tab 可独立切换/关闭，数据隔离。
+最终的前端是一个**多 Tab 工作台**：Tab 可以是对话或文件，彼此独立切换和关闭；对话状态按会话隔离，历史会话按当前工作区展示。
 
-**为什么需要多 Tab？** 原来的架构里 `App.tsx` 只维护一个 `activeSessionId`，切换会话时直接把当前会话的 messages/streaming 等状态替换掉。这导致两个问题：切换回上一个会话时，它的滚动位置、流式状态全丢了；且无法同时打开一个文件查看器。
+**为什么需要多 Tab？** 对话和文件查看通常需要并行进行。Tab 只负责当前工作台中的打开项，持久化历史则由后端 `SessionStore` 负责，两者不混为一层。
 
 **Tab 数据结构**（`types.ts`）：
 
@@ -321,15 +360,14 @@ interface TabItem {
 }
 ```
 
-**多会话状态隔离**：每个 `chat` Tab 的独立状态（messages、streaming、running、stats 等）保存在 `chatStates: Record<sessionId, ChatSessionState>` Map 中。切换 Tab 时，`App.tsx` 把当前 Tab 的工作副本写回 Map，再从 Map 恢复目标 Tab 的状态——所以切换回来时滚动位置、流式内容、统计全部保留：
+**多会话状态隔离**：每个已绑定会话的 `chat` Tab 状态（messages、streaming、running、stats 等）保存在 `chatStates: Record<sessionId, ChatSessionState>` 中。新建但尚未发送消息的 Tab 没有 `sessionId`，只存在于前端，不会写入后端。
 
 ```typescript
-// App.tsx — 切换 Tab 时保存/恢复会话状态
-const saveCurrentChatState = () => {
-  const sid = activeSessionRef.current;
-  if (!sid) return;
+// App.tsx — 已绑定会话的状态按 sessionId 保存
+const patchChat = (sessionId: string, patch: Partial<ChatSessionState>) => {
   setChatStates(prev => ({
-    ...prev, [sid]: { messages, streaming, running, turn, stats, contextStats, error, pendingApproval, stalled }
+    ...prev,
+    [sessionId]: { ...(prev[sessionId] ?? EMPTY_CHAT), ...patch },
   }));
 };
 ```
@@ -340,7 +378,9 @@ const saveCurrentChatState = () => {
 
 **文件 Tab 的打开**：`Sidebar` 的目录树文件项增加 `onDoubleClick` 事件 → `App.tsx` 的 `openFileTab(filePath)` → 调用 `/api/fs/read` 读取文件内容 + git diff → 创建 `kind: "file"` 的 Tab（不显示 Composer / ToolPanel，只显示 FileViewer）。`FileViewer` 有 diff 时展示 `UnifiedDiff`（仅修改部分），无 diff 时展示普通文件内容（带行号）。
 
-**切项目时 Tab 清空**：切换项目（`selectProject`）时调用 `setChatStates({})` 清空所有会话状态，仅保留一个新会话 Tab。`openSessionTab` 确保同一个 session 不会重复开 Tab。
+**切项目时 Tab 清空**：切换项目时关闭当前流并清空工作副本，打开一个无 `sessionId` 的占位 Tab；侧边栏重新请求当前工作区的历史会话。`openSessionTab` 确保同一个 session 不会重复开 Tab。
+
+**会话生命周期**：点击「新建会话」或切换项目只创建占位 Tab。用户发送第一条消息时，前端才调用 `POST /api/sessions`，将返回的 ID 绑定到当前 Tab，再调用 `POST /api/chat`。没有用户消息的 session 不属于历史记录；后端列表接口会过滤并清理这类异常残留。会话标题默认取第一条用户消息，显式设置的 `metadata.name` 优先。
 
 #### 4. 多 LLM 配置界面 (`SettingsModal.tsx`)
 
@@ -366,7 +406,28 @@ const saveCurrentChatState = () => {
 - 测试连接按钮（真实 API 调用）
 - 保存配置按钮
 
-配置持久化在 `.lite-code/config.json` 的 `"llm"` 段，切换供应商即时生效（`AgentApp.close_adapter()` 重建适配器）。
+配置持久化在 `.lite-code/config.json` 的 `"llm"` 段。设置弹窗内部维护编辑态，点击保存后由后端写盘并重建适配器；只有保存成功后新的配置才用于后续任务。
+
+**设置弹窗的编辑态与关闭策略**：配置表单通常包含 API 请求、密码字段和多个动态模型条目，不能把异步请求的完成回调直接当成弹窗关闭信号。保存成功时应保留弹窗并显示结果，让用户继续检查或切换供应商；保存失败时也应保留当前编辑态并显示错误，避免用户重新输入配置。遮罩层适合阻止背景交互，不应默认承担关闭弹窗的行为；关闭应由明确的关闭按钮触发。这样可以避免 React 组件卸载导致未保存编辑丢失，也能让异步保存的状态反馈始终在当前上下文中可见。
+
+```tsx
+// SettingsModal：保存反馈属于弹窗内部状态
+const [saveResult, setSaveResult] = useState<string | null>(null);
+
+async function save() {
+  try {
+    await api.updateLLMConfig(activeProvider, providers);
+    setSaveResult("配置已保存");
+    onSaved(); // 只通知父组件刷新，不负责关闭弹窗
+  } catch (error) {
+    setSaveResult(`保存失败: ${String(error)}`);
+  }
+}
+
+return <div className="modal-overlay">
+  <div className="modal">{/* 只有明确的关闭按钮调用 onClose */}</div>
+</div>;
+```
 
 **上下文长度手动覆盖**：每个供应商可手填 `context_window`，留空则自动解析（`LLMRegistry.get_context_window` 四级优先级：① 手动覆盖 → ② models.dev → ③ 内置表 → ④ 128K 默认，见第 16 课 §5）。另有全局配置 `context_full_turns`（默认 2）控制策略 B 裁剪时保留的最近完整轮数——即第 3 课的 `keep_recent_full_turns`，在 `.lite-code/config.json` 的根级配置即可调。
 
@@ -414,7 +475,7 @@ new BrowserWindow({
 
 **Electron 启动加载页**（`electron/loading.html`）
 
-PyInstaller 打包的后端二进制首次解压需要 10-30s，如果等后端就绪再创建窗口，用户会看到一片空白。解决：窗口**立即创建**，显示内置加载页，后端就绪后自动跳转主界面。
+PyInstaller 后端需要加载 Python 运行时、依赖和应用配置；Windows 上还可能受到实时杀毒扫描影响。如果等后端就绪再创建窗口，用户会看到一片空白。解决：窗口**立即创建**，显示内置加载页，后端就绪后自动跳转主界面。
 
 ```html
 <!-- electron/loading.html（核心结构） -->
@@ -561,38 +622,34 @@ async def _stream():
             tasks.cleanup(task_id)
 ```
 
-#### 7. 一键打包 (`npm run package`)
+#### 7. 一键打包与 Windows 加速 (`npm run package`)
 
 ```bash
 npm run build:web                    # 构建 React 前端 → web/dist/
-node scripts/package-backend.mjs     # PyInstaller --onedir → release/backend/lite-code-backend/
+node scripts/package-backend.mjs     # PyInstaller --onedir，默认复用分析缓存
 node scripts/package.mjs             # macOS 完整打包：图标 → 后端 → .app → DMG
 ```
 
-**PyInstaller 模式：`--onedir` 优先**：早期版本用 `--onefile`（单文件），但每次打包需压缩+合并所有资源，耗时 2-3 分钟。`--onedir` 产出目录结构（`release/backend/lite-code-backend/lite-code-backend + _internal/`），打包速度提升 2-3x，启动也更快（免解压）。electron-builder 的 `extraResources` 用通配符 (`from: "release/backend/lite-code-backend*"`) 同时兼容单文件和目录：
+**PyInstaller 使用 `--onedir`**：产出目录结构（`release/backend/lite-code-backend/lite-code-backend + _internal/`），启动时不需要解压。常规构建不传 `--clean`，复用 `release/_build` 的分析缓存；需要完全重建时显式传 `--clean`：
 
 ```javascript
-// electron/main.js — 查找 onedir 结构，兼容旧版
+// electron/main.js — 查找 onedir 后端
 function resolvePython() {
   if (app.isPackaged) {
     const dir = path.join(process.resourcesPath, "litecode-bin", "lite-code-backend");
     const bundled = path.join(dir, process.platform === "win32" ? "lite-code-backend.exe" : "lite-code-backend");
     if (fs.existsSync(bundled)) return bundled;
-    // 兼容旧版单文件
-    const legacy = path.join(process.resourcesPath, "litecode-bin", "lite-code-backend");
-    if (fs.existsSync(legacy)) return legacy;
   }
   ...
 }
 ```
 
-**国内网络加速**：`pip install --no-build-isolation`（复用 venv 已有构建依赖，跳过隔离构建环境创建，`tree-sitter` 等原生包安装明显提速）；`npm ci` 替代 `npm install`（有 lockfile 时更快）。Windows 一键打包脚本 `scripts/build-windows.ps1` 内置了这些优化，并默认设置 npmmirror 镜像：
+**Windows 增量打包**：`scripts/build-windows.ps1` 会对 `pyproject.toml` 计算 SHA-256 指纹。依赖清单未变化时跳过 pip 安装；变化时使用 `--no-build-isolation` 安装。根目录和 `web/` 存在 lockfile 时使用 `npm ci`，依赖目录不存在才安装。默认复用 PyInstaller 缓存，发布构建才加 `-Clean`：
 
 ```powershell
-# build-windows.ps1 核心片段
-& $venvPip install --no-build-isolation -e ".[dev,package]"  # --no-build-isolation 加速
-$npmArgs = "install"; if (Test-Path package-lock.json) { $npmArgs = "ci" }
-npm $npmArgs                                                   # npm ci 更快
+# build-windows.ps1 用法
+.\scripts\build-windows.ps1             # 增量构建，默认复用缓存
+.\scripts\build-windows.ps1 -Clean      # 发布构建，清理 PyInstaller 分析缓存
 ```
 
 **macOS 打包脚本 `package.mjs` 带进度显示**：每步打印耗时 (`(x.xs)`)，让用户知道在哪一步——icon/后端/electron-builder/hdiutil：
@@ -607,21 +664,20 @@ npm $npmArgs                                                   # npm ci 更快
 [package] Step 3/4: Wrap DMG with hdiutil
 [7641] prepare... (0.2s)
 [7893] hdiutil create... (18.1s)
-[package] Done -> release/lite-code-0.8.0-rc0-arm64.dmg
+[package] Done -> release/lite-code-0.9.0rc-arm64.dmg
 ```
 
-**产物**（以 macOS 为例）：
+**产物**（以 macOS 为例，实际版本号来自 `package.json`）：
 ```
 release/
-├── lite-code-0.8.0-rc0-arm64.dmg      (约 120MB，安装包)
-├── lite-code-0.8.0-rc0-arm64-mac.zip  (约 110MB，便携版)
+├── lite-code-0.9.0rc-arm64.dmg        (安装包)
 └── mac-arm64/lite-code.app             (解包目录，可直接运行)
 ```
 
 关键工程点：
-- **后端进包**：`extraResources` 把 `release/backend` 目录复制到 `resources/litecode-bin/`，Electron 主进程通过 `resolvePython()` 优先使用内置二进制；
+- **后端进包**：`extraResources` 把 `release/backend/lite-code-backend` 复制到 `resources/litecode-bin/lite-code-backend`，Electron 主进程通过 `resolvePython()` 使用内置二进制；
 - **图标**：`scripts/app-icon.svg` 直接配置为 `win.icon`，electron-builder 自动栅格化为 ICO；
-- **加载页**：`--onedir` 免解压，启动比 `--onefile` 快 2-3x，loading.html 等待时间显著缩短。
+- **加载页**：`--onedir` 直接携带依赖目录，启动时无需解压，配合 loading.html 明确展示后端就绪进度。
 
 **开发模式**：`npm run dev`（concurrently 编排 Python Core + Vite + Electron，一行命令三步启动）
 
@@ -658,5 +714,6 @@ release/
 ```bash
 npm run dev      # 开发模式：Python Core(8787) + Vite(5173) + Electron 窗口
 npm start        # 生产模式：构建前端 → 自动拉起 Python Core → 窗口
-npm run package  # 打包：PyInstaller 后端 + electron-builder（Windows 出 NSIS 安装包）
+npm run package  # macOS：PyInstaller 后端 + electron-builder + DMG
+# Windows：.\scripts\build-windows.ps1（生成 NSIS 安装包）
 ```

@@ -261,7 +261,7 @@ class SystemPromptBuilder:
         return f"你是一个专业的 AI 软件工程师 Code Agent...\n### 环境信息\n- 操作系统: {os_name}\n- 当前工作目录: `{cwd}`\n### 可用工具\n{tools_summary}\n### 工作规则..."
 ```
 
-> **与第 3 课的关系**：第 3 课展示了"动态 System Prompt"的概念价值（环境感知），并讨论了它与缓存红线的张力；实战落地的最终选择是**静态骨架 + 工具按需获取**——`git_status` 等工具返回的信息永远比 System 里预埋的快照新鲜，而前缀稳定性保住了缓存命中（详见第 3 课「设计决策」与第 4 课「稳定前缀」）。
+> **与第 3 课的关系**：这里采用**任务级静态 System Prompt + 工具按需获取动态状态**。`git_status` 等工具返回的信息比预埋快照新鲜，同时稳定的 System 前缀能够保持缓存命中（详见第 3 课「设计决策」与第 4 课「稳定前缀」）。
 
 #### 4. AgentLoop 主循环代码 (`litecode/core/agent_loop.py`)
 

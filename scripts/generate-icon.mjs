@@ -3,6 +3,7 @@ import { execSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import sharp from "sharp";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const svg = path.join(root, "scripts", "app-icon.svg");
@@ -11,12 +12,15 @@ const iconset = path.join(workDir, "app-icon.iconset");
 const outDir = path.join(root, "release", "resources");
 const icns = path.join(outDir, "app-icon.icns");
 
+// 清理上一次失败留下的 iconset，保证重复打包时 sips 不会覆盖残留临时文件。
+fs.rmSync(workDir, { recursive: true, force: true });
+fs.rmSync(icns, { force: true });
 fs.mkdirSync(iconset, { recursive: true });
 fs.mkdirSync(outDir, { recursive: true });
 
-// 1. SVG -> 1024 PNG
+// 1. SVG -> 1024 PNG. sharp avoids sips' intermittent temporary-file rename failure.
 const bigPng = path.join(workDir, "icon-1024.png");
-execSync(`sips -s format png "${svg}" -z 1024 1024 --out "${bigPng}"`, { stdio: "inherit" });
+await sharp(svg).resize(1024, 1024).png().toFile(bigPng);
 
 // 2. Generate all sizes
 const sizes = [
@@ -32,7 +36,7 @@ const sizes = [
   [1024, "icon_512x512@2x.png"],
 ];
 for (const [px, name] of sizes) {
-  execSync(`sips -z ${px} ${px} "${bigPng}" --out "${path.join(iconset, name)}"`, { stdio: "inherit" });
+  await sharp(bigPng).resize(px, px).png().toFile(path.join(iconset, name));
 }
 
 // 3. iconset -> icns

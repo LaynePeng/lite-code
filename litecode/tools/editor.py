@@ -150,7 +150,11 @@ class EditorTools:
 
     async def execute(self, name: str, args: Dict[str, Any]) -> str:
         rel_path = args.get("filePath", "")
-        full_path = os.path.join(self.workspace, rel_path)
+        raw = os.path.expanduser(rel_path)
+        full_path = os.path.abspath(raw if os.path.isabs(raw) else os.path.join(self.workspace, raw))
+        inside = full_path == self.workspace or full_path.startswith(self.workspace + os.sep)
+        if not inside and args.get("_approved_external_access") != "write":
+            return "[Security Violation]: 项目外写入未获授权"
         if not os.path.exists(full_path):
             return f"[Edit Error]: 文件不存在: {rel_path}"
 

@@ -23,11 +23,13 @@ class FileSystemTools:
 
     # ------------------------------------------------------------ 安全路径
 
-    def resolve(self, rel_path: str) -> str:
-        """解析相对路径并强制限定在 workspace 内（防目录穿越）。"""
-        target = os.path.abspath(os.path.join(self.workspace, rel_path or "."))
+    def resolve(self, rel_path: str, access: str = "") -> str:
+        """解析路径；项目外路径必须由安全中间件注入本次授权。"""
+        raw = os.path.expanduser(rel_path or ".")
+        target = os.path.abspath(raw if os.path.isabs(raw) else os.path.join(self.workspace, raw))
         if not (target == self.workspace or target.startswith(self.workspace + os.sep)):
-            raise PermissionError(f"[Security Violation]: 路径穿越检测: {rel_path}")
+            if access not in {"read", "write"}:
+                raise PermissionError(f"[Security Violation]: 项目外路径未获授权: {rel_path}")
         return target
 
     # ------------------------------------------------------------ gitignore
@@ -101,19 +103,22 @@ class FileSystemTools:
     # ------------------------------------------------------------ 执行
 
     async def execute(self, name: str, args: Dict[str, Any]) -> str:
+        access = args.get("_approved_external_access", "")
         if name == "read_file":
-            return self._read_file(args)
-        if name == "write_file":
-            return self._write_file(args)
-        if name == "list_dir":
-            return self._list_dir(args)
-        if name == "file_tree":
-            return await asyncio.to_thread(self._file_tree, args)
-        raise ValueError(f"Unknown FileSystem Tool: {name}")
+            result = self._read_file(args, access)
+        elif name == "write_file":
+            result = self._write_file(args, access)
+        elif name == "list_dir":
+            result = self._list_dir(args, access)
+        elif name == "file_tree":
+            result = await asyncio.to_thread(self._file_tree, args)
+        else:
+            raise ValueError(f"Unknown FileSystem Tool: {name}")
+        return result
 
-    def _read_file(self, args: Dict[str, Any]) -> str:
+    def _read_file(self, args: Dict[str, Any], access: str = "") -> str:
         rel_path = args.get("filePath", "")
-        target = self.resolve(rel_path)
+        target = self.resolve(rel_path, access)
         if not os.path.exists(target):
             return f"[Error]: 文件不存在: {rel_path}"
         if os.path.isdir(target):
@@ -141,19 +146,24 @@ class FileSystemTools:
         note = f"\n... [输出截断，仅显示前 {TRUNCATE_LINES} 行]" if truncated else ""
         return f"File: {rel_path} (行 {start}-{min(end, start + TRUNCATE_LINES - 1)} / 共 {len(lines)} 行){note}\n{body}"
 
-    def _write_file(self, args: Dict[str, Any]) -> str:
+    def _write_file(self, args: Dict[str, Any], access: str = "") -> str:
         rel_path = args.get("filePath", "")
         content = args.get("content", "")
-        target = self.resolve(rel_path)
+        raw = os.path.expanduser(rel_path)
+        candidate = os.path.abspath(raw if os.path.isabs(raw) else os.path.join(self.workspace, raw))
+        inside = candidate == self.workspace or candidate.startswith(self.workspace + os.sep)
+        if not inside and access != "write":
+            raise PermissionError(f"[Security Violation]: 项目外写入未获授权: {rel_path}")
+        target = self.resolve(rel_path, access)
         os.makedirs(os.path.dirname(target), exist_ok=True)
         with open(target, "w", encoding="utf-8") as f:
             f.write(content)
         size = os.path.getsize(target)
         return f"[Success]: 已写入 {rel_path} ({size} bytes)"
 
-    def _list_dir(self, args: Dict[str, Any]) -> str:
+    def _list_dir(self, args: Dict[str, Any], access: str = "") -> str:
         rel_path = args.get("path") or "."
-        target = self.resolve(rel_path)
+        target = self.resolve(rel_path, access)
         if not os.path.isdir(target):
             return f"[Error]: 目录不存在: {rel_path}"
 

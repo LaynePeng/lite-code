@@ -4,16 +4,18 @@ from __future__ import annotations
 from typing import Any, Dict
 
 
-def make_sub_agent_handler(app):
+def make_sub_agent_handler(app, parent_events=None):
     async def _handler(args: Dict[str, Any]) -> str:
         task = args.get("taskDescription", "").strip()
         if not task:
             return "[Error]: taskDescription 不能为空。"
         role = args.get("roleType") or "general"
+        if role == "explore":
+            role = "explorer"
         if role not in ("explorer", "tester", "refactor", "general"):
             role = "general"
 
-        result = await app.sub_agent_runner.run_task(task, role=role)
+        result = await app.sub_agent_runner.run_task(task, role=role, parent_events=parent_events)
         status = "SUCCESS" if result["completed"] else "FAILED"
         return (
             f"[Sub-Agent 执行报告]\n"

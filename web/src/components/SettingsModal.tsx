@@ -31,12 +31,36 @@ export default function SettingsModal({
     }).catch(() => {});
   }, []);
 
-  const update = (pid: string, key: string, value: string | number | boolean | null) => {
+  const update = (pid: string, key: string, value: string | string[] | number | boolean | null) => {
     setEditing((e) => ({ ...e, [pid]: { ...(e[pid] || {}), [key]: value } }));
   };
 
   const providerMeta = providers.find((p) => p.id === activeProvider);
   const currentEdit = editing[activeProvider] || {};
+  const availableModels = (currentEdit.models as string[] | undefined) ?? providerMeta?.models ?? [];
+  const isCustom = activeProvider.startsWith("custom_");
+
+  const addCustomProvider = () => {
+    const id = `custom_${Date.now()}`;
+    const next: LLMProviderSettings = {
+      api_key: "", has_key: false, base_url: "", model: "", models: [],
+      temperature: 0.2, name: "自定义供应商",
+    };
+    setProviders((prev) => [...prev, {
+      id, name: next.name || id, kind: "openai", models: [], default_base_url: "",
+      has_key: false, model: "",
+    }]);
+    setEditing((prev) => ({ ...prev, [id]: next }));
+    setActiveProvider(id);
+  };
+
+  const removeCustomProvider = () => {
+    if (!isCustom) return;
+    const next = providers.filter((p) => p.id !== activeProvider);
+    setProviders(next);
+    setEditing((prev) => { const copy = { ...prev }; delete copy[activeProvider]; return copy; });
+    setActiveProvider(next[0]?.id || "deepseek");
+  };
 
   const handleTest = useCallback(async () => {
     if (!activeProvider) return;
@@ -67,6 +91,7 @@ export default function SettingsModal({
       }
       const newConfig = await api.updateLLMConfig(activeProvider, providersPayload);
       setConfig(newConfig);
+      setTestResult({ ok: true, message: "配置已保存" });
       onSaved();
     } catch (err) {
       setTestResult({ ok: false, message: (err as Error).message });
@@ -76,7 +101,7 @@ export default function SettingsModal({
   }, [activeProvider, editing, onSaved]);
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal-overlay">
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h2>⚙️ 设置</h2>
@@ -99,12 +124,21 @@ export default function SettingsModal({
                   </span>
                 </button>
               ))}
+              <button className="provider-btn" onClick={addCustomProvider}>＋ 自定义供应商</button>
             </div>
           </div>
 
           {providerMeta && (
             <div className="settings-section" key={activeProvider}>
               <h3>{providerMeta.name} 配置</h3>
+
+              {isCustom && (
+                <div className="form-group">
+                  <label>供应商名称</label>
+                  <input className="form-input" value={(currentEdit.name as string) || providerMeta.name}
+                    onChange={(e) => update(activeProvider, "name", e.target.value)} />
+                </div>
+              )}
 
               <div className="form-group">
                 <label>API Key</label>
@@ -139,11 +173,26 @@ export default function SettingsModal({
                     onChange={(e) => update(activeProvider, "model", e.target.value)}
                   />
                   <datalist id={`models-${activeProvider}`}>
-                    {providerMeta.models.map((m) => (
+                    {availableModels.map((m) => (
                       <option key={m} value={m} />
                     ))}
                   </datalist>
                 </div>
+              </div>
+
+              <div className="form-group">
+                <label>该供应商的模型列表（每行一个，可添加多个）</label>
+                <textarea
+                  className="form-input"
+                  rows={Math.min(6, Math.max(2, availableModels.length))}
+                  value={availableModels.join("\n")}
+                  onChange={(e) => update(
+                    activeProvider,
+                    "models",
+                    e.target.value.split("\n").map((m) => m.trim()).filter(Boolean),
+                  )}
+                />
+                <small>当前上方“模型”字段是实际调用的模型，模型列表用于快速切换和保留多个模型。</small>
               </div>
 
               <div className="form-group">
@@ -182,6 +231,7 @@ export default function SettingsModal({
                 <button className="btn-save-settings" onClick={handleSave} disabled={saving}>
                   {saving ? "保存中…" : "💾 保存配置"}
                 </button>
+                {isCustom && <button className="btn-test" onClick={removeCustomProvider}>删除供应商</button>}
               </div>
 
               {testResult && (

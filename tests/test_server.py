@@ -62,18 +62,28 @@ async def test_status_and_sessions(live_client):
     c, app, _ = live_client
     r = await c.get("/api/status")
     assert r.status_code == 200
-    assert r.json()["version"] == "0.8.1"
+    assert r.json()["version"] == "0.9.1rc0"
 
     r = await c.post("/api/sessions", json={"name": "会话A"})
     assert r.status_code == 200
     sid = r.json()["session_id"]
 
     r = await c.get("/api/sessions")
-    assert any(s["session_id"] == sid for s in r.json())
+    assert all(s["session_id"] != sid for s in r.json())
     r = await c.delete(f"/api/sessions/{sid}")
     assert r.status_code == 200
     r = await c.get("/api/sessions")
     assert all(s["session_id"] != sid for s in r.json())
+
+
+async def test_rapid_session_creation_does_not_overwrite(live_client):
+    c, _, _ = live_client
+    responses = await asyncio.gather(
+        c.post("/api/sessions", json={"name": "A"}),
+        c.post("/api/sessions", json={"name": "B"}),
+    )
+    ids = {r.json()["session_id"] for r in responses}
+    assert len(ids) == 2
 
 
 async def test_chat_sse_flow(live_client):

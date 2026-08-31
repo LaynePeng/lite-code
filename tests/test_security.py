@@ -1,5 +1,9 @@
 """安全卫士测试（对应第15课：三级风险 + 动态黑白名单 + 路径拦截）。"""
+import pytest
+
 from litecode.security.guard import SecurityGuard, ThreatLevel
+from litecode.llm.base import decode_utf8_incremental
+from litecode.tools.filesystem import FileSystemTools
 
 
 def test_high_risk_rm_rf():
@@ -84,3 +88,45 @@ def test_invalid_regex_ignored():
     guard = SecurityGuard()
     guard.apply_config({"high_risk_patterns": ["[invalid"]})
     assert guard.check_shell_command("anything").level == ThreatLevel.SAFE
+
+
+def test_incremental_utf8_keeps_complete_text_before_split_character():
+    text = "正在检查项目，然后调用工具"
+    raw = text.encode("utf-8")
+    first, pending = decode_utf8_incremental(b"", raw[:-1])
+    second, pending = decode_utf8_incremental(pending, raw[-1:])
+    assert first + second == text
+    assert pending == b""
+
+
+async def test_external_file_access_requires_matching_capability(tmp_path):
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    external = tmp_path / "outside.txt"
+    external.write_text("outside", encoding="utf-8")
+    tools = FileSystemTools(str(workspace))
+
+    with pytest.raises(PermissionError, match="项目外路径未获授权"):
+        await tools.execute("read_file", {"filePath": str(external)})
+
+    read = await tools.execute("read_file", {
+        "filePath": str(external),
+        "_approved_external_access": "read",
+        "withLineNumbers": False,
+    })
+    assert "outside" in read
+
+    with pytest.raises(PermissionError, match="项目外写入未获授权"):
+        await tools.execute("write_file", {
+            "filePath": str(external),
+            "content": "changed",
+            "_approved_external_access": "read",
+        })
+    assert external.read_text(encoding="utf-8") == "outside"
+
+    await tools.execute("write_file", {
+        "filePath": str(external),
+        "content": "changed",
+        "_approved_external_access": "write",
+    })
+    assert external.read_text(encoding="utf-8") == "changed"

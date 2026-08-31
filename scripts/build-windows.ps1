@@ -1,12 +1,13 @@
 ﻿# lite-code Windows packaging script (PowerShell): frontend build -> PyInstaller backend -> NSIS installer
-# Usage: .\scripts\build-windows.ps1 [-Insecure]
+# Usage: .\scripts\build-windows.ps1 [-Insecure] [-Clean]
 #   -Insecure  Skip TLS certificate validation (only for intranet/self-signed cert environments)
+#   -Clean     Clear PyInstaller analysis cache (use for a clean release build)
 #
 # Prerequisites:
 #   - Python 3.11+ (available as `python` on PATH)
 #   - Node.js 18+
 #   - First run needs network to download the Electron binary (npmmirror mirror is used by default in CN)
-param([switch]$Insecure)
+param([switch]$Insecure, [switch]$Clean)
 
 $ErrorActionPreference = "Stop"
 Set-Location (Join-Path $PSScriptRoot "..")
@@ -24,6 +25,7 @@ if ($Insecure) {
 function Invoke-Step([string]$Name, [scriptblock]$Block) {
     Write-Host "==> $Name"
     $global:LASTEXITCODE = 0
+    $timer = [Diagnostics.Stopwatch]::StartNew()
     # PS 5.1 下原生命令的 stderr 在 ErrorActionPreference=Stop 时会变成致命错误
     # （例如 pip 的升级提示），这里仅在步骤内临时降级，成功与否只看退出码
     $prevEap = $ErrorActionPreference
@@ -32,6 +34,8 @@ function Invoke-Step([string]$Name, [scriptblock]$Block) {
         & $Block
     } finally {
         $ErrorActionPreference = $prevEap
+        $timer.Stop()
+        Write-Host ("    elapsed: " + $timer.Elapsed.ToString("hh\:mm\:ss\.f"))
     }
     if ($LASTEXITCODE -ne 0) {
         Write-Host "!! $Name failed (exit $LASTEXITCODE)" -ForegroundColor Red
@@ -51,12 +55,21 @@ Invoke-Step "Prepare Python virtual environment" {
     }
 }
 
-# 加速策略：
-# - --no-build-isolation：复用 venv 已装的构建依赖，跳过每次安装的隔离构建环境创建（tree-sitter 等原生包明显提速）
-# - 有缓存时 pip 命中 wheel 缓存，不重复下载
-Invoke-Step "Install Python dependencies (.venv\Scripts\pip install --no-build-isolation -e .[dev,package])" {
-    & $venvPip install --no-build-isolation -e ".[dev,package]"
-    if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
+# 加速策略：依赖清单未变化时复用现有 venv，避免每次重新解析/安装原生依赖。
+$pythonFingerprint = (Get-FileHash (Join-Path $PWD "pyproject.toml") -Algorithm SHA256).Hash
+$pythonMarker = Join-Path $PWD ".venv\.lite-code-deps.sha256"
+$pythonDepsChanged = $true
+if (Test-Path $pythonMarker) {
+    $pythonDepsChanged = ((Get-Content $pythonMarker -Raw).Trim() -ne $pythonFingerprint)
+}
+if ($pythonDepsChanged) {
+    Invoke-Step "Install Python dependencies (.venv\Scripts\pip install --no-build-isolation -e .[dev,package])" {
+        & $venvPip install --no-build-isolation -e ".[dev,package]"
+        if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
+        Set-Content -Path $pythonMarker -Value $pythonFingerprint -NoNewline
+    }
+} else {
+    Write-Host "==> Python dependencies unchanged, skip pip install"
 }
 
 # ------------------------------------------------------------ Frontend dependencies
@@ -85,7 +98,11 @@ Invoke-Step "Build frontend (npm run build:web)" {
 # ------------------------------------------------------------ Backend binary
 
 Invoke-Step "Package Python backend (PyInstaller)" {
-    node scripts/package-backend.mjs
+    if ($Clean) {
+        node scripts/package-backend.mjs --clean
+    } else {
+        node scripts/package-backend.mjs
+    }
 }
 
 # ------------------------------------------------------------ electron-builder NSIS

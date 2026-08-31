@@ -132,6 +132,16 @@ function spawnLocalCore(workspace) {
     if (workspace) args.push("--workspace", workspace);
     const env = {
       ...process.env,
+      // Finder 启动 Electron 时不会继承 shell PATH；覆盖 Homebrew/MacPorts
+      // 等常见 ripgrep 安装位置，Python 后端也会继续使用绝对路径探测。
+      PATH: [
+        process.env.PATH || "",
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/opt/local/bin",
+        path.join(process.env.HOME || "", ".cargo/bin"),
+        path.join(process.env.HOME || "", ".local/bin"),
+      ].filter(Boolean).join(path.delimiter),
       LITECODE_SPAWNED: "1",
     };
 

@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import sys
+import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Request
@@ -19,7 +20,7 @@ from .tasks import TaskManager
 
 logger = logging.getLogger("litecode.server")
 
-VERSION = "0.8.1"
+VERSION = "0.9.1rc0"
 
 
 # ---------------------------------------------------------------- 请求模型
@@ -88,7 +89,7 @@ class TokenAuth:
 
 
 def _session_title(snapshot: dict) -> str:
-    """从会话消息推导标题：优先元数据 name，其次首条用户消息。"""
+    """从会话消息推导标题：优先用户自定义 name，其次首条用户消息，空会话兜底。"""
     meta = snapshot.get("metadata") or {}
     if meta.get("name"):
         return meta["name"]
@@ -96,7 +97,7 @@ def _session_title(snapshot: dict) -> str:
         if m.get("role") == "user":
             text = (m.get("content") or "").strip().replace("\n", " ")
             return text[:40] or "未命名会话"
-    return "未命名会话"
+    return "新会话"
 
 
 def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
@@ -225,13 +226,18 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
         for s in snapshots:
             # 按 workspace 过滤：session 的 metadata.workspace 与当前 workspace 匹配
             s_ws = (s.get("metadata") or {}).get("workspace", "")
-            if workspace and s_ws != workspace:
+            # 旧版本 session 没有 workspace 元数据：保留可见，避免升级后历史消失。
+            if workspace and s_ws and os.path.abspath(s_ws) != os.path.abspath(workspace):
+                continue
+            messages = s.get("messages", [])
+            if not any(m.get("role") == "user" for m in messages):
+                # 列表接口必须是纯读取；创建与首条消息之间存在短暂空窗。
                 continue
             result.append({
                 "session_id": s.get("session_id"),
                 "created_at": s.get("created_at"),
                 "updated_at": s.get("updated_at"),
-                "message_count": len(s.get("messages", [])),
+                "message_count": len(messages),
                 "title": _session_title(s),
                 "metadata": s.get("metadata", {}),
             })
@@ -242,11 +248,15 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
         _check_auth(request)
         import time as _time
 
-        session_id = f"session_{int(_time.time() * 1000)}"
-        # metadata 记录 workspace，用于按项目过滤会话列表
-        metadata = {"name": payload.name or session_id}
-        if payload.workspace:
-            metadata["workspace"] = payload.workspace
+        # 毫秒时间戳在快速连续创建会话时会碰撞，导致新会话覆盖旧会话。
+        session_id = f"session_{uuid.uuid4().hex}"
+        # metadata 记录 workspace，用于按项目过滤会话列表；name 仅在显式提供时保存
+        metadata: Dict[str, Any] = {}
+        if payload.name:
+            metadata["name"] = payload.name
+        workspace = payload.workspace or app.workspace
+        if workspace:
+            metadata["workspace"] = workspace
         app.session_store.save(session_id, [], metadata)
         return {"session_id": session_id}
 

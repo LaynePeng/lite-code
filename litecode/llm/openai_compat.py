@@ -155,10 +155,13 @@ class OpenAICompatAdapter(BaseLLMAdapter):
                 if not delta:
                     continue
 
-                if delta.get("content"):
-                    full_content += delta["content"]
+                # 不同 OpenAI 兼容供应商对思考增量使用不同字段名。
+                # 工具调用前的内容也要转发，否则 UI 只会显示零散片段。
+                stream_content = delta.get("content") or delta.get("reasoning_content") or delta.get("reasoning") or delta.get("thinking")
+                if stream_content:
+                    full_content += stream_content
                     if events:
-                        await events.emit("llm:stream", {"chunk": delta["content"]})
+                        await events.emit("llm:stream", {"chunk": stream_content})
 
                 for tc in delta.get("tool_calls") or []:
                     idx = tc.get("index", 0)
@@ -174,6 +177,9 @@ class OpenAICompatAdapter(BaseLLMAdapter):
                     if fn.get("arguments"):
                         target.arguments += fn["arguments"]
 
+        # 响应没有 [DONE] 时也不能静默丢掉最后一个不完整的 UTF-8 字符。
+        if byte_buffer:
+            full_content += byte_buffer.decode("utf-8", errors="replace")
         return full_content, self._finalize_tool_calls(tool_calls_map), usage
 
     @staticmethod
