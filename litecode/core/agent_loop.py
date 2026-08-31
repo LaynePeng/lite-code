@@ -37,6 +37,7 @@ class AgentLoop:
         context_manager: Optional[ContextManager] = None,
         max_steps: int = 25,
         tool_timeout: float = 120.0,
+        llm_timeout: float = 180.0,
         token_budget: int = 48000,
         pricing: Optional[Dict[str, float]] = None,
         auto_approve: bool = False,
@@ -49,6 +50,7 @@ class AgentLoop:
         self.context_manager = context_manager or ContextManager(token_budget)
         self.max_steps = max_steps
         self.tool_timeout = tool_timeout
+        self.llm_timeout = llm_timeout
         self.auto_approve = auto_approve
         self.pricing = pricing or {"input_per_mtok": 2.0, "output_per_mtok": 8.0}
         self.context_window = context_window or 128_000
@@ -153,9 +155,15 @@ class AgentLoop:
 
                 # D. 调用 LLM（流式，内部 emit llm:stream）
                 try:
-                    content, tool_calls, usage = await self.adapter.chat_stream(
-                        processed, tools, self.kernel.events
+                    content, tool_calls, usage = await asyncio.wait_for(
+                        self.adapter.chat_stream(processed, tools, self.kernel.events),
+                        timeout=self.llm_timeout,
                     )
+                except asyncio.TimeoutError:
+                    exc = TimeoutError(f"LLM 请求超过 {self.llm_timeout}s，任务已自动终止")
+                    logger.warning("[AgentLoop] %s", exc)
+                    messages.append(Message(role="assistant", content=f"[LLM Error]: {exc}"))
+                    return await self._finish(f"[LLM Error]: {exc}", messages, stats, store_snapshot)
                 except Exception as exc:
                     logger.exception("[AgentLoop] LLM 调用失败")
                     messages.append(Message(role="assistant", content=f"[LLM Error]: {exc}"))

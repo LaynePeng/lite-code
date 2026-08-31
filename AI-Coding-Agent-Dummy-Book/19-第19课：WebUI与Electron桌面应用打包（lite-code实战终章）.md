@@ -4,7 +4,7 @@
 
 1. **FastAPI 服务层**：REST API + SSE 流式推送，连接前后端；
 2. **React 现代化 Web UI**：流式 Markdown、工具调用卡片、审批弹窗、会话/文件树/成本面板；
-3. **Electron 桌面外壳**：自动拉起 Python Core、窗口管理、"打开项目"切换工作区；
+3. **Electron 桌面外壳**：自动拉起 Python Core、窗口管理、按窗口打开项目；
 4. **多 LLM 配置界面**：DeepSeek / OpenAI / Anthropic / 通义千问等多供应商切换；
 5. **三种运行形态**：本地桌面应用 / 远程 Core / 纯浏览器访问；
 6. **一键打包发布**：PyInstaller 后端 + electron-builder 出 .app/.dmg。
@@ -30,7 +30,7 @@
 ```
 
 三种运行形态：
-1. **本地桌面**：`npm start` 或 `npm run dev`，Electron 自动 spawn Python Core
+1. **本地桌面**：`npm start` 或 `npm run dev`，Electron 为每个本地项目窗口自动 spawn 独立 Python Core
 2. **远程 Core**：`~/.lite-code/client.json` 配置 `coreUrl`，窗口直连远程服务器
 3. **纯浏览器**：`python -m litecode serve` 后访问 `http://127.0.0.1:8787`
 
@@ -129,6 +129,40 @@ function onStream(chunk: string) {
 ```
 
 工具开始、工具完成、轮次切换等事件也必须从同一个 ref 读取最新对象，不能分别从 React state 读取，否则工具卡片更新仍可能把思考文本回退到旧版本。任务结束时，再使用后端完整消息或当前 ref 快照固化最终内容。
+
+**流式工作时间线：不要把文本和工具拆成两个列表**。如果始终把“思考文本”渲染在工具列表上方，模型在工具执行前后的输出就会发生视觉跳位。实时副本应保存有序的工作项：文本片段和工具项共用一个 `items` 数组；文本 chunk 追加到末尾文本项，工具开始时插入工具项，工具完成时按 `id` 更新原项。历史消息也使用同样的顺序构建，这样实时视图和固化后的视图保持一致：
+
+```tsx
+type WorkItem =
+  | { type: "text"; id: string; content: string }
+  | { type: "tool"; id: string; card: ToolCardInfo }
+  | { type: "activity"; id: string; tools: ToolCardInfo[] };
+
+// 文本 → 工具 → 文本会严格保持这个顺序
+const items = [
+  { type: "text", id: "a", content: "先检查项目结构" },
+  { type: "tool", id: "b", card: runningTool },
+  { type: "text", id: "c", content: "检查完成，开始修改" },
+];
+```
+
+普通工具项默认压缩为单行 activity，连续的 `read_file`、`search_code`、`list_dir` 等调用可以合并显示；文件修改 diff、异常和取消事件再使用展开卡片。这个分层同时解决了信息密度和可追溯性问题。
+
+**SSE 背压与终止事件优先级**：事件生产速度可能高于浏览器消费速度，因此任务队列必须定义丢弃策略。中间的文本增量、进度和普通工具状态可以丢弃旧帧或合并；`task:done`、`task:error` 等终止事件不能丢弃，也不能因为队列已满而阻塞任务收尾。前端只有收到终止事件，才能清理运行状态、关闭流并恢复输入控件。
+
+```python
+def forward(event):
+    if queue.full():
+        queue.get_nowait()       # 丢弃旧的中间事件
+    queue.put_nowait(event)
+
+async def finish():
+    while queue.full():
+        queue.get_nowait()
+    queue.put_nowait({"type": "task:done", "data": result})
+```
+
+实际实现还应对 `task:error` 使用相同的终止事件优先级，并在任务 finally 阶段发送 SSE 结束哨兵。这样网络断连、事件突发或 UI 暂时变慢时，任务仍能最终收敛。
 
 这个原则也适用于工具参数增量、日志流、进度事件等所有高频 SSE 数据：**可变的实时累积数据放在 ref，React state 保存可渲染快照**。
 
@@ -241,7 +275,7 @@ function buildTurns(messages) {
 
 **单换行与表格美化**：通过 `remark-breaks` 插件让 Markdown 单换行（`\n`）渲染为 `<br>`，步骤性输出自然分行。表格加 `display: block + overflow-x: auto`，超宽表格横向滚动。
 
-**Session 首句标题**：会话标题取首条用户消息的前 40 字；如果 metadata 中有显式名称则优先使用，空会话显示为“新会话”。没有用户消息的 session 不进入历史列表。
+**Session 首句标题**：会话标题取首条用户消息的前 40 字；如果 metadata 中有显式名称则优先使用，空会话显示为“新会话”。没有用户消息的 session 不进入历史列表，但列表接口应保持只读，不应在查询时删除尚未完成初始化的 session。
 
 **Build/Plan 前端切换**：`Composer.tsx` 加入 Agent 选择栏，显示 Build / Plan 两个按钮，当前选中的高亮。右侧显示 `Tab` 小标签提示快捷键。
 
@@ -372,19 +406,41 @@ const patchChat = (sessionId: string, patch: Partial<ChatSessionState>) => {
 };
 ```
 
+**窗口、项目与 Tab 的边界**：项目不是 Tab 的替代概念。一个窗口是独立的工作台，内部可同时包含多个会话 Tab 和文件 Tab；同一个项目也可以在多个窗口中打开。桌面本地模式为每个窗口启动独立 Core，因此不同窗口的任务、流式事件和审批状态不会互相阻塞。即使多个窗口指向同一 workspace，它们也应保持各自的 Tab 工作副本；共享的是项目文件和可见的会话历史，而不是运行中的任务状态。
+
+**为什么不在单个 Core 内热切换 workspace**：`AgentApp.workspace`、工具实例、会话存储和任务管理器都依赖当前工作目录。一个全局 Core 被多个窗口共享时，任一窗口切换 workspace 都会改变其他窗口正在运行任务的文件根目录、文件树和会话筛选条件。正确边界是“窗口拥有 Core”：打开项目时创建新窗口和新的随机端口 Core；关闭窗口时只终止该窗口的子进程。项目相同也不去重，以便用户在同一代码库中并行进行审查、实现和测试。
+
+```javascript
+// Electron 主进程：BrowserWindow -> 独立本地 Core
+const localInstances = new Map();
+
+async function openLocalWorkspace(workspace) {
+  const window = createWindow(loadingUrl);
+  const instance = await spawnLocalCore(workspace);
+  localInstances.set(window, instance);
+  window.once("closed", () => {
+    localInstances.delete(window);
+    instance.child.kill("SIGTERM");
+  });
+  window.loadURL(instance.url);
+}
+```
+
+这种隔离不等于并发写入互斥：两个窗口同时修改同一个文件时，仍然遵循文件系统的最后写入者覆盖规则。对同一项目开展并行工作时，应将任务分配到不同文件或通过 Git diff、测试和代码审查来协调修改。
+
 **TabBar 组件**：水平 Tab 栏，左侧显示 Tab 列表（图标 + 标题），每个 Tab 可关闭（✕），至少保留一个 Tab。点击 Tab 切换时调用 `closeStream()` + `setActiveTabId(id)`，`activeTab` 通过 `useMemo` 从 `tabs` 和 `activeTabId` 实时计算得出。
 
 **关键坑：`.drag-region` 覆盖层**：Electron 无边框窗口的拖拽区（`position: fixed; height: 38px; z-index: 100`）正好盖在 `.main` 顶部的 TabBar 上，导致所有点击被拦截。解决：`.main` 加 `padding-top: 38px`，让 TabBar 从拖拽区下方开始。
 
 **文件 Tab 的打开**：`Sidebar` 的目录树文件项增加 `onDoubleClick` 事件 → `App.tsx` 的 `openFileTab(filePath)` → 调用 `/api/fs/read` 读取文件内容 + git diff → 创建 `kind: "file"` 的 Tab（不显示 Composer / ToolPanel，只显示 FileViewer）。`FileViewer` 有 diff 时展示 `UnifiedDiff`（仅修改部分），无 diff 时展示普通文件内容（带行号）。
 
-**切项目时 Tab 清空**：切换项目时关闭当前流并清空工作副本，打开一个无 `sessionId` 的占位 Tab；侧边栏重新请求当前工作区的历史会话。`openSessionTab` 确保同一个 session 不会重复开 Tab。
+**打开项目与 Tab**：在本地桌面模式下，“打开项目”创建新的项目窗口，而不会清空、重载或切换原窗口的 Tab。新窗口拥有自己的占位会话 Tab、文件 Tab 列表和工作副本；原窗口继续保留全部会话/文件 Tab。`openSessionTab` 只在同一窗口内确保同一个 session 不重复开 Tab。
 
-**会话生命周期**：点击「新建会话」或切换项目只创建占位 Tab。用户发送第一条消息时，前端才调用 `POST /api/sessions`，将返回的 ID 绑定到当前 Tab，再调用 `POST /api/chat`。没有用户消息的 session 不属于历史记录；后端列表接口会过滤并清理这类异常残留。会话标题默认取第一条用户消息，显式设置的 `metadata.name` 优先。
+**会话生命周期**：点击「新建会话」或切换项目只创建占位 Tab。用户发送第一条消息时，前端才调用 `POST /api/sessions`，将返回的 ID 绑定到当前 Tab，再调用 `POST /api/chat`。没有用户消息的 session 不进入历史列表，但列表接口保持只读，不负责删除尚未完成初始化的 session。会话标题默认取第一条用户消息，显式设置的 `metadata.name` 优先。
 
 #### 4. 多 LLM 配置界面 (`SettingsModal.tsx`)
 
-支持 7 个预置供应商 + 自定义：
+支持多个预置供应商和任意数量的自定义供应商实例：
 
 | 供应商 | ID | 类型 | 默认端点 |
 |---|---|---|---|
@@ -394,13 +450,14 @@ const patchChat = (sessionId: string, patch: Partial<ChatSessionState>) => {
 | 通义千问 | `qwen` | OpenAI 兼容 | `https://dashscope.aliyuncs.com/compatible-mode/v1` |
 | 智谱 GLM | `glm` | OpenAI 兼容 | `https://open.bigmodel.cn/api/paas/v4` |
 | Anthropic Claude | `anthropic` | Anthropic 原生 | `https://api.anthropic.com/v1` |
-| 自定义 | `custom` | OpenAI 兼容 | 用户输入 |
+| 自定义实例 | `custom_*` | OpenAI 兼容 | 用户输入 |
 
 配置界面功能：
 - 供应商选择器（网格按钮，标记已配置/未配置）
 - API Key 密码输入（脱敏显示）
 - Base URL 编辑
 - 模型下拉选择 + 自定义输入（`<datalist>`）
+- 新增多个自定义供应商，每个实例独立保存名称、Key、URL 和模型列表
 - Temperature 滑块
 - **上下文长度 tokens 输入**（留空自动：models.dev 同步 / 内置表兜底）
 - 测试连接按钮（真实 API 调用）
@@ -445,17 +502,16 @@ if (process.env.LITECODE_DEV_URL) {
   injectRemoteToken(config.token);
   createWindow(config.coreUrl);
 } else {
-  // 形态3：本地桌面 —— spawn Python Core
-  const { url } = await spawnLocalCore();
-  createWindow(url);
+  // 形态3：本地桌面 —— 每个窗口绑定独立 Python Core
+  await openLocalWorkspace(defaultWorkspace);
 }
 ```
 
 **关键特性**：
 - `titleBarStyle: "hiddenInset"` 无边框窗口 + 红绿灯避开侧边栏
 - `sandbox: true` + `contextIsolation: true` + `preload.js` 最小化安全桥
-- `dialog.showOpenDialog` + **热切换工作区**：选择目录后调用后端 `POST /api/workspace` 让当前进程切换，不重启后端（毫秒级）；失败才回退重启进程
-- 60s 后端启动超时兜底，`will-quit` 时 SIGTERM 回收后端进程
+- `dialog.showOpenDialog` + **新项目窗口**：选择目录后创建新的 BrowserWindow，并为它启动独立 Core；原窗口不重载、不切换 workspace
+- 60s 后端启动超时兜底；每个窗口关闭时 SIGTERM 回收它自己的 Core，应用退出时回收所有剩余 Core
 - 远程模式支持 Bearer Token 注入（`session.webRequest.onBeforeSendHeaders`）
 
 **窗口配置**：
@@ -505,10 +561,9 @@ PyInstaller 后端需要加载 Python 运行时、依赖和应用配置；Window
 const loadingUrl = `file://${path.join(__dirname, "loading.html")}`;
 createWindow(loadingUrl);
 
-const { url } = await spawnLocalCore();    // 后端可能耗时 30s
-if (mainWindow && !mainWindow.isDestroyed()) {
-  mainWindow.loadURL(url);                 // 就绪后跳转主界面
-}
+const instance = await spawnLocalCore(workspace); // 后端可能耗时 30s
+localInstances.set(window, instance);
+window.loadURL(instance.url);                      // 就绪后跳转主界面
 ```
 
 **渲染进程崩溃自动恢复**（`electron/main.js`）
@@ -573,7 +628,16 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
 
 **任务卡死检测**（`App.tsx`）
 
-LLM 调用可能超时（120s）或网络中断。跟踪 SSE 最后事件时间戳，超过 45s 无响应时显示黄色警告横幅 + 停止按钮：
+LLM 调用可能超时或网络中断。传输层的 read timeout 只表示一段时间没有收到字节；如果服务端持续发送零碎数据，它不会限制整轮请求的总时长。因此 AgentLoop 还需要独立的业务硬超时（例如 `llm_timeout = 180s`）：
+
+```python
+content, tool_calls, usage = await asyncio.wait_for(
+    adapter.chat_stream(messages, tools, events),
+    timeout=llm_timeout,
+)
+```
+
+硬超时触发后应写入明确的错误消息，并发送 `task:error` 或 `task:done`，确保前端不会永久保持运行状态。前端还可以跟踪 SSE 最后事件时间戳，超过 45s 无事件时显示黄色警告横幅和停止按钮：
 
 ```typescript
 const lastEventTimeRef = useRef<number>(Date.now());

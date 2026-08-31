@@ -38,10 +38,26 @@ class TaskHandle:
         self.subscription = None
 
     def _forward_event(self, data: Any) -> None:
+        event_type = data.get("type") if isinstance(data, dict) else ""
+        terminal = event_type in {"task:done", "task:error"}
         try:
             self.queue.put_nowait(data)
         except asyncio.QueueFull:
-            logger.warning("[Task %s] SSE 队列溢出，丢弃事件", self.task_id)
+            # 高频中间事件可以丢弃旧事件，但终止事件必须进入队列。
+            try:
+                if terminal:
+                    while True:
+                        self.queue.get_nowait()
+                        try:
+                            self.queue.put_nowait(data)
+                            break
+                        except asyncio.QueueFull:
+                            continue
+                else:
+                    self.queue.get_nowait()
+                    self.queue.put_nowait(data)
+            except (asyncio.QueueEmpty, asyncio.QueueFull):
+                logger.warning("[Task %s] SSE 队列溢出，丢弃事件", self.task_id)
 
     def _subscribe_events(self) -> None:
         async def _listener(event_name: str, payload: Any) -> None:
@@ -73,7 +89,16 @@ class TaskHandle:
         finally:
             self.running = False
             self.done = True
-            await self.queue.put(None)  # SSE 结束哨兵
+            # 结束哨兵必须送达，否则客户端会一直处于运行状态。
+            while True:
+                try:
+                    self.queue.put_nowait(None)
+                    break
+                except asyncio.QueueFull:
+                    try:
+                        self.queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
 
     def stop(self) -> None:
         """先置协作式中止信号，再强杀挂起的 asyncio 任务（LLM 流卡住时靠它解套）。"""

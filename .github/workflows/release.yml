@@ -1,0 +1,157 @@
+name: Release Desktop Apps
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-arm64
+            os: macos-14
+            artifact: macos-arm64
+            command: npm run package -- --clean
+            shell: bash
+          - platform: windows-x64
+            os: windows-2022
+            artifact: windows-x64
+            command: .\scripts\build-windows.ps1 -Clean
+            shell: pwsh
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Verify release version
+        shell: bash
+        run: |
+          expected="${GITHUB_REF_NAME#v}"
+          npm_version="$(node -p "require('./package.json').version")"
+          if [[ "$expected" != "${npm_version//-rc./rc}" && "$expected" != "$npm_version" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match package.json version ${npm_version}"
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Python packaging dependencies
+        if: matrix.platform == 'macos-arm64'
+        shell: bash
+        run: python -m venv .venv && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -e ".[dev,package]"
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install frontend dependencies
+        run: npm --prefix web ci
+
+      - name: Build package
+        shell: ${{ matrix.shell }}
+        run: ${{ matrix.command }}
+
+      - name: Collect macOS artifacts
+        if: matrix.platform == 'macos-arm64'
+        shell: bash
+        run: mkdir -p dist && cp release/*.dmg dist/
+
+      - name: Collect Windows artifacts
+        if: matrix.platform == 'windows-x64'
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force dist | Out-Null; Copy-Item release\*.exe dist\
+
+      - name: Upload packaged artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download macOS package
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-arm64
+          path: dist
+
+      - name: Download Windows package
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-x64
+          path: dist
+
+      - name: Build release notes
+        id: notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          previous="$(gh release list --limit 100 --json tagName --jq '.[].tagName' | grep -v "^${tag}$" | head -n 1 || true)"
+          {
+            echo "# lite-code ${tag}"
+            echo
+            echo "## Highlights"
+            echo "- Multi-window local desktop mode: every project window has an isolated Python Core, task stream, approval state, and workspace."
+            echo "- The same project can be opened in multiple windows; each window retains its own chat and file tabs."
+            echo "- Tool activity timeline: routine reads/searches are compact, while file diffs, errors, and cancelled actions retain detailed cards."
+            echo "- More reliable streaming: UTF-8-safe text accumulation, SSE terminal-event delivery, and a per-turn LLM hard timeout."
+            echo "- Multi-provider model settings: multiple independent custom OpenAI-compatible providers and model lists per provider."
+            echo "- External-path access uses separate read and write approvals."
+            echo "- Improved session persistence, project filtering, ripgrep discovery, and configuration modal stability."
+            echo
+            echo "## Packages"
+            echo "- macOS Apple Silicon: \\`*.dmg\\`"
+            echo "- Windows x64: \\`*.exe\\`"
+            if [ -n "$previous" ]; then
+              echo
+              echo "## Changes since ${previous}"
+              git log --pretty=format:'- %s (%h)' "${previous}..${tag}"
+            else
+              echo
+              echo "## Initial automated release"
+              echo "This is the first GitHub Release created by the automated workflow; the highlights above list the complete current feature set."
+            fi
+          } > RELEASE_NOTES.md
+
+      - name: Create release and upload packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          prerelease_args=()
+          if [[ "$GITHUB_REF_NAME" == *rc* || "$GITHUB_REF_NAME" == *alpha* || "$GITHUB_REF_NAME" == *beta* ]]; then
+            prerelease_args+=(--prerelease)
+          fi
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --title "lite-code ${GITHUB_REF_NAME}" \
+            --notes-file RELEASE_NOTES.md "${prerelease_args[@]}"

@@ -93,6 +93,7 @@ class SubAgentRunner:
             session_store=None,  # 子 Agent 不落盘
             max_steps=max_steps,
             tool_timeout=float(self.app.config.get("tool_timeout", 120)),
+            llm_timeout=float(self.app.config.get("llm_timeout", 180)),
             token_budget=int(self.app.config.get("token_budget", 48000)) // 2,
             auto_approve=bool(self.app.config.get("auto_approve", False)),
         )

@@ -4,7 +4,7 @@ import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { DiffPre, DiffStats, isFileDiff } from "./FileDiff";
-import type { Msg, ToolCardInfo } from "../types";
+import type { Msg, ToolCardInfo, WorkItem } from "../types";
 
 // ---------------------------------------------------------------- 渲染助手
 
@@ -44,30 +44,27 @@ function Markdown({ text }: { text: string }) {
 // ---------------------------------------------------------------- 工具卡片
 
 function ToolCard({ card }: { card: ToolCardInfo }) {
-  // 文件修改（diff）卡片默认展开，其他工具默认收起
-  const [open, setOpen] = useState(() => isFileDiff(card.result ?? ""));
-  const statusClass =
-    card.status === "running" ? "running" : card.status === "done" ? "done" : "cancelled";
+  const important = isFileDiff(card.result ?? "") || card.status === "error" || card.status === "cancelled";
+  // 只有 diff / 异常默认展开；普通调用保持为紧凑的一行
+  const [open, setOpen] = useState(() => important);
 
-  // 实时卡片结果到达（tool:after_execute 携带 result）后自动展开 diff
   useEffect(() => {
-    if (isFileDiff(card.result ?? "")) setOpen(true);
-  }, [card.result]);
+    if (isFileDiff(card.result ?? "") || card.status === "error" || card.status === "cancelled") setOpen(true);
+  }, [card.result, card.status]);
+
+  const statusClass = card.status === "running" ? "running" : card.status;
+  const argsPreview = typeof card.args === "string"
+    ? card.args
+    : JSON.stringify(card.args) ?? "";
 
   return (
-    <div className={`tool-card ${statusClass}`}>
+    <div className={`tool-card ${statusClass} ${important ? "tool-card-important" : "tool-card-compact"}`}>
       <button className="tool-card-header" onClick={() => setOpen(!open)}>
         <ToolIcon name={card.name} />
         <span className="tool-name">{card.name}</span>
-        <span className="tool-args-preview">
-          {typeof card.args === "string" ? card.args.slice(0, 80) : JSON.stringify(card.args).slice(0, 80)}
-        </span>
+        <span className="tool-args-preview">{argsPreview.slice(0, 120)}</span>
         {card.status === "running" && <span className="tool-status running">运行中…</span>}
-        {card.status === "done" && (
-          <span className="tool-status done">
-            ✓ {card.durationMs !== undefined ? `${card.durationMs}ms` : "完成"}
-          </span>
-        )}
+        {card.status === "done" && <span className="tool-status done">✓ {card.durationMs !== undefined ? `${card.durationMs}ms` : "完成"}</span>}
         {card.status === "cancelled" && <span className="tool-status cancelled">已取消</span>}
         {card.status === "error" && <span className="tool-status error">执行异常</span>}
         <span className="tool-chevron">{open ? "▾" : "▸"}</span>
@@ -78,15 +75,60 @@ function ToolCard({ card }: { card: ToolCardInfo }) {
             <div className="tool-block-label">参数</div>
             <pre>{JSON.stringify(card.args, null, 2)}</pre>
           </div>
-          {card.result && (
-            <div className="tool-block">
-              <div className="tool-block-label">结果</div>
-              <DiffStats text={card.result} />
-              <DiffPre text={card.result} />
-            </div>
-          )}
+          {card.result && <div className="tool-block"><div className="tool-block-label">结果</div><DiffStats text={card.result} /><DiffPre text={card.result} /></div>}
         </div>
       )}
+    </div>
+  );
+}
+
+function ToolActivity({ tools }: { tools: ToolCardInfo[] }) {
+  return (
+    <div className="tool-activity" title={tools.map((tool) => tool.name).join(" · ")}>
+      <span className="tool-activity-label">工具</span>
+      {tools.slice(-8).map((tool) => (
+        <span className={`tool-activity-item ${tool.status}`} key={tool.id}>
+          <ToolIcon name={tool.name} />
+          <span>{tool.name}</span>
+          <span className="tool-activity-state">
+            {tool.status === "running" ? "…" : tool.status === "done" ? "✓" : "!"}
+          </span>
+        </span>
+      ))}
+      {tools.length > 8 && <span className="tool-activity-more">+{tools.length - 8}</span>}
+    </div>
+  );
+}
+
+function WorkItems({ items, streaming = false }: { items: WorkItem[]; streaming?: boolean }) {
+  return (
+    <div className="work-timeline">
+      {items.map((item) => {
+        if (item.type === "text") {
+          return (
+            <div className="msg-row assistant timeline-text" key={item.id}>
+              <div className="assistant-avatar">⚡</div>
+              <div className="bubble assistant-bubble">
+                <Markdown text={item.content} />
+                {streaming && item.id === items[items.length - 1]?.id && <span className="cursor"><span /></span>}
+              </div>
+            </div>
+          );
+        }
+        if (item.type === "activity") {
+          const important = item.tools.filter((tool) =>
+            isFileDiff(tool.result ?? "") || tool.status === "error" || tool.status === "cancelled"
+          );
+          const compact = item.tools.filter((tool) => !important.includes(tool));
+          return (
+            <div className="work-item-group" key={item.id}>
+              {compact.length > 0 && <ToolActivity tools={compact} />}
+              {important.map((tool) => <ToolCard key={tool.id} card={tool} />)}
+            </div>
+          );
+        }
+        return <ToolCard key={item.id} card={item.card} />;
+      })}
     </div>
   );
 }
@@ -115,47 +157,11 @@ function MessageBubble({ message }: { message: Msg }) {
 
 // ---------------------------------------------------------------- 正在生成
 
-function StreamingTurn({
-  content,
-  cards,
-  turn,
-}: {
-  content: string;
-  cards: ToolCardInfo[];
-  turn?: number;
-}) {
-  // 工具调用进行中（content 为空、已有卡片）不渲染空气泡，只显示工具卡片
-  const showBubble = !!content || cards.length === 0;
+function StreamingTurn({ items, turn }: { items: WorkItem[]; turn?: number }) {
   return (
     <>
-      {showBubble && (
-        <div className="msg-row assistant">
-          <div className="assistant-avatar">⚡</div>
-          <div className="bubble assistant-bubble streaming">
-            {!content && !cards.length && (
-              <div className="thinking">
-                <span className="dot" />
-                <span className="dot" />
-                <span className="dot" />
-                <span className="thinking-text">思考中…{turn ? ` (第 ${turn} 轮)` : ""}</span>
-              </div>
-            )}
-            {content && <Markdown text={content} />}
-            {content && (
-              <span className="cursor-bar">
-                <span className="cursor" />
-              </span>
-            )}
-          </div>
-        </div>
-      )}
-      {cards.length > 0 && (
-        <div className="tool-cards">
-          {cards.map((c) => (
-            <ToolCard key={c.id} card={c} />
-          ))}
-        </div>
-      )}
+      {items.length === 0 && <div className="timeline-thinking"><span className="dot" /><span className="dot" /><span className="dot" /><span className="thinking-text">思考中…{turn ? ` (第 ${turn} 轮)` : ""}</span></div>}
+      <WorkItems items={items} streaming />
     </>
   );
 }
@@ -165,13 +171,10 @@ function StreamingTurn({
 interface RenderTurn {
   key: string;
   user?: Msg;
-  thinking: string; // 该任务下累积的所有中间推理文本
-  tools: ToolCardInfo[]; // 该任务下的工具调用卡片（assistant(tool_calls) 与 tool(result) 配对）
-  toolCount: number; // 该任务下的工具调用次数
-  assistant?: Msg; // 最终回答
+  items: WorkItem[];
+  assistant?: Msg;
 }
 
-// 解析 tool_calls 参数（可能是不合法 JSON 字符串，回退为原字符串）
 function parseToolArgs(raw: string): unknown {
   try {
     return JSON.parse(raw);
@@ -183,62 +186,43 @@ function parseToolArgs(raw: string): unknown {
 function buildTurns(messages: Msg[]): RenderTurn[] {
   const turns: RenderTurn[] = [];
   let current: RenderTurn | null = null;
-  // 当前任务已发出的工具调用，等待 role="tool" 消息回填 result
-  let pendingTools: ToolCardInfo[] = [];
-
-  const commitTools = () => {
-    if (current && pendingTools.length > 0) {
-      current.tools = pendingTools;
-      pendingTools = [];
-    }
-  };
+  const pending = new Map<string, ToolCardInfo>();
 
   for (const m of messages) {
     if (m.role === "user") {
-      commitTools();
       current = null;
-      pendingTools = [];
-      turns.push({ key: `u-${turns.length}`, user: m, thinking: "", tools: [], toolCount: 0 });
+      turns.push({ key: `u-${turns.length}`, user: m, items: [] });
     } else if (m.role === "assistant") {
       const hasTools = (m.tool_calls ?? []).length > 0;
-      if (hasTools) {
-        // 中间推理轮次：累积进当前任务的 thinking 块
-        if (!current) {
-          current = { key: `t-${turns.length}`, thinking: "", tools: [], toolCount: 0 };
-          turns.push(current);
-        }
-        current.toolCount += (m.tool_calls ?? []).length;
-        if (m.content) current.thinking += (current.thinking ? "\n\n" : "") + m.content;
-        for (const tc of m.tool_calls ?? []) {
-          pendingTools.push({
-            id: tc.id || `h-${pendingTools.length}-${Math.random().toString(36).slice(2, 6)}`,
-            name: tc.function.name,
-            args: parseToolArgs(tc.function.arguments),
-            status: "done",
-          });
-        }
-      } else {
-        // 最终回答：作为独立气泡
-        commitTools();
+      if (!hasTools) {
         current = null;
-        pendingTools = [];
-        turns.push({ key: `a-${turns.length}`, thinking: "", tools: [], toolCount: 0, assistant: m });
+        turns.push({ key: `a-${turns.length}`, items: [], assistant: m });
+        continue;
+      }
+      if (!current) {
+        current = { key: `t-${turns.length}`, items: [] };
+        turns.push(current);
+      }
+      if (m.content) current.items.push({ type: "text", id: `text-${turns.length}-${current.items.length}`, content: m.content });
+      for (const tc of m.tool_calls ?? []) {
+        const card: ToolCardInfo = {
+          id: tc.id || `h-${current.items.length}-${Math.random().toString(36).slice(2, 6)}`,
+          name: tc.function.name,
+          args: parseToolArgs(tc.function.arguments),
+          status: "done",
+        };
+        pending.set(card.id, card);
+        current.items.push({ type: "tool", id: card.id, card });
       }
     } else if (m.role === "tool") {
-      // 回填工具结果（[Patch Success] diff 正文在此进入卡片，驱动 DiffStats/DiffPre 渲染）
-      const target = pendingTools.find((t) => t.id === m.tool_call_id);
-      if (target) {
-        target.result = m.content ?? "";
-        const content = m.content ?? "";
-        if (content.startsWith("[Tool Execution Cancelled]") || content.startsWith("[Blocked")) {
-          target.status = "cancelled";
-        } else if (content.startsWith("[Execution Exception]") || content.startsWith("[Error]")) {
-          target.status = "error";
-        }
-      }
+      const target = m.tool_call_id ? pending.get(m.tool_call_id) : undefined;
+      if (!target) continue;
+      target.result = m.content ?? "";
+      const content = m.content ?? "";
+      if (content.startsWith("[Tool Execution Cancelled]") || content.startsWith("[Blocked")) target.status = "cancelled";
+      else if (content.startsWith("[Execution Exception]") || content.startsWith("[Error]")) target.status = "error";
     }
   }
-  commitTools();
   return turns;
 }
 
@@ -259,7 +243,7 @@ export default function ChatView({
   sessionId: string;
   sessionTitle: string;
   messages: Msg[];
-  streaming: { content: string; cards: ToolCardInfo[]; turn?: number } | null;
+  streaming: { items: WorkItem[]; turn?: number } | null;
   running: boolean;
   turn: number;
   pendingApproval: { id: string; action: string; reason: string } | null;
@@ -313,24 +297,8 @@ export default function ChatView({
             {turns.map((t) => (
               <div key={t.key}>
                 {t.user && <MessageBubble message={t.user} />}
-                {t.thinking && (
-                  <details className="thinking-row" open={false}>
-                    <summary>
-                      思考过程
-                      {t.thinking.replace(/\n/g, " ").slice(0, 50)}
-                      {t.thinking.length > 50 ? "…" : ""}
-                    </summary>
-                    <div className="thinking-content">
-                      <Markdown text={t.thinking} />
-                    </div>
-                  </details>
-                )}
-                {t.tools.length > 0 && (
-                  <div className="tool-cards">
-                    {t.tools.map((c) => (
-                      <ToolCard key={c.id} card={c} />
-                    ))}
-                  </div>
+                {t.items.length > 0 && (
+                  <WorkItems items={t.items} />
                 )}
                 {t.assistant && t.assistant.content && (
                   <div className="msg-row assistant">
@@ -343,11 +311,7 @@ export default function ChatView({
               </div>
             ))}
             {streaming && (
-              <StreamingTurn
-                content={streaming.content}
-                cards={streaming.cards}
-                turn={streaming.turn}
-              />
+              <StreamingTurn items={streaming.items} turn={streaming.turn} />
             )}
           </>
         )}

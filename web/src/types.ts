@@ -81,6 +81,7 @@ export interface AppConfig {
   max_steps: number;
   token_budget: number;
   tool_timeout: number;
+  llm_timeout?: number;
   auto_approve: boolean;
   context_full_turns?: number;
   pricing: { input_per_mtok: number; output_per_mtok: number };
@@ -180,6 +181,12 @@ export interface ToolCardInfo {
   result?: string;
 }
 
+// 按 SSE / 会话消息原始顺序排列的工作时间线
+export type WorkItem =
+  | { type: "text"; id: string; content: string }
+  | { type: "tool"; id: string; card: ToolCardInfo }
+  | { type: "activity"; id: string; tools: ToolCardInfo[] };
+
 // 文件读取响应（/api/fs/read）
 export interface FileReadResponse {
   path: string;
@@ -215,7 +222,7 @@ export interface TabItem {
 // 单个会话的独立状态
 export interface ChatSessionState {
   messages: Msg[];
-  streaming: { content: string; cards: ToolCardInfo[]; turn?: number } | null;
+  streaming: { items: WorkItem[]; turn?: number } | null;
   running: boolean;
   turn: number;
   stats: Stats | null;

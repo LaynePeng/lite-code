@@ -109,12 +109,21 @@ def _extract_usage(self, parsed):
     if not usage or not isinstance(usage, dict): return None
     prompt = usage.get("prompt_tokens")
     if not isinstance(prompt, int): return None
+    details = (usage.get("prompt_tokens_details")
+               or usage.get("input_tokens_details") or {})
+    hit = (usage.get("prompt_cache_hit_tokens")
+           or usage.get("cache_hit_tokens")
+           or usage.get("cache_read_tokens")
+           or usage.get("cached_tokens")
+           or details.get("cached_tokens") or 0)
     return {
         "prompt_tokens": prompt,
         "completion_tokens": usage.get("completion_tokens", 0),
-        "prompt_cache_hit_tokens": usage.get("prompt_cache_hit_tokens", 0),
+        "prompt_cache_hit_tokens": hit if isinstance(hit, int) else 0,
     }
 ```
+
+不同供应商的 usage 字段不能直接暴露给上层。OpenAI 兼容服务可能使用 `cached_tokens`、`cache_read_tokens` 或嵌套的 `prompt_tokens_details.cached_tokens`；Anthropic 则通过 `cache_read_input_tokens` 返回命中输入。适配器负责把这些字段归一化为 `prompt_cache_hit_tokens`，AgentLoop 只处理统一结构。如果响应没有缓存字段，应将其视为“缓存数据不可观测”，而不是强行推断为未命中。
 
 #### 3. Anthropic Claude 适配器
 
@@ -183,7 +192,7 @@ def _delta_usage(self, parsed):
 ```python
 class LLMRegistry:
     def __init__(self, llm_config=None):
-        # 预置 7 个供应商：deepseek / openai / kimi / qwen / glm / anthropic / custom
+        # 预置供应商 + 任意数量的 custom_* OpenAI 兼容实例
         self.providers: Dict[str, Dict] = {pid: {...} for pid in PROVIDER_META}
         self.active = "deepseek"
         self._adapter = None
@@ -212,6 +221,8 @@ class LLMRegistry:
   }
 }
 ```
+
+自定义服务不应共用一个固定的 `custom` 槽位。每个 `custom_*` 实例独立保存显示名称、Base URL、API Key、当前模型和模型列表，注册表根据当前 `active` ID 构建对应适配器。这样同一类 OpenAI 兼容协议可以同时连接多个不同网关，而不会互相覆盖配置。
 
 #### 5. 模型元数据服务 (`litecode/llm/model_meta.py`)
 
@@ -419,7 +430,7 @@ class AgentApp:
 在本课中，我们完成了 `lite-code` 的关键 LLM 适配层与工具集：
 
 1. 实现了**纯手写 httpx SSE 流式解析器**，支持 OpenAI 兼容接口与 Anthropic 两种协议，并从流式事件中提取真实 usage（`prompt_cache_hit_tokens`），供第 4 课的缓存命中率度量使用；
-2. 设计了**多供应商注册表**，预置 7 个供应商，支持环境变量兜底、配置热加载、测试连接；
+2. 设计了**多供应商注册表**，预置供应商并支持任意数量的 `custom_*` OpenAI 兼容实例，提供环境变量兜底、配置热加载、测试连接；
 3. 接入 **models.dev 模型元数据服务**：启动同步 + 7 天磁盘缓存 + 内置表兜底，`get_context_window` 四级解析上下文窗口；
 4. 编写了**19 个核心工具**，覆盖文件读写、代码搜索、AST 分析、精确编辑、Shell 执行、Git 操作、代码审查、Web 抓取（webfetch / webfetch_batch，带磁盘缓存与批量并发）；
 5. 通过 `AgentApp` 装配层将所有模块组合在一起。

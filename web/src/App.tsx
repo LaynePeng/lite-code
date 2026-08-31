@@ -8,7 +8,7 @@ import SettingsModal from "./components/SettingsModal";
 import Sidebar from "./components/Sidebar";
 import TabBar from "./components/TabBar";
 import ToolPanel from "./components/ToolPanel";
-import type { AgentInfo, AppConfig, ContextStats, ChatSessionState, Msg, ServerStatus, SessionInfo, Stats, TabItem, ToolCardInfo } from "./types";
+import type { AgentInfo, AppConfig, ContextStats, ChatSessionState, Msg, ServerStatus, SessionInfo, Stats, TabItem, ToolCardInfo, WorkItem } from "./types";
 
 interface PendingApproval {
   id: string;
@@ -17,8 +17,7 @@ interface PendingApproval {
 }
 
 interface StreamingState {
-  content: string;
-  cards: ToolCardInfo[];
+  items: WorkItem[];
   turn?: number;
 }
 
@@ -301,10 +300,7 @@ export default function App() {
         if (!result.ok && result.error !== "cancelled") {
           patchActiveChat({ error: result.error ?? "无法切换项目" });
         }
-        if (result.ok) {
-          // Electron 模式刷新页面会丢状态：reload 后启动逻辑直接新建会话
-          window.location.reload();
-        }
+        // Electron 本地模式会为新项目创建独立窗口，原窗口及其 Core 保持不变。
       } catch (e) {
         patchActiveChat({ error: (e as Error).message });
       }
@@ -367,7 +363,7 @@ export default function App() {
     if (flushTimerRef.current !== null) return;
     flushTimerRef.current = window.setTimeout(() => {
       flushTimerRef.current = null;
-      const cur = streamingRef.current ?? { content: "", cards: [] };
+      const cur = streamingRef.current ?? { items: [] };
       const sid = tabsRef.current.find((t) => t.id === activeTabId)?.sessionId;
       if (sid) patchChat(sid, { streaming: { ...cur } });
     }, 80);
@@ -395,47 +391,64 @@ export default function App() {
         case "llm:stream": {
           // SSE chunk 的到达速度高于 React state 提交速度。必须从 ref 读取
           // 已累积内容，否则连续 chunk 会基于旧 state 互相覆盖并缺字。
-          const cur = streamingRef.current ?? getChat(sid).streaming ?? { content: "", cards: [] };
-          streamingRef.current = { ...cur, content: cur.content + ev.data.chunk };
+          const cur = streamingRef.current ?? getChat(sid).streaming ?? { items: [] };
+          const last = cur.items[cur.items.length - 1];
+          const items: WorkItem[] = last?.type === "text"
+            ? [...cur.items.slice(0, -1), { ...last, content: last.content + ev.data.chunk }]
+            : [...cur.items, { type: "text" as const, id: `s${Date.now()}-${Math.random()}`, content: ev.data.chunk }];
+          streamingRef.current = { ...cur, items };
           scheduleStreamFlush();
           break;
         }
         case "llm:turn_start": {
           log(`⟳ 第 ${ev.data.turn} 轮`);
-          const cur = streamingRef.current ?? getChat(sid).streaming ?? { content: "", cards: [] };
+          const cur = streamingRef.current ?? getChat(sid).streaming ?? { items: [] };
           streamingRef.current = { ...cur, turn: ev.data.turn };
           patchChat(sid, { streaming: { ...streamingRef.current } });
           break;
         }
         case "tool:before_execute": {
-          log(`⚡ ${ev.data.toolName}`);
           const card: ToolCardInfo = {
             id: `t${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
             name: ev.data.toolName,
             args: ev.data.args,
             status: "running",
           };
-          const cur = streamingRef.current ?? getChat(sid).streaming ?? { content: "", cards: [] };
-          streamingRef.current = { ...cur, cards: [...cur.cards, card] };
+          const cur = streamingRef.current ?? getChat(sid).streaming ?? { items: [] };
+          const lastItem = cur.items[cur.items.length - 1];
+          const items = lastItem?.type === "activity"
+            ? [...cur.items.slice(0, -1), { ...lastItem, tools: [...lastItem.tools, card] }]
+            : [...cur.items, { type: "activity" as const, id: `a${Date.now()}`, tools: [card] }];
+          streamingRef.current = { ...cur, items };
           patchChat(sid, { streaming: { ...streamingRef.current } });
           break;
         }
         case "tool:after_execute": {
-          log(`✔ ${ev.data.toolName} (${ev.data.durationMs}ms)`);
           if (TREE_TOUCH_TOOLS.has(ev.data.toolName)) setTreeRevision((v) => v + 1);
           const cur = streamingRef.current ?? getChat(sid).streaming;
           if (!cur) break;
-          const cards = cur.cards.map((c) =>
-            c.name === ev.data.toolName && c.status === "running"
-              ? {
-                  ...c,
-                  status: (ev.data.status === "cancelled" ? "cancelled" : "done") as ToolCardInfo["status"],
-                  durationMs: ev.data.durationMs,
-                  ...(ev.data.result !== undefined ? { result: ev.data.result } : {}),
-                }
-              : c
-          );
-          streamingRef.current = { ...cur, cards };
+           let itemIndex = -1;
+           let toolIndex = -1;
+           for (let i = cur.items.length - 1; i >= 0 && itemIndex < 0; i -= 1) {
+             const item = cur.items[i];
+             if (item.type !== "activity") continue;
+             const found = [...item.tools].reverse().findIndex((c) => c.name === ev.data.toolName && c.status === "running");
+             if (found >= 0) { itemIndex = i; toolIndex = item.tools.length - 1 - found; }
+           }
+          const result = ev.data.result ?? "";
+          const status: ToolCardInfo["status"] = ev.data.status === "cancelled"
+            ? "cancelled"
+            : ev.data.status === "error" || result.startsWith("[Execution Exception]") || result.startsWith("[Error]")
+              ? "error"
+              : "done";
+           const items = itemIndex < 0 ? cur.items : cur.items.map((item, i) => i !== itemIndex || item.type !== "activity" ? item : {
+             ...item,
+             tools: item.tools.map((card, j) => j !== toolIndex ? card : {
+               ...card, status, durationMs: ev.data.durationMs,
+               ...(ev.data.result !== undefined ? { result: ev.data.result } : {}),
+             }),
+           });
+          streamingRef.current = { ...cur, items };
           patchChat(sid, { streaming: { ...streamingRef.current } });
           break;
         }
@@ -458,7 +471,7 @@ export default function App() {
         case "task:done": {
           setTreeRevision((v) => v + 1);
           const cur = streamingRef.current;
-          const finalMsg: Msg = { role: "assistant", content: cur?.content || ev.data.content };
+          const finalMsg: Msg = { role: "assistant", content: cur?.items.filter((i) => i.type === "text").map((i) => i.content).join("\n\n") || ev.data.content };
           patchChat(sid, {
             messages: [...getChat(sid).messages, finalMsg],
             stats: ev.data.stats,
@@ -529,8 +542,8 @@ export default function App() {
         running: true,
       });
       cancelStreamFlush();
-      streamingRef.current = { content: "", cards: [] };
-      patchChat(sid, { streaming: { content: "", cards: [] } });
+      streamingRef.current = { items: [] };
+      patchChat(sid, { streaming: { items: [] } });
 
       const connect = (taskId: string) => {
         const es = new EventSource(`/api/tasks/${taskId}/events`);

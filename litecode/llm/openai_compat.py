@@ -112,10 +112,35 @@ class OpenAICompatAdapter(BaseLLMAdapter):
         prompt = usage.get("prompt_tokens")
         if not isinstance(prompt, int):
             return None
+        details = (
+            usage.get("prompt_tokens_details")
+            or usage.get("prompt_token_details")
+            or usage.get("input_tokens_details")
+            or usage.get("cache_details")
+            or {}
+        )
+        if not isinstance(details, dict):
+            details = {}
+        hit = (
+            usage.get("prompt_cache_hit_tokens")
+            or usage.get("cache_hit_tokens")
+            or usage.get("cache_read_tokens")
+            or usage.get("cached_tokens")
+            or usage.get("cache_read")
+            or usage.get("cache_read_input_tokens")
+            or details.get("cached_tokens")
+            or details.get("cache_hit_tokens")
+            or details.get("cache_read_tokens")
+            or details.get("cache_read")
+            or details.get("cache_read_input_tokens")
+            or 0
+        )
+        if not isinstance(hit, int):
+            hit = 0
         return {
             "prompt_tokens": prompt,
             "completion_tokens": usage.get("completion_tokens", 0),
-            "prompt_cache_hit_tokens": usage.get("prompt_cache_hit_tokens", 0),
+            "prompt_cache_hit_tokens": hit,
         }
 
     async def _parse_sse(

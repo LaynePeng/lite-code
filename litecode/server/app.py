@@ -20,7 +20,7 @@ from .tasks import TaskManager
 
 logger = logging.getLogger("litecode.server")
 
-VERSION = "0.9.1rc0"
+VERSION = "0.9.2rc0"
 
 
 # ---------------------------------------------------------------- 请求模型
@@ -156,7 +156,7 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
         return {
             k: app.config.get(k) for k in (
                 "max_steps", "token_budget", "tool_timeout",
-                "auto_approve", "pricing", "context_full_turns",
+                "auto_approve", "pricing", "context_full_turns", "llm_timeout",
             )
         }
 

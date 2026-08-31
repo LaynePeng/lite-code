@@ -102,7 +102,7 @@ def _build_payload(self, messages, tools, system, enable_cache=True):
 "stream_options": {"include_usage": True}   # 流末帧返回 usage
 ```
 
-> **重要**：`cache_control` 是 Anthropic Messages API 专属字段，OpenAI 兼容接口一律静默忽略——往 system 消息上标注它既无效又污染载荷。命中数据必须靠 `include_usage` 返回的 `prompt_cache_hit_tokens` 统计（提取逻辑到第 16 课适配器篇再实现）。
+> **重要**：`cache_control` 是 Anthropic Messages API 专属字段，OpenAI 兼容接口一律静默忽略——往 system 消息上标注它既无效又污染载荷。命中数据必须靠 `include_usage` 返回的 usage 统计（提取逻辑到第 16 课适配器篇再实现）。如果供应商没有返回缓存字段，界面中的 0 只能表示“没有可观测数据”，不能据此断定缓存未命中。
 
 #### 5. 缓存感知的 Token 预算管理
 
@@ -136,7 +136,7 @@ class TokenCounter:
 response.headers.get("x-request-cache-hit")  # "true" / "false"
 ```
 
-DeepSeek 的响应中也会包含缓存命中信息：
+兼容接口的响应可能包含缓存命中信息。字段名称由供应商决定，适配层应统一后再交给 AgentLoop：
 
 ```json
 {
@@ -146,6 +146,8 @@ DeepSeek 的响应中也会包含缓存命中信息：
   }
 }
 ```
+
+常见命名包括 `prompt_cache_hit_tokens`、`cache_hit_tokens`、`cache_read_tokens`、`cached_tokens` 和 `prompt_tokens_details.cached_tokens`。统计层只消费统一字段 `prompt_cache_hit_tokens`，不应把供应商字段判断散落在预算和 UI 代码中。
 
 #### 7. 度量缓存：估算与真实 usage 混用
 
