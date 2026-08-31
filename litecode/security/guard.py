@@ -5,7 +5,8 @@
 - Layer 2: 高危命令 AST/正则黑名单 → HIGH 直接阻断
 - Layer 3: 中危模式 → MEDIUM 触发人工确认
 - Layer 4: 动态白名单（精确前缀放行）覆盖默认检查
-- 黑白名单可通过 .lite-code/config.json 动态热加载，无需改代码
+- 黑白名单可通过 config.json 动态热加载，无需改代码（合并语义：代码默认规则
+  为永不失效的基线，配置在其上增删覆盖）
 """
 from __future__ import annotations
 
@@ -164,19 +165,32 @@ class SecurityGuard:
     # ------------------------------------------------------------ 配置热加载
 
     def apply_config(self, config: Dict[str, Any]) -> None:
-        """动态更新黑白名单（.lite-code/config.json），无需重启。"""
+        """动态更新黑白名单（config.json），无需重启。
+
+        合并语义：代码默认规则（安全基线）永远生效，config 只能在其之上
+        增删覆盖——避免旧配置整体替换导致新版本程序新增的默认规则失效。
+        """
         if "forbidden_paths" in config:
-            self.forbidden_paths = list(config["forbidden_paths"])
+            self.forbidden_paths = self._merge_defaults(DEFAULT_FORBIDDEN_PATHS, config["forbidden_paths"])
         if "high_risk_patterns" in config:
-            self.high_risk_patterns = list(config["high_risk_patterns"])
+            self.high_risk_patterns = self._merge_defaults(DEFAULT_HIGH_RISK_PATTERNS, config["high_risk_patterns"])
         if "medium_risk_patterns" in config:
-            self.medium_risk_patterns = list(config["medium_risk_patterns"])
+            self.medium_risk_patterns = self._merge_defaults(DEFAULT_MEDIUM_RISK_PATTERNS, config["medium_risk_patterns"])
         if "whitelist" in config:
-            self.whitelist = list(config["whitelist"])
+            self.whitelist = self._merge_defaults(DEFAULT_WHITELIST, config["whitelist"])
         self._compiled_high = self._compile(self.high_risk_patterns)
         self._compiled_medium = self._compile(self.medium_risk_patterns)
         logger.info("[SecurityGuard] 动态规则已热加载 (%d 高危 / %d 中危 / %d 白名单)",
                     len(self._compiled_high), len(self._compiled_medium), len(self.whitelist))
+
+    @staticmethod
+    def _merge_defaults(defaults: List[str], configured: List[str]) -> List[str]:
+        """基线 + 配置去重合并：默认规则在前，配置新增规则追加在后。"""
+        merged = list(dict.fromkeys(list(defaults) + list(configured)))
+        if configured != list(defaults):
+            logger.debug("[SecurityGuard] 规则合并：基线 %d 条 + 配置增量 %d 条",
+                         len(defaults), max(0, len(merged) - len(defaults)))
+        return merged
 
     def to_dict(self) -> Dict[str, Any]:
         return {

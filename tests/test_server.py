@@ -112,6 +112,11 @@ def test_default_config_dir_is_stable_across_workspaces(tmp_path, monkeypatch):
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
+    if os.name == "nt":
+        # Windows 上 expanduser 优先读 USERPROFILE，HOME 会被忽略
+        monkeypatch.setenv("USERPROFILE", str(home))
+        monkeypatch.delenv("HOMEDRIVE", raising=False)
+        monkeypatch.delenv("HOMEPATH", raising=False)
     first_workspace = tmp_path / "project-a"
     second_workspace = tmp_path / "project-b"
 

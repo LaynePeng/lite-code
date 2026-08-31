@@ -69,7 +69,7 @@ def test_check_tool_for_file_tools():
     assert r.level == ThreatLevel.SAFE
 
 
-def test_dynamic_config_reload():
+def test_dynamic_config_reload_merges_with_defaults():
     guard = SecurityGuard()
     assert guard.check_shell_command("custom-danger-xyz").level == ThreatLevel.SAFE
 
@@ -79,9 +79,11 @@ def test_dynamic_config_reload():
         "whitelist": [],
         "forbidden_paths": [],
     })
+    # 新增规则生效
     assert guard.check_shell_command("custom-danger-xyz").level == ThreatLevel.HIGH
-    # 热加载后原规则被替换
-    assert guard.check_shell_command("rm -rf /").level == ThreatLevel.SAFE
+    # 代码默认基线仍然生效（合并语义，而非整体替换）
+    assert guard.check_shell_command("rm -rf /").level == ThreatLevel.HIGH
+    assert guard.check_shell_command("sudo apt install git").level == ThreatLevel.MEDIUM
 
 
 def test_invalid_regex_ignored():
