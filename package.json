@@ -36,11 +36,8 @@
     ],
     "extraResources": [
       {
-        "from": "release/backend",
-        "to": "litecode-bin",
-        "filter": [
-          "lite-code-backend*"
-        ]
+        "from": "release/backend/lite-code-backend",
+        "to": "litecode-bin/lite-code-backend"
       }
     ],
     "mac": {
