@@ -23,6 +23,9 @@ if (!fs.existsSync(python)) {
 }
 
 fs.mkdirSync(outDir, { recursive: true });
+// 只清理最终 onedir 输出，保留 release/_build 的分析缓存。
+// 否则 PyInstaller 增量收集时可能与旧的 Python.framework 链接冲突。
+fs.rmSync(path.join(outDir, "lite-code-backend"), { recursive: true, force: true });
 
 const webDist = path.join(root, "web", "dist");
 if (!fs.existsSync(path.join(webDist, "index.html"))) {
@@ -49,6 +52,8 @@ const specArgs = [
   "--collect-submodules", "httpx",
   "--collect-all", "tree_sitter",
   "--collect-all", "tree_sitter_typescript",
+  "--collect-all", "tree_sitter_java",
+  "--collect-all", "tree_sitter_go",
   "--collect-submodules", "pathspec",
   "--collect-submodules", "litecode",
   "--hidden-import", "uvicorn.logging",

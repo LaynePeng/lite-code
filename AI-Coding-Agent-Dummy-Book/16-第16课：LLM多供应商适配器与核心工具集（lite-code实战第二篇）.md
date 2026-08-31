@@ -316,7 +316,7 @@ class CodebaseTools:
         return stdout.decode("utf-8", errors="replace")
 ```
 
-**AST 语义工具**（`tools/ast_tools.py`）：基于 tree-sitter 提取符号大纲与骨架压缩：
+**AST 语义工具**（`tools/ast_tools.py`）：基于 Tree-sitter 提取 TypeScript、JavaScript、Java、Go 符号大纲与骨架；Python 使用标准库 `ast`：
 
 ```python
 class ASTAnalyzer:

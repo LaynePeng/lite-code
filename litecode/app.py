@@ -59,7 +59,7 @@ class AgentApp:
     def __init__(
         self,
         workspace: Optional[str] = None,
-        config_dir: str = ".lite-code",
+        config_dir: Optional[str] = None,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         model: Optional[str] = None,
@@ -67,7 +67,7 @@ class AgentApp:
         self.workspace = os.path.abspath(workspace or os.getcwd())
         os.makedirs(self.workspace, exist_ok=True)
 
-        self.config_dir = os.path.abspath(config_dir)
+        self.config_dir = os.path.abspath(os.path.expanduser(config_dir or "~/.lite-code"))
         self.config_path = os.path.join(self.config_dir, "config.json")
         os.makedirs(self.config_dir, exist_ok=True)
 
@@ -76,7 +76,7 @@ class AgentApp:
         # 安全组件（先于配置加载，供默认配置落盘引用）
         self.guard = SecurityGuard()
         self.approval_gate = ApprovalGate(timeout_seconds=600)
-        self.llm_registry = LLMRegistry(config_dir=config_dir)
+        self.llm_registry = LLMRegistry(config_dir=self.config_dir)
         self.agent_registry = AgentRegistry()
         self._context_session_stats: Dict[str, Dict[str, Any]] = {}
         self._load_config()
@@ -359,16 +359,20 @@ class AgentApp:
             permissions=profile.permissions,
         )
 
-    def create_loop(self, kernel: Kernel, registry: ToolRegistry, agent_id: Optional[str] = None) -> AgentLoop:
+    def create_loop(self, kernel: Kernel, registry: ToolRegistry, agent_id: Optional[str] = None,
+                    model_override: Optional[Dict[str, str]] = None) -> AgentLoop:
         profile = self.get_agent(agent_id)
         adapter = self.adapter
-        if profile.model or profile.temperature is not None:
-            overrides = {}
-            if profile.model:
+        if model_override or profile.model or profile.temperature is not None:
+            overrides: Dict[str, Any] = {}
+            provider_id = model_override.get("provider") if model_override else None
+            if model_override and model_override.get("model"):
+                overrides["model"] = model_override["model"]
+            elif profile.model:
                 overrides["model"] = profile.model
             if profile.temperature is not None:
                 overrides["temperature"] = profile.temperature
-            adapter = self.llm_registry.build_adapter(overrides=overrides)
+            adapter = self.llm_registry.build_adapter(provider_id=provider_id, overrides=overrides)
         # 上下文压缩：策略 B（保留最近 N 轮完整细节），预算 = min(token_budget, 90%×窗口)
         token_budget = int(self.config.get("token_budget", 48000))
         context_manager = ContextManager(
@@ -376,7 +380,8 @@ class AgentApp:
             keep_recent_full_turns=int(self.config.get("context_full_turns", 2)),
         )
         context_window = self.llm_registry.get_context_window(
-            self.llm_registry.active, getattr(adapter, "model", None)
+            getattr(adapter, "provider_id", None) or self.llm_registry.active,
+            getattr(adapter, "model", None),
         )
         loop = AgentLoop(
             kernel=kernel,

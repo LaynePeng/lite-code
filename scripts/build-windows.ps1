@@ -56,6 +56,8 @@ Invoke-Step "Prepare Python virtual environment" {
 }
 
 # 加速策略：依赖清单未变化时复用现有 venv，避免每次重新解析/安装原生依赖。
+# 依赖首次安装或发生变化时使用标准 build isolation；全新 runner 没有构建工具，
+# 强制 --no-build-isolation 会导致原生包安装失败。
 $pythonFingerprint = (Get-FileHash (Join-Path $PWD "pyproject.toml") -Algorithm SHA256).Hash
 $pythonMarker = Join-Path $PWD ".venv\.lite-code-deps.sha256"
 $pythonDepsChanged = $true
@@ -63,8 +65,8 @@ if (Test-Path $pythonMarker) {
     $pythonDepsChanged = ((Get-Content $pythonMarker -Raw).Trim() -ne $pythonFingerprint)
 }
 if ($pythonDepsChanged) {
-    Invoke-Step "Install Python dependencies (.venv\Scripts\pip install --no-build-isolation -e .[dev,package])" {
-        & $venvPip install --no-build-isolation -e ".[dev,package]"
+    Invoke-Step "Install Python dependencies (.venv\Scripts\pip install -e .[dev,package])" {
+        & $venvPip install -e ".[dev,package]"
         if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
         Set-Content -Path $pythonMarker -Value $pythonFingerprint -NoNewline
     }

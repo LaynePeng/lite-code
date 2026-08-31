@@ -275,7 +275,7 @@ function buildTurns(messages) {
 
 **单换行与表格美化**：通过 `remark-breaks` 插件让 Markdown 单换行（`\n`）渲染为 `<br>`，步骤性输出自然分行。表格加 `display: block + overflow-x: auto`，超宽表格横向滚动。
 
-**Session 首句标题**：会话标题取首条用户消息的前 40 字；如果 metadata 中有显式名称则优先使用，空会话显示为“新会话”。没有用户消息的 session 不进入历史列表，但列表接口应保持只读，不应在查询时删除尚未完成初始化的 session。
+**Session 首句标题**：会话标题取首条用户消息的前 40 字；如果 metadata 中有显式名称则优先使用，空会话显示为“新会话”。没有用户消息的 session 不进入历史列表，列表接口会过滤并清理异常残留。
 
 **Build/Plan 前端切换**：`Composer.tsx` 加入 Agent 选择栏，显示 Build / Plan 两个按钮，当前选中的高亮。右侧显示 `Tab` 小标签提示快捷键。
 
@@ -406,37 +406,19 @@ const patchChat = (sessionId: string, patch: Partial<ChatSessionState>) => {
 };
 ```
 
-**窗口、项目与 Tab 的边界**：项目不是 Tab 的替代概念。一个窗口是独立的工作台，内部可同时包含多个会话 Tab 和文件 Tab；同一个项目也可以在多个窗口中打开。桌面本地模式为每个窗口启动独立 Core，因此不同窗口的任务、流式事件和审批状态不会互相阻塞。即使多个窗口指向同一 workspace，它们也应保持各自的 Tab 工作副本；共享的是项目文件和可见的会话历史，而不是运行中的任务状态。
+**窗口、项目与 Tab 的边界**：项目不是 Tab 的替代概念。一个窗口是工作台，内部可同时包含多个会话 Tab 和文件 Tab。桌面本地模式使用一个本地 Core；“打开项目”通过当前 Core 热切换 workspace，不创建新的 Core。模型配置、安全配置和会话存储与 workspace 分离，因此切换项目或重启 Core 都不会丢失配置。
 
-**为什么不在单个 Core 内热切换 workspace**：`AgentApp.workspace`、工具实例、会话存储和任务管理器都依赖当前工作目录。一个全局 Core 被多个窗口共享时，任一窗口切换 workspace 都会改变其他窗口正在运行任务的文件根目录、文件树和会话筛选条件。正确边界是“窗口拥有 Core”：打开项目时创建新窗口和新的随机端口 Core；关闭窗口时只终止该窗口的子进程。项目相同也不去重，以便用户在同一代码库中并行进行审查、实现和测试。
+**workspace 切换约束**：`AgentApp.workspace` 和工具实例依赖当前工作目录，因此切换项目时必须先确认没有运行中的任务。没有任务时，当前 Core 更新 workspace，前端清空当前工作副本并重新请求新项目的历史会话；有任务时接口返回冲突，避免任务在执行过程中改变文件根目录。
 
-```javascript
-// Electron 主进程：BrowserWindow -> 独立本地 Core
-const localInstances = new Map();
-
-async function openLocalWorkspace(workspace) {
-  const window = createWindow(loadingUrl);
-  const instance = await spawnLocalCore(workspace);
-  localInstances.set(window, instance);
-  window.once("closed", () => {
-    localInstances.delete(window);
-    instance.child.kill("SIGTERM");
-  });
-  window.loadURL(instance.url);
-}
-```
-
-这种隔离不等于并发写入互斥：两个窗口同时修改同一个文件时，仍然遵循文件系统的最后写入者覆盖规则。对同一项目开展并行工作时，应将任务分配到不同文件或通过 Git diff、测试和代码审查来协调修改。
-
-**TabBar 组件**：水平 Tab 栏，左侧显示 Tab 列表（图标 + 标题），每个 Tab 可关闭（✕），至少保留一个 Tab。点击 Tab 切换时调用 `closeStream()` + `setActiveTabId(id)`，`activeTab` 通过 `useMemo` 从 `tabs` 和 `activeTabId` 实时计算得出。
+**TabBar 组件**：水平 Tab 栏，左侧显示 Tab 列表（图标 + 标题），每个 Tab 可关闭（✕），至少保留一个 Tab。点击 Tab 只切换 `activeTabId`，不关闭其他会话的 SSE 连接；每个会话的任务 ID、流式缓冲和事件连接独立保存。
 
 **关键坑：`.drag-region` 覆盖层**：Electron 无边框窗口的拖拽区（`position: fixed; height: 38px; z-index: 100`）正好盖在 `.main` 顶部的 TabBar 上，导致所有点击被拦截。解决：`.main` 加 `padding-top: 38px`，让 TabBar 从拖拽区下方开始。
 
 **文件 Tab 的打开**：`Sidebar` 的目录树文件项增加 `onDoubleClick` 事件 → `App.tsx` 的 `openFileTab(filePath)` → 调用 `/api/fs/read` 读取文件内容 + git diff → 创建 `kind: "file"` 的 Tab（不显示 Composer / ToolPanel，只显示 FileViewer）。`FileViewer` 有 diff 时展示 `UnifiedDiff`（仅修改部分），无 diff 时展示普通文件内容（带行号）。
 
-**打开项目与 Tab**：在本地桌面模式下，“打开项目”创建新的项目窗口，而不会清空、重载或切换原窗口的 Tab。新窗口拥有自己的占位会话 Tab、文件 Tab 列表和工作副本；原窗口继续保留全部会话/文件 Tab。`openSessionTab` 只在同一窗口内确保同一个 session 不重复开 Tab。
+**打开项目与 Tab**：在本地桌面模式下，“打开项目”调用当前 Core 的 workspace 切换接口。切换成功后窗口重新加载前端，当前 Tab 和工作副本清空，只保留一个占位会话 Tab；侧边栏显示新 workspace 的历史会话。配置目录仍固定在用户目录，项目切换不会创建新的内核，也不会丢失模型配置。
 
-**会话生命周期**：点击「新建会话」或切换项目只创建占位 Tab。用户发送第一条消息时，前端才调用 `POST /api/sessions`，将返回的 ID 绑定到当前 Tab，再调用 `POST /api/chat`。没有用户消息的 session 不进入历史列表，但列表接口保持只读，不负责删除尚未完成初始化的 session。会话标题默认取第一条用户消息，显式设置的 `metadata.name` 优先。
+**会话生命周期**：点击「新建会话」或切换项目只创建占位 Tab。用户发送第一条消息时，前端才调用 `POST /api/sessions`，将返回的 ID 绑定到当前 Tab，再调用 `POST /api/chat`。没有用户消息的 session 不进入历史列表；列表接口只过滤，不删除正在初始化的 session。会话标题默认取第一条用户消息，显式设置的 `metadata.name` 优先。
 
 #### 4. 多 LLM 配置界面 (`SettingsModal.tsx`)
 
@@ -464,6 +446,8 @@ async function openLocalWorkspace(workspace) {
 - 保存配置按钮
 
 配置持久化在 `.lite-code/config.json` 的 `"llm"` 段。设置弹窗内部维护编辑态，点击保存后由后端写盘并重建适配器；只有保存成功后新的配置才用于后续任务。
+
+**当前会话的模型切换**：全局配置中的 active 供应商和模型仍然是默认值。聊天 Tab 可以在输入区选择已经配置的供应商和模型，选择只保存到当前会话；其他会话、文件 Tab 和全局默认配置不受影响。没有单独选择模型的会话始终跟随系统默认，选择“系统默认”则清除当前会话的覆盖。正在运行的任务保持原模型，新的模型选择从下一条消息开始生效。
 
 **设置弹窗的编辑态与关闭策略**：配置表单通常包含 API 请求、密码字段和多个动态模型条目，不能把异步请求的完成回调直接当成弹窗关闭信号。保存成功时应保留弹窗并显示结果，让用户继续检查或切换供应商；保存失败时也应保留当前编辑态并显示错误，避免用户重新输入配置。遮罩层适合阻止背景交互，不应默认承担关闭弹窗的行为；关闭应由明确的关闭按钮触发。这样可以避免 React 组件卸载导致未保存编辑丢失，也能让异步保存的状态反馈始终在当前上下文中可见。
 
@@ -510,7 +494,7 @@ if (process.env.LITECODE_DEV_URL) {
 **关键特性**：
 - `titleBarStyle: "hiddenInset"` 无边框窗口 + 红绿灯避开侧边栏
 - `sandbox: true` + `contextIsolation: true` + `preload.js` 最小化安全桥
-- `dialog.showOpenDialog` + **新项目窗口**：选择目录后创建新的 BrowserWindow，并为它启动独立 Core；原窗口不重载、不切换 workspace
+- `dialog.showOpenDialog` + **当前 Core 热切换**：选择目录后调用后端 `POST /api/workspace`，任务运行时拒绝切换；成功后重载当前窗口前端
 - 60s 后端启动超时兜底；每个窗口关闭时 SIGTERM 回收它自己的 Core，应用退出时回收所有剩余 Core
 - 远程模式支持 Bearer Token 注入（`session.webRequest.onBeforeSendHeaders`）
 
@@ -561,9 +545,8 @@ PyInstaller 后端需要加载 Python 运行时、依赖和应用配置；Window
 const loadingUrl = `file://${path.join(__dirname, "loading.html")}`;
 createWindow(loadingUrl);
 
-const instance = await spawnLocalCore(workspace); // 后端可能耗时 30s
-localInstances.set(window, instance);
-window.loadURL(instance.url);                      // 就绪后跳转主界面
+const { url } = await spawnLocalCore();             // 后端可能耗时 30s
+mainWindow.loadURL(url);                            // 就绪后跳转主界面
 ```
 
 **渲染进程崩溃自动恢复**（`electron/main.js`）
@@ -708,7 +691,7 @@ function resolvePython() {
 }
 ```
 
-**Windows 增量打包**：`scripts/build-windows.ps1` 会对 `pyproject.toml` 计算 SHA-256 指纹。依赖清单未变化时跳过 pip 安装；变化时使用 `--no-build-isolation` 安装。根目录和 `web/` 存在 lockfile 时使用 `npm ci`，依赖目录不存在才安装。默认复用 PyInstaller 缓存，发布构建才加 `-Clean`：
+**Windows 增量打包**：`scripts/build-windows.ps1` 会对 `pyproject.toml` 计算 SHA-256 指纹。依赖清单未变化时跳过 pip 安装；首次安装或依赖变化时使用标准隔离构建，避免全新 runner 缺少构建工具导致原生包安装失败。根目录和 `web/` 存在 lockfile 时使用 `npm ci`，依赖目录不存在才安装。默认复用 PyInstaller 缓存，发布构建才加 `-Clean`：
 
 ```powershell
 # build-windows.ps1 用法
@@ -728,13 +711,13 @@ function resolvePython() {
 [package] Step 3/4: Wrap DMG with hdiutil
 [7641] prepare... (0.2s)
 [7893] hdiutil create... (18.1s)
-[package] Done -> release/lite-code-0.9.0rc-arm64.dmg
+[package] Done -> release/lite-code-0.9.5-arm64.dmg
 ```
 
 **产物**（以 macOS 为例，实际版本号来自 `package.json`）：
 ```
 release/
-├── lite-code-0.9.0rc-arm64.dmg        (安装包)
+├── lite-code-0.9.5-arm64.dmg          (安装包)
 └── mac-arm64/lite-code.app             (解包目录，可直接运行)
 ```
 
@@ -742,6 +725,8 @@ release/
 - **后端进包**：`extraResources` 把 `release/backend/lite-code-backend` 复制到 `resources/litecode-bin/lite-code-backend`，Electron 主进程通过 `resolvePython()` 使用内置二进制；
 - **图标**：`scripts/app-icon.svg` 直接配置为 `win.icon`，electron-builder 自动栅格化为 ICO；
 - **加载页**：`--onedir` 直接携带依赖目录，启动时无需解压，配合 loading.html 明确展示后端就绪进度。
+
+**配置目录**：Core 的默认配置目录为 `~/.lite-code`，其中保存模型、API Key、安全规则、模型元数据和会话历史。`--config-dir` 可用于测试或显式隔离配置；正常桌面启动始终使用用户目录。
 
 **开发模式**：`npm run dev`（concurrently 编排 Python Core + Vite + Electron，一行命令三步启动）
 

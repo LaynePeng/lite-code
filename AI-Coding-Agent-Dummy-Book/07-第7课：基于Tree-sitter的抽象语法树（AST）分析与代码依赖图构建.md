@@ -14,10 +14,10 @@
 
 #### 2. 安装与解析器封装
 
-在 Python 中，我们使用 `tree-sitter` 与 `tree-sitter-typescript` 两个 wheel：
+在项目中，Tree-sitter 用于 TypeScript/JavaScript、Java 和 Go；Python 使用标准库 `ast`，避免再引入一个 Python grammar wheel：
 
 ```Bash
-pip install tree-sitter tree-sitter-typescript
+pip install tree-sitter tree-sitter-typescript tree-sitter-java tree-sitter-go
 ```
 
 > 注意：tree-sitter 0.26+ 的新 API 需要先 `tree_sitter.Language()` 包装，再传给 `Parser`。

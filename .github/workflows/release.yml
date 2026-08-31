@@ -120,30 +120,54 @@ jobs:
         shell: bash
         run: |
           tag="${GITHUB_REF_NAME}"
-          previous="$(gh release list --limit 100 --json tagName --jq '.[].tagName' | head -n 1 || true)"
+          # Git tag 不一定都对应 GitHub Release，版本范围以已发布的 Release 为准。
+          previous="$(gh release list --limit 1 --json tagName --jq '.[0].tagName' 2>/dev/null || true)"
+          if [ -z "$previous" ]; then
+            range_label="项目首次 GitHub Release（完整项目历史）"
+          else
+            range_label="${previous}..${tag}"
+          fi
           {
             echo "# lite-code ${tag}"
             echo
-            echo "## 功能点"
+            echo "## 版本范围"
+            echo "本说明覆盖 ${range_label} 之间的全部提交和功能变化。"
+            echo
+            echo "## 核心功能"
             echo "- 多窗口本地桌面模式：每个窗口拥有独立 Python Core、任务流、审批状态和 workspace。"
-            echo "- 同一项目支持多个窗口，每个窗口独立维护会话 Tab 和文件 Tab。"
-            echo "- 普通工具调用合并为轻量 activity，代码修改、错误和取消操作显示详细卡片。"
-            echo "- 改进流式响应：安全 UTF-8 解码、React 实时缓冲、SSE 终止事件保障和 LLM 硬超时。"
-            echo "- 支持多个预置供应商、多个模型以及多个独立自定义 OpenAI 兼容供应商。"
+            echo "- 同一项目支持多个窗口，每个窗口独立维护会话 Tab、文件 Tab 和运行时状态。"
+            echo "- 会话模型支持系统默认模型与当前会话独立模型，模型选择会持久化并在后续任务中生效。"
+            echo "- 改进 Session 持久化与 workspace 隔离，空会话不进入历史记录，metadata 更新不会丢失 workspace。"
+            echo "- 普通工具调用、代码修改、错误和取消操作使用分级 activity/card 展示。"
+            echo "- 改进流式响应：安全 UTF-8 解码、React 实时缓冲、SSE 终止事件和 LLM 硬超时。"
+            echo "- 停止任务支持协作式 abort、异步任务取消，以及 task ID 尚未返回时的延迟停止。"
+            echo
+            echo "## 代码分析工具"
+            echo "- get_file_outline 支持 Python、TypeScript、JavaScript、Java、Go。"
+            echo "- read_focused_symbol 支持 Python、TypeScript、JavaScript、Java、Go。"
+            echo "- Python 使用标准库 ast；TypeScript/JavaScript/Java/Go 使用对应 Tree-sitter grammar。"
+            echo "- 支持类、函数、异步函数、方法和 Go 类型等符号提取，目标符号缺失和语法错误返回明确错误。"
+            echo
+            echo "## 安全与工程质量"
             echo "- 项目外文件读取和写入采用分级审批，读取授权不能升级为写入授权。"
-            echo "- 改进 Session 持久化、workspace 隔离、ripgrep 自动发现和设置窗口稳定性。"
+            echo "- 补充 AST 多语言测试、会话模型覆盖测试和发布流程验证。"
+            echo "- Windows 构建在依赖未变化时跳过 pip 安装，PyInstaller 默认复用缓存，-Clean 用于干净发布构建。"
+            echo
+            echo "## 文档与教程"
+            echo "- 第 7、16 课同步 Python/Java/Go AST 工具支持。"
+            echo "- 第 19 课统一为最终版 Web UI、会话生命周期、停止任务、多 Tab 和跨平台打包逻辑。"
+            echo "- 教程删除多次迭代过程描述，改为按最终架构说明。"
             echo
             echo "## 安装包"
             echo "- macOS Apple Silicon：\`*.dmg\`"
             echo "- Windows x64：\`*.exe\`"
-            if [ -n "$previous" ] && [ "$previous" != "$tag" ]; then
-              echo
-              echo "## 相对 ${previous} 的提交变化"
-              git log --pretty=format:'- %s (%h)' "${previous}..${tag}"
+            echo
+            if [ -n "$previous" ]; then
+              echo "## 完整提交列表（${previous} 到 ${tag}）"
+              git log --reverse --pretty=format:'- %s (%h)' "${previous}..${tag}"
             else
-              echo
-              echo "## 首次自动发布"
-              echo "本次为自动发布流程的首次 GitHub Release，以上功能点列出当前版本完整功能。"
+              echo "## 完整提交列表（项目初始提交到 ${tag}）"
+              git log --reverse --pretty=format:'- %s (%h)' "$tag"
             fi
           } > RELEASE_NOTES.md
       - name: Create release and upload packages

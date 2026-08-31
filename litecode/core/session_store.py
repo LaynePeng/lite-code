@@ -108,3 +108,12 @@ class SessionStore:
             os.unlink(path)
             return True
         return False
+
+    def update_metadata(self, session_id: str, updates: Dict[str, Any]) -> Optional[SessionSnapshot]:
+        """原子更新会话元数据，保留消息与创建时间。"""
+        snapshot = self.load(session_id)
+        if snapshot is None:
+            return None
+        metadata = {**snapshot.metadata, **updates}
+        self.save(session_id, snapshot.messages, metadata)
+        return self.load(session_id)

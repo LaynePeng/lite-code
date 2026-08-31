@@ -20,7 +20,7 @@ from .tasks import TaskManager
 
 logger = logging.getLogger("litecode.server")
 
-VERSION = "0.9.2rc0"
+VERSION = "0.9.5"
 
 
 # ---------------------------------------------------------------- 请求模型
@@ -57,6 +57,11 @@ class ConfigUpdateRequest(BaseModel):
 
 class WorkspaceUpdateRequest(BaseModel):
     path: str
+
+
+class SessionModelRequest(BaseModel):
+    provider: Optional[str] = None
+    model: Optional[str] = None
 
 
 class LLMConfigRequest(BaseModel):
@@ -276,6 +281,52 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="会话不存在")
         return {"ok": True}
 
+    @fast_app.get("/api/sessions/{session_id}/model")
+    async def get_session_model(session_id: str, request: Request):
+        _check_auth(request)
+        snapshot = app.session_store.load(session_id)
+        if snapshot is None:
+            raise HTTPException(status_code=404, detail="会话不存在")
+        override = snapshot.metadata.get("model")
+        default = app.llm_registry.get_active_provider_settings()
+        if not isinstance(override, dict):
+            override = None
+        return {
+            "override": override,
+            "effective": {
+                "provider": override.get("provider") if override else app.llm_registry.active,
+                "model": override.get("model") if override else default.get("model", ""),
+            },
+        }
+
+    @fast_app.post("/api/sessions/{session_id}/model")
+    async def set_session_model(session_id: str, payload: SessionModelRequest, request: Request):
+        _check_auth(request)
+        snapshot = app.session_store.load(session_id)
+        if snapshot is None:
+            raise HTTPException(status_code=404, detail="会话不存在")
+        metadata = dict(snapshot.metadata)
+        if not payload.provider and not payload.model:
+            metadata.pop("model", None)
+            override = None
+        else:
+            provider = (payload.provider or "").strip()
+            model = (payload.model or "").strip()
+            settings = app.llm_registry.providers.get(provider)
+            configured_models = (settings or {}).get("models") or []
+            if not provider or not model or not settings or not settings.get("api_key"):
+                raise HTTPException(status_code=400, detail="只能选择已配置 API Key 的供应商和模型")
+            if model not in configured_models:
+                raise HTTPException(status_code=400, detail="只能选择该供应商已配置的模型")
+            override = {"provider": provider, "model": model}
+            metadata["model"] = override
+        app.session_store.save(session_id, snapshot.messages, metadata)
+        default = app.llm_registry.get_active_provider_settings()
+        return {"override": override, "effective": {
+            "provider": override["provider"] if override else app.llm_registry.active,
+            "model": override["model"] if override else default.get("model", ""),
+        }}
+
     # ------------------------------------------------------------ 工具与工作区
 
     @fast_app.get("/api/tools")
@@ -328,12 +379,12 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
     async def set_workspace(payload: WorkspaceUpdateRequest, request: Request):
         _check_auth(request)
         import os as _os
-        from ..core.session_store import SessionStore
         path = _os.path.abspath(_os.path.expanduser(payload.path))
         if not _os.path.isdir(path):
             raise HTTPException(status_code=400, detail=f"目录不存在: {path}")
+        if tasks.active_count() > 0:
+            raise HTTPException(status_code=409, detail="当前有任务运行，请停止或等待任务结束后再切换项目")
         app.workspace = path
-        app.session_store = SessionStore(_os.path.join(app.config_dir, "sessions"))
         return {"ok": True, "workspace": app.workspace}
 
     @fast_app.get("/api/fs/list")

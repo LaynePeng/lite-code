@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { AgentInfo } from "../types";
+import type { AgentInfo, LLMConfig, SessionModel } from "../types";
 
 export default function Composer({
   disabled,
@@ -9,6 +9,9 @@ export default function Composer({
   onSelectAgent,
   onSend,
   onStop,
+  llmConfig,
+  sessionModel,
+  onSessionModelChange,
 }: {
   disabled: boolean;
   running: boolean;
@@ -17,6 +20,9 @@ export default function Composer({
   onSelectAgent: (id: string) => void;
   onSend: (prompt: string) => void;
   onStop: () => void;
+  llmConfig: LLMConfig | null;
+  sessionModel: SessionModel | null;
+  onSessionModelChange: (model: SessionModel | null) => void;
 }) {
   const [text, setText] = useState("");
 
@@ -48,6 +54,30 @@ export default function Composer({
           <span className="agent-bar-hint" title="按 Tab 在 Agent 之间切换">
             Tab
           </span>
+          <span className="agent-bar-label">模型:</span>
+          <select
+            className="model-select"
+            value={sessionModel ? `${sessionModel.provider}\n${sessionModel.model}` : "__default__"}
+            onChange={(e) => {
+              if (e.target.value === "__default__") {
+                onSessionModelChange(null);
+                return;
+              }
+              const [provider, model] = e.target.value.split("\n");
+              onSessionModelChange({ provider, model });
+            }}
+            disabled={disabled || running}
+            title="只影响当前会话，正在运行的任务不会切换"
+          >
+            <option value="__default__">系统默认</option>
+            {llmConfig && Object.entries(llmConfig.providers).map(([pid, provider]) =>
+              provider.has_key && (provider.models ?? []).map((model) => (
+                <option key={`${pid}:${model}`} value={`${pid}\n${model}`}>
+                  {provider.name || pid} / {model}
+                </option>
+              ))
+            )}
+          </select>
         </div>
       )}
       <div className="composer">

@@ -1292,6 +1292,28 @@ button {
   cursor: default;
 }
 
+.model-select {
+  min-width: 160px;
+  max-width: 260px;
+  height: 28px;
+  padding: 0 8px;
+  color: var(--text-1);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font: 11px var(--font-mono);
+}
+
+.model-select:focus {
+  outline: 1px solid var(--accent);
+  border-color: var(--accent);
+}
+
+.model-select:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .composer {
   padding: 10px max(24px, calc((100% - 820px) / 2)) 16px;
   background: linear-gradient(transparent, var(--bg-0) 30%);

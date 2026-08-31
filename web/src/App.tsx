@@ -8,7 +8,7 @@ import SettingsModal from "./components/SettingsModal";
 import Sidebar from "./components/Sidebar";
 import TabBar from "./components/TabBar";
 import ToolPanel from "./components/ToolPanel";
-import type { AgentInfo, AppConfig, ContextStats, ChatSessionState, Msg, ServerStatus, SessionInfo, Stats, TabItem, ToolCardInfo, WorkItem } from "./types";
+import type { AgentInfo, AppConfig, ContextStats, ChatSessionState, LLMConfig, Msg, ServerStatus, SessionInfo, SessionModel, Stats, TabItem, ToolCardInfo, WorkItem } from "./types";
 
 interface PendingApproval {
   id: string;
@@ -52,6 +52,7 @@ export default function App() {
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const [config, setConfig] = useState<AppConfig | null>(null);
+  const [llmConfig, setLlmConfig] = useState<LLMConfig | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<"sessions" | "files" | "stats">("sessions");
@@ -63,12 +64,12 @@ export default function App() {
   const [success, setSuccess] = useState<string | null>(null);
   const [treeRevision, setTreeRevision] = useState(0);
 
-  const esRef = useRef<EventSource | null>(null);
-  const taskIdRef = useRef<string | null>(null);
-  const stopRequestedRef = useRef(false);
-  const streamingRef = useRef<StreamingState | null>(null);
-  const lastEventTimeRef = useRef<number>(Date.now());
-  const flushTimerRef = useRef<number | null>(null);
+  const eventSourcesRef = useRef<Map<string, EventSource>>(new Map());
+  const taskIdsRef = useRef<Map<string, string>>(new Map());
+  const stopRequestedRef = useRef<Set<string>>(new Set());
+  const streamingRefs = useRef<Map<string, StreamingState>>(new Map());
+  const lastEventTimesRef = useRef<Map<string, number>>(new Map());
+  const flushTimersRef = useRef<Map<string, number>>(new Map());
   const chatStatesRef = useRef<Record<string, ChatSessionState>>({});
   const tabsRef = useRef<TabItem[]>([]);
   const sessionsRequestRef = useRef(0);
@@ -129,10 +130,11 @@ export default function App() {
 
   const refreshAll = useCallback(async () => {
     try {
-      const [st, cfg, ag] = await Promise.all([api.status(), api.config(), api.agents()]);
+      const [st, cfg, ag, llm] = await Promise.all([api.status(), api.config(), api.agents(), api.llmConfig()]);
       setStatus(st);
       setConfig(cfg);
       setAgents(ag);
+      setLlmConfig(llm);
       await refreshSessions(st.workspace); // 用刚取到的 workspace，避免 setState 异步时序
     } catch (e) {
       setErrorPublic((e as Error).message);
@@ -144,6 +146,19 @@ export default function App() {
   function setErrorPublic(msg: string | null) {
     patchActiveChat({ error: msg });
   }
+
+  const setSessionModel = useCallback(async (model: SessionModel | null) => {
+    if (!activeSessionId || currentChat.running) return;
+    try {
+      const result = await api.setSessionModel(activeSessionId, model);
+      patchChat(activeSessionId, {
+        modelOverride: result.override,
+        effectiveModel: result.effective,
+      });
+    } catch (e) {
+      patchActiveChat({ error: (e as Error).message });
+    }
+  }, [activeSessionId, currentChat.running, patchActiveChat, patchChat]);
 
   useEffect(() => {
     void refreshAll();
@@ -168,12 +183,14 @@ export default function App() {
 
   // ------------------------------------------------------------ Tab 操作
 
-  const closeStream = useCallback(() => {
-    if (esRef.current) {
-      esRef.current.close();
-      esRef.current = null;
+  const closeStream = useCallback((sid?: string) => {
+    if (sid) {
+      eventSourcesRef.current.get(sid)?.close();
+      eventSourcesRef.current.delete(sid);
+      return;
     }
-    taskIdRef.current = null;
+    for (const source of eventSourcesRef.current.values()) source.close();
+    eventSourcesRef.current.clear();
   }, []);
 
   const openSessionTab = useCallback(
@@ -193,7 +210,6 @@ export default function App() {
   );
 
   const openFileTab = useCallback(async (filePath: string) => {
-    closeStream();
     let content = "", diff = "", language = "";
     try {
       const r = await api.readFile(filePath);
@@ -219,7 +235,7 @@ export default function App() {
       return [...prev, tab];
     });
     setSidebarTab("files");
-  }, [closeStream]);
+  }, []);
 
   const closeTab = useCallback(
     (id: string) => {
@@ -240,22 +256,26 @@ export default function App() {
 
   const newChatTab = useCallback(() => {
     // 占位 tab：不创建后端 session，首条消息发送时才创建并绑定（见 send）
-    closeStream();
     setTabs((prev) => {
       const tab: TabItem = { id: nextTabId(), kind: "chat", title: "新会话" };
       setActiveTabId(tab.id);
       return [...prev, tab];
     });
-  }, [closeStream]);
+  }, []);
 
   const selectSession = useCallback(
     async (sid: string) => {
-      closeStream();
       const info = sessions.find((s) => s.session_id === sid);
       openSessionTab(sid, info?.title || sid);
       if (!chatStatesRef.current[sid]) {
         const snap = await api.getSession(sid);
         patchChat(sid, { ...EMPTY_CHAT, messages: snap?.messages ?? [] });
+        try {
+          const model = await api.sessionModel(sid);
+          patchChat(sid, { modelOverride: model.override, effectiveModel: model.effective });
+        } catch {
+          // 旧会话或刚创建的会话没有模型覆盖时，沿用系统默认。
+        }
         try {
           const ctx = await api.contextStats(sid);
           if (ctx.session && Object.keys(ctx.session).length > 0) {
@@ -266,7 +286,7 @@ export default function App() {
         }
       }
     },
-    [closeStream, openSessionTab, patchChat, sessions]
+    [openSessionTab, patchChat, sessions]
   );
 
   const deleteSession = useCallback(
@@ -300,7 +320,7 @@ export default function App() {
         if (!result.ok && result.error !== "cancelled") {
           patchActiveChat({ error: result.error ?? "无法切换项目" });
         }
-        // Electron 本地模式会为新项目创建独立窗口，原窗口及其 Core 保持不变。
+        if (result.ok) window.location.reload();
       } catch (e) {
         patchActiveChat({ error: (e as Error).message });
       }
@@ -359,31 +379,30 @@ export default function App() {
 
   // ------------------------------------------------------------ 流式节流
 
-  const scheduleStreamFlush = useCallback(() => {
-    if (flushTimerRef.current !== null) return;
-    flushTimerRef.current = window.setTimeout(() => {
-      flushTimerRef.current = null;
-      const cur = streamingRef.current ?? { items: [] };
-      const sid = tabsRef.current.find((t) => t.id === activeTabId)?.sessionId;
-      if (sid) patchChat(sid, { streaming: { ...cur } });
+  const scheduleStreamFlush = useCallback((sid: string) => {
+    if (flushTimersRef.current.has(sid)) return;
+    const timer = window.setTimeout(() => {
+      flushTimersRef.current.delete(sid);
+      const cur = streamingRefs.current.get(sid) ?? { items: [] };
+      patchChat(sid, { streaming: { ...cur } });
     }, 80);
-  }, [activeTabId, patchChat]);
+    flushTimersRef.current.set(sid, timer);
+  }, [patchChat]);
 
-  const cancelStreamFlush = useCallback(() => {
-    if (flushTimerRef.current !== null) {
-      clearTimeout(flushTimerRef.current);
-      flushTimerRef.current = null;
+  const cancelStreamFlush = useCallback((sid: string) => {
+    const timer = flushTimersRef.current.get(sid);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      flushTimersRef.current.delete(sid);
     }
   }, []);
 
   // ------------------------------------------------------------ SSE 事件处理
 
   const handleSSEEvent = useCallback(
-    (ev: import("./types").SSEEvent) => {
-      lastEventTimeRef.current = Date.now();
-      const sid = activeTabId ? tabsRef.current.find((t) => t.id === activeTabId)?.sessionId : null;
-      if (!sid) return;
-      const st = () => patchChat(sid!, { stalled: false });
+    (sid: string, ev: import("./types").SSEEvent) => {
+      lastEventTimesRef.current.set(sid, Date.now());
+      const st = () => patchChat(sid, { stalled: false });
       st();
       const log = (msg: string) => pushLog(msg);
 
@@ -391,20 +410,20 @@ export default function App() {
         case "llm:stream": {
           // SSE chunk 的到达速度高于 React state 提交速度。必须从 ref 读取
           // 已累积内容，否则连续 chunk 会基于旧 state 互相覆盖并缺字。
-          const cur = streamingRef.current ?? getChat(sid).streaming ?? { items: [] };
+          const cur = streamingRefs.current.get(sid) ?? getChat(sid).streaming ?? { items: [] };
           const last = cur.items[cur.items.length - 1];
           const items: WorkItem[] = last?.type === "text"
             ? [...cur.items.slice(0, -1), { ...last, content: last.content + ev.data.chunk }]
             : [...cur.items, { type: "text" as const, id: `s${Date.now()}-${Math.random()}`, content: ev.data.chunk }];
-          streamingRef.current = { ...cur, items };
-          scheduleStreamFlush();
+          streamingRefs.current.set(sid, { ...cur, items });
+          scheduleStreamFlush(sid);
           break;
         }
         case "llm:turn_start": {
           log(`⟳ 第 ${ev.data.turn} 轮`);
-          const cur = streamingRef.current ?? getChat(sid).streaming ?? { items: [] };
-          streamingRef.current = { ...cur, turn: ev.data.turn };
-          patchChat(sid, { streaming: { ...streamingRef.current } });
+          const cur = streamingRefs.current.get(sid) ?? getChat(sid).streaming ?? { items: [] };
+          streamingRefs.current.set(sid, { ...cur, turn: ev.data.turn });
+          patchChat(sid, { streaming: { ...streamingRefs.current.get(sid)! } });
           break;
         }
         case "tool:before_execute": {
@@ -414,18 +433,18 @@ export default function App() {
             args: ev.data.args,
             status: "running",
           };
-          const cur = streamingRef.current ?? getChat(sid).streaming ?? { items: [] };
+          const cur = streamingRefs.current.get(sid) ?? getChat(sid).streaming ?? { items: [] };
           const lastItem = cur.items[cur.items.length - 1];
           const items = lastItem?.type === "activity"
             ? [...cur.items.slice(0, -1), { ...lastItem, tools: [...lastItem.tools, card] }]
             : [...cur.items, { type: "activity" as const, id: `a${Date.now()}`, tools: [card] }];
-          streamingRef.current = { ...cur, items };
-          patchChat(sid, { streaming: { ...streamingRef.current } });
+          streamingRefs.current.set(sid, { ...cur, items });
+          patchChat(sid, { streaming: { ...streamingRefs.current.get(sid)! } });
           break;
         }
         case "tool:after_execute": {
           if (TREE_TOUCH_TOOLS.has(ev.data.toolName)) setTreeRevision((v) => v + 1);
-          const cur = streamingRef.current ?? getChat(sid).streaming;
+          const cur = streamingRefs.current.get(sid) ?? getChat(sid).streaming;
           if (!cur) break;
            let itemIndex = -1;
            let toolIndex = -1;
@@ -448,8 +467,8 @@ export default function App() {
                ...(ev.data.result !== undefined ? { result: ev.data.result } : {}),
              }),
            });
-          streamingRef.current = { ...cur, items };
-          patchChat(sid, { streaming: { ...streamingRef.current } });
+          streamingRefs.current.set(sid, { ...cur, items });
+          patchChat(sid, { streaming: { ...streamingRefs.current.get(sid)! } });
           break;
         }
         case "approval:request": {
@@ -470,7 +489,7 @@ export default function App() {
         }
         case "task:done": {
           setTreeRevision((v) => v + 1);
-          const cur = streamingRef.current;
+          const cur = streamingRefs.current.get(sid);
           const finalMsg: Msg = { role: "assistant", content: cur?.items.filter((i) => i.type === "text").map((i) => i.content).join("\n\n") || ev.data.content };
           patchChat(sid, {
             messages: [...getChat(sid).messages, finalMsg],
@@ -479,10 +498,11 @@ export default function App() {
             running: false,
             turn: 0,
           });
-          cancelStreamFlush();
-          streamingRef.current = null;
-          closeStream();
-          taskIdRef.current = null;
+          cancelStreamFlush(sid);
+          streamingRefs.current.delete(sid);
+          closeStream(sid);
+          taskIdsRef.current.delete(sid);
+          stopRequestedRef.current.delete(sid);
           pushLog("■ 任务结束");
           void (async () => {
             const snap = await api.getSession(sid);
@@ -494,9 +514,11 @@ export default function App() {
         case "task:error": {
           pushLog(`✗ 任务错误: ${ev.data.message}`);
           patchChat(sid, { error: ev.data.message, running: false });
-          cancelStreamFlush();
-          closeStream();
-          taskIdRef.current = null;
+          cancelStreamFlush(sid);
+          streamingRefs.current.delete(sid);
+          closeStream(sid);
+          taskIdsRef.current.delete(sid);
+          stopRequestedRef.current.delete(sid);
           setTreeRevision((v) => v + 1);
           void refreshSessions();
           break;
@@ -514,15 +536,13 @@ export default function App() {
           break;
       }
     },
-    [activeTabId, getChat, patchChat, pushLog, scheduleStreamFlush, cancelStreamFlush, closeStream, refreshSessions]
+    [getChat, patchChat, pushLog, scheduleStreamFlush, cancelStreamFlush, closeStream, refreshSessions]
   );
 
   // ------------------------------------------------------------ 发送
 
   const send = useCallback(
     async (prompt: string) => {
-      taskIdRef.current = null;
-      stopRequestedRef.current = false;
       let sid = activeTabId ? tabsRef.current.find((t) => t.id === activeTabId)?.sessionId : null;
       let createdSession = false;
       if (!sid) {
@@ -541,25 +561,25 @@ export default function App() {
         error: null,
         running: true,
       });
-      cancelStreamFlush();
-      streamingRef.current = { items: [] };
+      cancelStreamFlush(sid);
+      streamingRefs.current.set(sid, { items: [] });
       patchChat(sid, { streaming: { items: [] } });
 
       const connect = (taskId: string) => {
         const es = new EventSource(`/api/tasks/${taskId}/events`);
-        esRef.current = es;
+        eventSourcesRef.current.set(sid, es);
         es.onopen = () => {
-          lastEventTimeRef.current = Date.now();
+          lastEventTimesRef.current.set(sid, Date.now());
           pushLog(`🔗 已连接任务 ${taskId}`);
         };
         es.onmessage = (e) => {
           if (e.data === "[DONE]") {
             es.close();
-            esRef.current = null;
+            eventSourcesRef.current.delete(sid);
             return;
           }
           try {
-            handleSSEEvent(JSON.parse(e.data));
+            handleSSEEvent(sid, JSON.parse(e.data));
           } catch {
             /* ignore */
           }
@@ -572,9 +592,9 @@ export default function App() {
       try {
         pushLog("➤ 提交任务…");
         const { task_id } = await api.chat(sid, prompt, currentAgent);
-        taskIdRef.current = task_id;
-        if (stopRequestedRef.current) {
-          stopRequestedRef.current = false;
+        taskIdsRef.current.set(sid, task_id);
+        if (stopRequestedRef.current.has(sid)) {
+          stopRequestedRef.current.delete(sid);
           pushLog("■ 任务已提交，立即请求停止…");
           await api.stopTask(task_id).catch(() => {});
         }
@@ -596,22 +616,24 @@ export default function App() {
   );
 
   const stop = useCallback(async () => {
-    const tid = taskIdRef.current;
-    stopRequestedRef.current = true;
+    const sid = activeSessionId;
+    if (!sid) return;
+    const tid = taskIdsRef.current.get(sid);
+    stopRequestedRef.current.add(sid);
     pushLog("■ 请求停止任务…");
     if (!tid) {
-      patchActiveChat({ running: false, streaming: null });
+      patchChat(sid, { running: false, streaming: null });
       pushLog("■ 任务尚未提交，已取消发送");
       return;
     }
     try {
       await api.stopTask(tid);
-      patchActiveChat({ running: false, streaming: null, pendingApproval: null });
+      patchChat(sid, { running: false, streaming: null, pendingApproval: null });
       pushLog("■ 停止请求已发送");
     } catch (e) {
       pushLog(`✗ 停止失败: ${(e as Error).message}`);
     }
-  }, [patchActiveChat, pushLog]);
+  }, [activeSessionId, patchChat, pushLog]);
 
   const approve = useCallback(
     async (approved: boolean) => {
@@ -686,7 +708,7 @@ export default function App() {
         <TabBar
           tabs={tabs}
           activeTabId={activeTabId}
-          onSelect={(id) => { closeStream(); setActiveTabId(id); }}
+          onSelect={(id) => setActiveTabId(id)}
           onClose={closeTab}
         />
         {activeTab?.kind === "file" ? (
@@ -713,6 +735,9 @@ export default function App() {
               onSelectAgent={setCurrentAgent}
               onSend={(p) => void send(p)}
               onStop={stop}
+              llmConfig={llmConfig}
+              sessionModel={currentChat.modelOverride ?? null}
+              onSessionModelChange={(model) => void setSessionModel(model)}
             />
             <button className="debug-toggle" onClick={() => setShowDebug(!showDebug)} title="调试日志">
               {showDebug ? "隐藏日志" : "日志"}

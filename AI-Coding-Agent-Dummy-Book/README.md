@@ -12,6 +12,7 @@
 - **Build/Plan 双默认 Agent** 与用户自定义 Agent 机制
 - Cordis 微内核、洋葱中间件、子 Agent 编排
 - 多 LLM 供应商接入、FastAPI 服务、React UI、Electron 桌面打包
+- 支持系统默认模型与当前会话独立切换模型
 
 ## 课程目录
 

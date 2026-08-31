@@ -62,7 +62,7 @@ async def test_status_and_sessions(live_client):
     c, app, _ = live_client
     r = await c.get("/api/status")
     assert r.status_code == 200
-    assert r.json()["version"] == "0.9.2rc0"
+    assert r.json()["version"] == "0.9.5"
 
     r = await c.post("/api/sessions", json={"name": "会话A"})
     assert r.status_code == 200
@@ -84,6 +84,44 @@ async def test_rapid_session_creation_does_not_overwrite(live_client):
     )
     ids = {r.json()["session_id"] for r in responses}
     assert len(ids) == 2
+
+
+async def test_session_model_override(live_client):
+    c, app, _ = live_client
+    app.llm_registry.providers["openai"]["api_key"] = "test-key"
+    app.llm_registry.providers["openai"]["models"] = ["gpt-test"]
+    r = await c.post("/api/sessions", json={"name": "模型会话"})
+    sid = r.json()["session_id"]
+
+    r = await c.post(f"/api/sessions/{sid}/model", json={"provider": "openai", "model": "gpt-test"})
+    assert r.status_code == 200
+    assert r.json()["override"] == {"provider": "openai", "model": "gpt-test"}
+
+    r = await c.get(f"/api/sessions/{sid}/model")
+    assert r.json()["effective"] == {"provider": "openai", "model": "gpt-test"}
+
+    r = await c.post(f"/api/sessions/{sid}/model", json={})
+    assert r.status_code == 200
+    assert r.json()["override"] is None
+
+    r = await c.post(f"/api/sessions/{sid}/model", json={"provider": "openai", "model": "not-configured"})
+    assert r.status_code == 400
+
+
+def test_default_config_dir_is_stable_across_workspaces(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    first_workspace = tmp_path / "project-a"
+    second_workspace = tmp_path / "project-b"
+
+    first = AgentApp(workspace=str(first_workspace))
+    first.llm_registry.providers["openai"]["api_key"] = "persisted-key"
+    first._persist_config()
+
+    second = AgentApp(workspace=str(second_workspace))
+    assert first.config_dir == second.config_dir == str(home / ".lite-code")
+    assert second.llm_registry.providers["openai"]["api_key"] == "persisted-key"
 
 
 async def test_chat_sse_flow(live_client):

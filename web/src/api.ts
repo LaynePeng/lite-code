@@ -40,6 +40,11 @@ export const api = {
   createSession: (name?: string) =>
     req<{ session_id: string }>("/api/sessions", { method: "POST", body: JSON.stringify(name ? { name } : {}) }),
   getSession: (id: string) => req<{ messages: import("./types").Msg[] }>(`/api/sessions/${id}`),
+  sessionModel: (id: string) => req<import("./types").SessionModelResponse>(`/api/sessions/${id}/model`),
+  setSessionModel: (id: string, model: import("./types").SessionModel | null) =>
+    req<import("./types").SessionModelResponse>(`/api/sessions/${id}/model`, {
+      method: "POST", body: JSON.stringify(model ?? {}),
+    }),
   deleteSession: (id: string) =>
     req<{ ok: boolean }>(`/api/sessions/${id}`, { method: "DELETE" }),
 

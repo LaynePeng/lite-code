@@ -123,7 +123,11 @@ class TaskManager:
         snapshot = self.app.session_store.load(session_id)
         if snapshot and snapshot.messages:
             kernel.ctx.messages = list(snapshot.messages)
-        loop = self.app.create_loop(kernel, registry, agent_id=agent_id)
+        model_override = (snapshot.metadata.get("model") if snapshot else None) or None
+        if not isinstance(model_override, dict):
+            model_override = None
+        loop = self.app.create_loop(kernel, registry, agent_id=agent_id,
+                                    model_override=model_override)
 
         handle = TaskHandle(task_id, kernel, registry, loop, self.app)
         handle.agent_id = agent_id or "build"

@@ -75,6 +75,17 @@ export interface ServerStatus {
   active_tasks: number;
   sessions_count: number;
   token_auth: boolean;
+  active_provider?: string;
+}
+
+export interface SessionModel {
+  provider: string;
+  model: string;
+}
+
+export interface SessionModelResponse {
+  override: SessionModel | null;
+  effective: SessionModel;
 }
 
 export interface AppConfig {
@@ -230,4 +241,6 @@ export interface ChatSessionState {
   error: string | null;
   pendingApproval: { id: string; action: string; reason: string } | null;
   stalled: boolean;
+  modelOverride?: SessionModel | null;
+  effectiveModel?: SessionModel;
 }

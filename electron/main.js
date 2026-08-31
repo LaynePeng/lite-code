@@ -3,9 +3,8 @@
 //   1. 读取客户端配置（~/.lite-code/client.json），支持远程 Core 直连
 //   2. 无配置时自动拉起本地 Python Core（打包后使用内置二进制）
 //   3. 等待 LITECODE_CORE_READY 就绪标记后打开窗口
-//   4. 「打开项目」：为每个项目窗口启动独立 Core，不影响原窗口
-//   5. 一个 workspace 可打开多个窗口；每个窗口的任务独立，Tab 是窗口内工作台状态
-//   6. 退出时回收各窗口对应的后端进程
+//   4. 「打开项目」：通过当前 Core 热切换 workspace，不新建或重启后端
+//   5. 退出时回收后端进程
 const { app, BrowserWindow, session, shell, dialog, ipcMain } = require("electron");
 const { spawn } = require("child_process");
 const fs = require("fs");
@@ -15,9 +14,7 @@ const path = require("path");
 const CLIENT_CONFIG = path.join(os.homedir(), ".lite-code", "client.json");
 
 let mainWindow = null;
-// 本地模式下每个窗口对应一个独立 Core。即使多个窗口打开同一 workspace，
-// 它们的任务和实时状态也独立；会话/文件 Tab 仅属于各自渲染窗口。
-const localInstances = new Map(); // BrowserWindow -> { child, url }
+let coreChild = null; // 当前本地后端进程
 let coreMode = "local"; // "local" | "remote" | "dev"
 let coreUrl = ""; // 当前后端 HTTP 地址（热切换工作区用）
 
@@ -33,7 +30,7 @@ function loadClientConfig() {
 }
 
 function createWindow(url) {
-  const window = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
     minWidth: 960,
@@ -51,40 +48,40 @@ function createWindow(url) {
   });
 
   // 立即显示窗口 + 内置加载页，避免等待后端就绪时空白
-  window.once("ready-to-show", () => window.show());
-  window.loadURL(url);
-  window.webContents.setWindowOpenHandler(({ url: target }) => {
+  mainWindow.once("ready-to-show", () => mainWindow.show());
+  mainWindow.loadURL(url);
+  mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
     shell.openExternal(target);
     return { action: "deny" };
   });
   // preload 注入失败时输出错误，便于排查
-  window.webContents.on("preload-error", (event, preloadPath, error) => {
+  mainWindow.webContents.on("preload-error", (event, preloadPath, error) => {
     console.error(`[lite-code] preload 加载失败: ${preloadPath}`, error.message);
   });
   // 渲染进程崩溃 / 白屏自动恢复
-  window.webContents.on("render-process-gone", (event, details) => {
+  mainWindow.webContents.on("render-process-gone", (event, details) => {
     console.error("[lite-code] 渲染进程异常:", details.reason);
     setTimeout(() => {
-      if (window && !window.isDestroyed()) {
-        window.reload();
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.reload();
       }
     }, 1000);
   });
   // 页面加载失败（后端未就绪等）自动重试
   let failCount = 0;
-  window.webContents.on("did-fail-load", (event, code, desc) => {
+  mainWindow.webContents.on("did-fail-load", (event, code, desc) => {
     failCount += 1;
     console.warn(`[lite-code] 页面加载失败(${code}): ${desc}`);
     if (failCount <= 3) {
       setTimeout(() => {
-        if (window && !window.isDestroyed()) window.reload();
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.reload();
       }, 2000);
     }
   });
-  window.webContents.on("did-finish-load", () => {
+  mainWindow.webContents.on("did-finish-load", () => {
     failCount = 0;
   });
-  return window;
+  return mainWindow;
 }
 
 function resolvePython() {
@@ -114,13 +111,14 @@ function coreCwd() {
   return app.getAppPath();
 }
 
-function stopCore(child) {
-  if (child) {
+function stopCore() {
+  if (coreChild) {
     try {
-      child.kill("SIGTERM");
+      coreChild.kill("SIGTERM");
     } catch {
       /* ignore */
     }
+    coreChild = null;
   }
 }
 
@@ -131,6 +129,7 @@ function spawnLocalCore(workspace) {
     const args = app.isPackaged
       ? ["serve", "--port", "0"]
       : ["-m", "litecode", "serve", "--port", "0"];
+    args.push("--config-dir", path.join(os.homedir(), ".lite-code"));
     if (workspace) args.push("--workspace", workspace);
     const env = {
       ...process.env,
@@ -170,7 +169,9 @@ function spawnLocalCore(workspace) {
         resolved = true;
         clearTimeout(timer);
         const port = parseInt(m[1], 10);
-        resolve({ child, url: `http://127.0.0.1:${port}` });
+        coreChild = child;
+        coreUrl = `http://127.0.0.1:${port}`;
+        resolve({ child, url: coreUrl });
       }
     };
 
@@ -180,6 +181,15 @@ function spawnLocalCore(workspace) {
       if (!resolved) {
         clearTimeout(timer);
         reject(new Error(`后端进程提前退出（code=${code}）`));
+      }
+      if (coreChild === child) coreChild = null;
+    });
+
+    app.on("will-quit", () => {
+      try {
+        child.kill("SIGTERM");
+      } catch {
+        /* ignore */
       }
     });
   });
@@ -195,50 +205,33 @@ function injectRemoteToken(token) {
 
 // ------------------------------------------------------------ 打开项目
 
-async function openLocalWorkspace(workspace) {
-  const loadingUrl = `file://${path.join(__dirname, "loading.html")}`;
-  const window = createWindow(loadingUrl);
-  let instance = null;
-  let closed = false;
-  window.once("closed", () => {
-    closed = true;
-    if (instance) {
-      localInstances.delete(window);
-      stopCore(instance.child);
-    }
-  });
+// 热切换工作区：调用当前后端的 /api/workspace，进程不重启（快）
+async function hotSwitchWorkspace(workspace) {
+  if (!coreUrl) return false;
   try {
-    instance = await spawnLocalCore(workspace);
-    if (closed) {
-      stopCore(instance.child);
-      return { ok: false, error: "项目窗口已关闭" };
-    }
-    localInstances.set(window, instance);
-    if (!window.isDestroyed()) window.loadURL(instance.url);
-    console.log(`[lite-code] 已打开独立项目窗口 → ${workspace} (${instance.url})`);
-    return { ok: true, url: instance.url, workspace };
+    const resp = await fetch(`${coreUrl}/api/workspace`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: workspace }),
+    });
+    if (!resp.ok) return false;
+    const data = await resp.json();
+    if (!data.ok) return false;
+    console.log(`[lite-code] 热切换工作区 → ${workspace}`);
+    return true;
   } catch (err) {
-    console.error(`[lite-code] 打开项目失败 (${workspace}):`, err.message);
-    if (!window.isDestroyed()) {
-      window.webContents.executeJavaScript(`
-        document.querySelector('.spinner').style.display='none';
-        document.querySelector('.progress').style.display='none';
-        document.querySelector('.error').style.display='flex';
-      `).catch(() => {});
-    }
-    return { ok: false, error: err.message };
+    console.warn("[lite-code] 热切换工作区失败:", err.message);
+    return false;
   }
 }
 
-async function handleOpenProject(event) {
-  // 本地 Core 模式下始终打开新窗口，不按 workspace 去重：同一项目可多窗口并行。
-  // 远程/开发模式仍不提供本地项目切换。
+async function handleOpenProject() {
+  // 仅本地 Core 形态支持切换工作区
   if (coreMode !== "local") {
     return { ok: false, error: "当前为远程/开发模式，不支持切换工作区" };
   }
 
-  const owner = BrowserWindow.fromWebContents(event.sender) || mainWindow;
-  const result = await dialog.showOpenDialog(owner, {
+  const result = await dialog.showOpenDialog(mainWindow, {
     title: "选择要打开的项目目录",
     buttonLabel: "打开项目",
     properties: ["openDirectory", "createDirectory"],
@@ -247,7 +240,13 @@ async function handleOpenProject(event) {
     return { ok: false, error: "cancelled" };
   }
   const workspace = result.filePaths[0];
-  return openLocalWorkspace(workspace);
+
+  // 只允许当前 Core 热切换，避免新进程丢失现有模型配置和运行状态。
+  if (await hotSwitchWorkspace(workspace)) {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.loadURL(coreUrl);
+    return { ok: true, url: coreUrl, workspace };
+  }
+  return { ok: false, error: "切换工作区失败，当前 Core 和模型配置保持不变" };
 }
 
 ipcMain.handle("open-project", handleOpenProject);
@@ -258,7 +257,7 @@ app.whenReady().then(async () => {
   // 开发模式：直接加载 Vite dev server
   if (process.env.LITECODE_DEV_URL) {
     coreMode = "dev";
-    mainWindow = createWindow(process.env.LITECODE_DEV_URL);
+    createWindow(process.env.LITECODE_DEV_URL);
     app.on("window-all-closed", () => app.quit());
     return;
   }
@@ -270,7 +269,7 @@ app.whenReady().then(async () => {
     coreMode = "remote";
     injectRemoteToken(config.token);
     console.log(`[lite-code] 连接远程 Core: ${config.coreUrl}`);
-    mainWindow = createWindow(config.coreUrl);
+    createWindow(config.coreUrl);
     app.on("window-all-closed", () => app.quit());
     return;
   }
@@ -280,19 +279,19 @@ app.whenReady().then(async () => {
 
   // 立即创建窗口 + 加载页（即使后端未就绪）
   const loadingUrl = `file://${path.join(__dirname, "loading.html")}`;
-  mainWindow = createWindow(loadingUrl);
+  createWindow(loadingUrl);
   console.log("[lite-code] 窗口已创建，正在启动后端…");
 
   try {
-    const instance = await spawnLocalCore();
-    const window = mainWindow;
-    localInstances.set(window, instance);
-    window.once("closed", () => {
-      localInstances.delete(window);
-      stopCore(instance.child);
+    const { url } = await spawnLocalCore();
+    console.log(`[lite-code] 本地 Core 就绪 → ${url}`);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.loadURL(url);
+    }
+    app.on("window-all-closed", () => {
+      stopCore();
+      app.quit();
     });
-    console.log(`[lite-code] 本地 Core 就绪 → ${instance.url}`);
-    if (window && !window.isDestroyed()) window.loadURL(instance.url);
   } catch (err) {
     console.error("[lite-code] 启动失败:", err.message);
     // 加载页显示错误
@@ -307,7 +306,5 @@ app.whenReady().then(async () => {
 });
 
 app.on("window-all-closed", () => {
-  for (const instance of localInstances.values()) stopCore(instance.child);
-  localInstances.clear();
   if (process.platform !== "darwin") app.quit();
 });
