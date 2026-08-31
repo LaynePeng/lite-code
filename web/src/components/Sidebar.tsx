@@ -203,27 +203,29 @@ export default function Sidebar({
               📂 打开项目…
             </button>
             {sessions.length === 0 && <div className="sidebar-empty">还没有会话</div>}
-            {sessions.map((s) => (
-              <div
-                key={s.session_id}
-                className={`session-item ${s.session_id === activeSessionId ? "active" : ""}`}
-                onClick={() => onSelectSession(s.session_id)}
-              >
-                <div className="session-title">{s.title}</div>
-                <div className="session-meta">
-                  {s.message_count} 条消息
-                  <button
-                    className="session-delete"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (confirm(`删除会话「${s.title}」？`)) onDeleteSession(s.session_id);
-                    }}
-                  >
-                    ✕
-                  </button>
+            {sessions
+              .filter((s) => s.message_count > 0)  // 过滤空会话（0 条消息）
+              .map((s) => (
+                <div
+                  key={s.session_id}
+                  className={`session-item ${s.session_id === activeSessionId ? "active" : ""}`}
+                  onClick={() => onSelectSession(s.session_id)}
+                >
+                  <div className="session-title">{s.title}</div>
+                  <div className="session-meta">
+                    {s.message_count} 条消息
+                    <button
+                      className="session-delete"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (confirm(`删除会话「${s.title}」？`)) onDeleteSession(s.session_id);
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              ))}
           </div>
         )}
 

@@ -173,14 +173,14 @@ export default function App() {
   }, []);
 
   const openSessionTab = useCallback(
-    (sid: string, title: string) => {
+    (sid: string, title?: string) => {
       setTabs((prev) => {
         const existing = prev.find((t) => t.kind === "chat" && t.sessionId === sid);
         if (existing) {
           setActiveTabId(existing.id);
-          return prev;
+          return prev.map((t) => t.id === existing.id ? { ...t, title: title || t.title } : t);
         }
-        const tab: TabItem = { id: nextTabId(), kind: "chat", sessionId: sid, title };
+        const tab: TabItem = { id: nextTabId(), kind: "chat", sessionId: sid, title: title || sid };
         setActiveTabId(tab.id);
         return [...prev, tab];
       });
@@ -236,16 +236,20 @@ export default function App() {
 
   const newChatTab = useCallback(async () => {
     closeStream();
-    const { session_id } = await api.createSession();
-    await refreshSessions();
-    patchChat(session_id, { ...EMPTY_CHAT, messages: [] });
-    openSessionTab(session_id, "新会话");
-  }, [closeStream, refreshSessions, patchChat, openSessionTab]);
+    // 不立即创建后端 session（避免堆积空会话），发第一条消息时才创建
+    setTabs((prev) => {
+      const tab: TabItem = { id: nextTabId(), kind: "chat", title: "新会话" };
+      setActiveTabId(tab.id);
+      return [...prev, tab];
+    });
+    setSidebarTab("sessions");
+  }, [closeStream, setSidebarTab]);
 
   const selectSession = useCallback(
     async (sid: string) => {
       closeStream();
-      openSessionTab(sid, sid);
+      const info = sessions.find((s) => s.session_id === sid);
+      openSessionTab(sid, info?.title || sid);
       if (!chatStatesRef.current[sid]) {
         const snap = await api.getSession(sid);
         patchChat(sid, { ...EMPTY_CHAT, messages: snap?.messages ?? [] });
@@ -259,7 +263,7 @@ export default function App() {
         }
       }
     },
-    [closeStream, openSessionTab, patchChat]
+    [closeStream, openSessionTab, patchChat, sessions]
   );
 
   const deleteSession = useCallback(
@@ -333,6 +337,22 @@ export default function App() {
       void newChatTab();
     }
   }, [loading, newChatTab]);
+
+  // 会话刷新后同步 chat Tab 标题（用会话名而非 session ID）
+  useEffect(() => {
+    if (sessions.length === 0 || tabsRef.current.length === 0) return;
+    setTabs((prev) => {
+      let changed = false;
+      const next = prev.map((t) => {
+        if (t.kind !== "chat" || !t.sessionId) return t;
+        const info = sessions.find((s) => s.session_id === t.sessionId);
+        if (!info || !info.title || info.title === t.title) return t;
+        changed = true;
+        return { ...t, title: info.title };
+      });
+      return changed ? next : prev;
+    });
+  }, [sessions]);
 
   // ------------------------------------------------------------ 流式节流
 
@@ -474,10 +494,13 @@ export default function App() {
     async (prompt: string) => {
       let sid = activeTabId ? tabsRef.current.find((t) => t.id === activeTabId)?.sessionId : null;
       if (!sid) {
+        // 当前 tab 尚无 session（newChatTab 的占位），首次发送时创建并绑定到该 tab
         const { session_id } = await api.createSession();
         sid = session_id;
         patchChat(session_id, { ...EMPTY_CHAT, messages: [] });
-        openSessionTab(session_id, "新会话");
+        setTabs((prev) => prev.map((t) =>
+          t.id === activeTabId ? { ...t, sessionId: session_id } : t
+        ));
         await refreshSessions();
       }
       const base = getChat(sid);
