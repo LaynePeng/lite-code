@@ -4,154 +4,157 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
 
-jobs:
-  build:
-    name: Build ${{ matrix.platform }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: macos-arm64
-            os: macos-14
-            artifact: macos-arm64
-            command: npm run package -- --clean
-            shell: bash
-          - platform: windows-x64
-            os: windows-2022
-            artifact: windows-x64
-            command: .\scripts\build-windows.ps1 -Clean
-            shell: pwsh
+env:
+  NODE_VERSION: "22"
+  PYTHON_VERSION: "3.11"
 
+jobs:
+  macos:
+    name: Build macOS DMG
+    runs-on: macos-14
     steps:
       - name: Check out release tag
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
-
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
       - name: Verify release version
         shell: bash
         run: |
           expected="${GITHUB_REF_NAME#v}"
           npm_version="$(node -p "require('./package.json').version")"
-          if [[ "$expected" != "${npm_version//-rc./rc}" && "$expected" != "$npm_version" ]]; then
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$expected" != "${npm_version//-rc./rc}" && "$expected" != "$npm_version" ]]; then
             echo "Tag ${GITHUB_REF_NAME} does not match package.json version ${npm_version}"
             exit 1
           fi
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
       - name: Install Python packaging dependencies
-        if: matrix.platform == 'macos-arm64'
         shell: bash
         run: python -m venv .venv && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -e ".[dev,package]"
-
-      - name: Install root dependencies
-        run: npm ci
-
-      - name: Install frontend dependencies
-        run: npm --prefix web ci
-
-      - name: Build package
-        shell: ${{ matrix.shell }}
-        run: ${{ matrix.command }}
-
-      - name: Collect macOS artifacts
-        if: matrix.platform == 'macos-arm64'
+      - name: Install JavaScript dependencies
         shell: bash
-        run: mkdir -p dist && cp release/*.dmg dist/
-
-      - name: Collect Windows artifacts
-        if: matrix.platform == 'windows-x64'
-        shell: pwsh
-        run: New-Item -ItemType Directory -Force dist | Out-Null; Copy-Item release\*.exe dist\
-
-      - name: Upload packaged artifacts
+        run: npm ci && npm --prefix web ci
+      - name: Build macOS package
+        shell: bash
+        run: npm run package -- --clean
+      - name: Upload macOS package
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}
-          path: dist/*
+          name: macos-arm64
+          path: release/*.dmg
           if-no-files-found: error
 
-  release:
-    name: Create GitHub Release
-    needs: build
-    runs-on: ubuntu-latest
-
+  windows:
+    name: Build Windows Installer
+    runs-on: windows-2022
     steps:
       - name: Check out release tag
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Verify release version
+        shell: bash
+        run: |
+          expected="${GITHUB_REF_NAME#v}"
+          npm_version="$(node -p "require('./package.json').version")"
+          if [[ "$GITHUB_REF_TYPE" == "tag" && "$expected" != "${npm_version//-rc./rc}" && "$expected" != "$npm_version" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match package.json version ${npm_version}"
+            exit 1
+          fi
+      - name: Install JavaScript dependencies
+        shell: pwsh
+        run: npm ci; npm --prefix web ci
+      - name: Build Windows package
+        shell: pwsh
+        run: .\scripts\build-windows.ps1 -Clean
+      - name: Upload Windows package
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: release/*.exe
+          if-no-files-found: error
 
+  release:
+    name: Create GitHub Release
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - name: Download macOS package
         uses: actions/download-artifact@v4
         with:
           name: macos-arm64
           path: dist
-
       - name: Download Windows package
         uses: actions/download-artifact@v4
         with:
           name: windows-x64
           path: dist
-
       - name: Build release notes
-        id: notes
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           tag="${GITHUB_REF_NAME}"
-          previous="$(gh release list --limit 100 --json tagName --jq '.[].tagName' | grep -v "^${tag}$" | head -n 1 || true)"
+          previous="$(gh release list --limit 100 --json tagName --jq '.[].tagName' | head -n 1 || true)"
           {
             echo "# lite-code ${tag}"
             echo
-            echo "## Highlights"
-            echo "- Multi-window local desktop mode: every project window has an isolated Python Core, task stream, approval state, and workspace."
-            echo "- The same project can be opened in multiple windows; each window retains its own chat and file tabs."
-            echo "- Tool activity timeline: routine reads/searches are compact, while file diffs, errors, and cancelled actions retain detailed cards."
-            echo "- More reliable streaming: UTF-8-safe text accumulation, SSE terminal-event delivery, and a per-turn LLM hard timeout."
-            echo "- Multi-provider model settings: multiple independent custom OpenAI-compatible providers and model lists per provider."
-            echo "- External-path access uses separate read and write approvals."
-            echo "- Improved session persistence, project filtering, ripgrep discovery, and configuration modal stability."
+            echo "## 功能点"
+            echo "- 多窗口本地桌面模式：每个窗口拥有独立 Python Core、任务流、审批状态和 workspace。"
+            echo "- 同一项目支持多个窗口，每个窗口独立维护会话 Tab 和文件 Tab。"
+            echo "- 普通工具调用合并为轻量 activity，代码修改、错误和取消操作显示详细卡片。"
+            echo "- 改进流式响应：安全 UTF-8 解码、React 实时缓冲、SSE 终止事件保障和 LLM 硬超时。"
+            echo "- 支持多个预置供应商、多个模型以及多个独立自定义 OpenAI 兼容供应商。"
+            echo "- 项目外文件读取和写入采用分级审批，读取授权不能升级为写入授权。"
+            echo "- 改进 Session 持久化、workspace 隔离、ripgrep 自动发现和设置窗口稳定性。"
             echo
-            echo "## Packages"
-            echo "- macOS Apple Silicon: \\`*.dmg\\`"
-            echo "- Windows x64: \\`*.exe\\`"
-            if [ -n "$previous" ]; then
+            echo "## 安装包"
+            echo "- macOS Apple Silicon：\`*.dmg\`"
+            echo "- Windows x64：\`*.exe\`"
+            if [ -n "$previous" ] && [ "$previous" != "$tag" ]; then
               echo
-              echo "## Changes since ${previous}"
+              echo "## 相对 ${previous} 的提交变化"
               git log --pretty=format:'- %s (%h)' "${previous}..${tag}"
             else
               echo
-              echo "## Initial automated release"
-              echo "This is the first GitHub Release created by the automated workflow; the highlights above list the complete current feature set."
+              echo "## 首次自动发布"
+              echo "本次为自动发布流程的首次 GitHub Release，以上功能点列出当前版本完整功能。"
             fi
           } > RELEASE_NOTES.md
-
       - name: Create release and upload packages
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          prerelease_args=()
+          args=()
           if [[ "$GITHUB_REF_NAME" == *rc* || "$GITHUB_REF_NAME" == *alpha* || "$GITHUB_REF_NAME" == *beta* ]]; then
-            prerelease_args+=(--prerelease)
+            args+=(--prerelease)
           fi
-          gh release create "${GITHUB_REF_NAME}" dist/* \
-            --title "lite-code ${GITHUB_REF_NAME}" \
-            --notes-file RELEASE_NOTES.md "${prerelease_args[@]}"
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "lite-code $GITHUB_REF_NAME" \
+            --notes-file RELEASE_NOTES.md "${args[@]}"
