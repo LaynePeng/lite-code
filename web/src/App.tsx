@@ -115,13 +115,13 @@ export default function App() {
 
   // ------------------------------------------------------------ 会话列表
 
-  const refreshSessions = useCallback(async () => {
+  const refreshSessions = useCallback(async (ws?: string) => {
     try {
-      setSessions(await api.sessions());
+      setSessions(await api.sessions(ws ?? status?.workspace));
     } catch {
       /* ignore */
     }
-  }, []);
+  }, [status?.workspace]);
 
   const refreshAll = useCallback(async () => {
     try {
@@ -129,12 +129,12 @@ export default function App() {
       setStatus(st);
       setConfig(cfg);
       setAgents(ag);
+      await refreshSessions(st.workspace); // 用刚取到的 workspace，避免 setState 异步时序
     } catch (e) {
       setErrorPublic((e as Error).message);
     } finally {
       setLoading(false);
     }
-    await refreshSessions();
   }, [refreshSessions]);
 
   function setErrorPublic(msg: string | null) {
@@ -236,14 +236,11 @@ export default function App() {
 
   const newChatTab = useCallback(async () => {
     closeStream();
-    // 不立即创建后端 session（避免堆积空会话），发第一条消息时才创建
-    setTabs((prev) => {
-      const tab: TabItem = { id: nextTabId(), kind: "chat", title: "新会话" };
-      setActiveTabId(tab.id);
-      return [...prev, tab];
-    });
-    setSidebarTab("sessions");
-  }, [closeStream, setSidebarTab]);
+    const { session_id } = await api.createSession();
+    await refreshSessions();
+    patchChat(session_id, { ...EMPTY_CHAT, messages: [] });
+    openSessionTab(session_id, "新会话");
+  }, [closeStream, refreshSessions, patchChat, openSessionTab]);
 
   const selectSession = useCallback(
     async (sid: string) => {
@@ -320,12 +317,19 @@ export default function App() {
           closeStream();
           setChatStates({});
           chatStatesRef.current = {};
-          const { session_id } = await api.createSession();
-          openSessionTab(session_id, "新会话");
-          await refreshSessions();
+
+          if (confirm(`已切换到项目: ${res.workspace}。是否新建会话？`)) {
+            const { session_id } = await api.createSession();
+            openSessionTab(session_id, "新会话");
+            await refreshSessions();
+          } else {
+            setTabs([{ id: nextTabId(), kind: "chat", title: "新会话" }]);
+            setActiveTabId("");
+            setSidebarTab("sessions");
+          }
         }
       } catch (e) {
-        patchActiveChat({ error: (e as Error).message });
+        setErrorPublic((e as Error).message);
       }
     },
     [pushLog, refreshSessions, closeStream, openSessionTab, patchActiveChat]

@@ -203,9 +203,7 @@ export default function Sidebar({
               📂 打开项目…
             </button>
             {sessions.length === 0 && <div className="sidebar-empty">还没有会话</div>}
-            {sessions
-              .filter((s) => s.message_count > 0)  // 过滤空会话（0 条消息）
-              .map((s) => (
+            {sessions.map((s) => (
                 <div
                   key={s.session_id}
                   className={`session-item ${s.session_id === activeSessionId ? "active" : ""}`}
