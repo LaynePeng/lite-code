@@ -19,7 +19,7 @@ from .tasks import TaskManager
 
 logger = logging.getLogger("litecode.server")
 
-VERSION = "0.8.0rc0"
+VERSION = "0.8.1"
 
 
 # ---------------------------------------------------------------- 请求模型
@@ -43,6 +43,7 @@ class ApproveRequest(BaseModel):
 
 class SessionCreateRequest(BaseModel):
     name: Optional[str] = None
+    workspace: Optional[str] = None
 
 
 class SecurityUpdateRequest(BaseModel):
@@ -217,20 +218,24 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
     # ------------------------------------------------------------ 会话管理
 
     @fast_app.get("/api/sessions")
-    async def list_sessions(request: Request):
+    async def list_sessions(request: Request, workspace: str = ""):
         _check_auth(request)
         snapshots = app.session_store.list()
-        return [
-            {
+        result = []
+        for s in snapshots:
+            # 按 workspace 过滤：session 的 metadata.workspace 与当前 workspace 匹配
+            s_ws = (s.get("metadata") or {}).get("workspace", "")
+            if workspace and s_ws != workspace:
+                continue
+            result.append({
                 "session_id": s.get("session_id"),
                 "created_at": s.get("created_at"),
                 "updated_at": s.get("updated_at"),
                 "message_count": len(s.get("messages", [])),
                 "title": _session_title(s),
                 "metadata": s.get("metadata", {}),
-            }
-            for s in snapshots
-        ]
+            })
+        return result
 
     @fast_app.post("/api/sessions")
     async def create_session(payload: SessionCreateRequest, request: Request):
@@ -238,7 +243,11 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
         import time as _time
 
         session_id = f"session_{int(_time.time() * 1000)}"
-        app.session_store.save(session_id, [], {"name": payload.name or session_id})
+        # metadata 记录 workspace，用于按项目过滤会话列表
+        metadata = {"name": payload.name or session_id}
+        if payload.workspace:
+            metadata["workspace"] = payload.workspace
+        app.session_store.save(session_id, [], metadata)
         return {"session_id": session_id}
 
     @fast_app.get("/api/sessions/{session_id}")

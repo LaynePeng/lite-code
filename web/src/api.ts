@@ -33,7 +33,10 @@ export const api = {
 
   agents: () => req<AgentInfo[]>("/api/agents"),
 
-  sessions: () => req<SessionInfo[]>("/api/sessions"),
+  sessions: (workspace?: string) => {
+    const url = workspace ? `/api/sessions?workspace=${encodeURIComponent(workspace)}` : "/api/sessions";
+    return req<SessionInfo[]>(url);
+  },
   createSession: () =>
     req<{ session_id: string }>("/api/sessions", { method: "POST", body: JSON.stringify({}) }),
   getSession: (id: string) => req<{ messages: import("./types").Msg[] }>(`/api/sessions/${id}`),
