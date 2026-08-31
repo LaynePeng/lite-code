@@ -42,6 +42,7 @@ function Invoke-Step([string]$Name, [scriptblock]$Block) {
 # ------------------------------------------------------------ Python environment
 
 $venvPython = Join-Path $PWD ".venv\Scripts\python.exe"
+$venvPip = Join-Path $PWD ".venv\Scripts\pip.exe"
 
 Invoke-Step "Prepare Python virtual environment" {
     if (-not (Test-Path $venvPython)) {
@@ -50,22 +51,30 @@ Invoke-Step "Prepare Python virtual environment" {
     }
 }
 
-Invoke-Step "Install Python dependencies (.venv\Scripts\pip install -e .[dev,package])" {
-    & $venvPython -m pip install -e ".[dev,package]"
+# 加速策略：
+# - --no-build-isolation：复用 venv 已装的构建依赖，跳过每次安装的隔离构建环境创建（tree-sitter 等原生包明显提速）
+# - 有缓存时 pip 命中 wheel 缓存，不重复下载
+Invoke-Step "Install Python dependencies (.venv\Scripts\pip install --no-build-isolation -e .[dev,package])" {
+    & $venvPip install --no-build-isolation -e ".[dev,package]"
     if ($LASTEXITCODE -ne 0) { throw "pip install failed" }
 }
 
 # ------------------------------------------------------------ Frontend dependencies
 
+# 有 package-lock.json 时用 npm ci（严格按锁文件，比 npm install 快且可复现）
+$npmArgs = "install"
+if (Test-Path package-lock.json) { $npmArgs = "ci" }
 if (-not (Test-Path node_modules)) {
-    Invoke-Step "Install root dependencies (npm install)" {
-        npm install
+    Invoke-Step "Install root dependencies (npm $npmArgs)" {
+        npm $npmArgs
     }
 }
 
+$webNpmArgs = "install"
+if (Test-Path web\package-lock.json) { $webNpmArgs = "ci" }
 if (-not (Test-Path web\node_modules)) {
-    Invoke-Step "Install frontend dependencies (npm --prefix web install)" {
-        npm --prefix web install
+    Invoke-Step "Install frontend dependencies (npm --prefix web $webNpmArgs)" {
+        npm --prefix web $webNpmArgs
     }
 }
 

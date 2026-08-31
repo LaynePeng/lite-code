@@ -47,7 +47,8 @@ Python 后端（litecode/）
 
 # 安装 Python 依赖
 python3 -m venv .venv
-.venv/bin/pip install -e .[dev]        # Windows: .venv\Scripts\pip install -e .[dev]
+.venv/bin/pip install --no-build-isolation -e .[dev]   # Windows: .venv\Scripts\pip install --no-build-isolation -e .[dev]
+# 注：--no-build-isolation 复用 venv 已装构建依赖，避免每次重创建隔离环境（tree-sitter 等原生包明显提速）；若报错可去掉该选项
 
 # 安装前端 + Electron 依赖
 npm install

@@ -25,14 +25,21 @@ if (!env.ELECTRON_MIRROR && !env.ELECTRON_BUILDER_BINARIES_MIRROR) {
   env.ELECTRON_BUILDER_BINARIES_MIRROR = "https://npmmirror.com/mirrors/electron-builder-binaries/";
 }
 
+function step(label, fn) {
+  const start = Date.now();
+  process.stdout.write(`[${start % 100000}] ${label}... `);
+  fn();
+  console.log(`(${((Date.now() - start) / 1000).toFixed(1)}s)`);
+}
+
 console.log("[package] Step 0/4: Generate app icon");
-execSync("node scripts/generate-icon.mjs", { cwd: root, stdio: "inherit" });
+step("icon", () => execSync("node scripts/generate-icon.mjs", { cwd: root, stdio: "inherit" }));
 
 console.log("[package] Step 1/4: Package backend binary");
-execSync("node scripts/package-backend.mjs", { cwd: root, stdio: "inherit" });
+step("PyInstaller --onefile", () => execSync("node scripts/package-backend.mjs", { cwd: root, stdio: "inherit" }));
 
 console.log("[package] Step 2/4: electron-builder --dir produces .app");
-execSync("npx electron-builder --mac --dir --publish never", { cwd: root, stdio: "inherit", env });
+step("electron-builder", () => execSync("npx electron-builder --mac --dir --publish never", { cwd: root, stdio: "inherit", env }));
 
 const appDir = path.join(root, "release", "mac-arm64", "lite-code.app");
 if (!fs.existsSync(path.join(appDir, "Contents", "MacOS", "lite-code"))) {
@@ -49,13 +56,13 @@ try {
   fs.copyFileSync(path.join(appDir, "Contents", "Resources", "app-icon.icns"),
     path.join(staging, ".VolumeIcon.icns"));
 } catch { /* icon is optional */ }
-execSync(`cp -R "${appDir}" "${staging}/lite-code.app"`, { cwd: root, stdio: "inherit" });
+step("prepare", () => execSync(`cp -R "${appDir}" "${staging}/lite-code.app"`, { cwd: root, stdio: "inherit" }));
 fs.symlinkSync("/Applications", path.join(staging, "Applications"), "dir");
 
-execSync(
+step("hdiutil create", () => execSync(
   `hdiutil create -volname "lite-code ${version}" -srcfolder "${staging}" -ov -format UDZO "${dmgPath}"`,
   { cwd: root, stdio: "inherit" }
-);
+));
 
 fs.rmSync(staging, { recursive: true, force: true });
 console.log(`[package] Done -> release/${dmgName}`);

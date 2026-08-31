@@ -64,6 +64,9 @@ const specArgs = [
 ];
 
 console.log("[package] Packaging backend with PyInstaller...");
+console.log(`  python: ${python}`);
+console.log(`  output: ${outDir}/lite-code-backend${isWindows ? ".exe" : ""}`);
+console.log(`  mode: --onefile (this may take 1-3 min, mostly collecting tree-sitter etc.)`);
 execSync([python, "-m", "PyInstaller", ...specArgs].join(" "), {
   cwd: root,
   stdio: "inherit",
