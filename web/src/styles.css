@@ -2341,3 +2341,106 @@ button {
   white-space: pre;
   color: var(--text-0);
 }
+
+/* ─────────────────────────────────── Unified diff 视图 */
+.unified-diff {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  overflow: auto;
+  flex: 1;
+}
+
+.unified-diff-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.udiff-row {
+  display: flex;
+  min-height: 1.6em;
+}
+
+.udiff-row.udiff-hunk {
+  background: var(--bg-2);
+  color: var(--accent);
+  font-size: 11px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.udiff-row.udiff-meta {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.udiff-oldnum,
+.udiff-newnum {
+  width: 44px;
+  min-width: 44px;
+  text-align: right;
+  padding: 0 6px 0 0;
+  color: var(--text-3);
+  font-size: 11px;
+  user-select: none;
+  border-right: 1px solid var(--border);
+}
+
+.udiff-row.udiff-del .udiff-oldnum,
+.udiff-row.udiff-del .udiff-newnum {
+  border-right-color: rgba(248, 81, 73, 0.3);
+}
+
+.udiff-row.udiff-add .udiff-oldnum,
+.udiff-row.udiff-add .udiff-newnum {
+  border-right-color: rgba(63, 185, 80, 0.3);
+}
+
+.udiff-newnum {
+  border-right: none;
+  border-left: 1px solid var(--border);
+  padding: 0 0 0 6px;
+  width: 44px;
+  min-width: 44px;
+}
+
+.udiff-content {
+  flex: 1;
+  padding: 0 0 0 8px;
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.udiff-prefix {
+  display: inline-block;
+  width: 14px;
+  flex-shrink: 0;
+  user-select: none;
+  font-weight: 700;
+}
+
+/* 行级背景色 */
+.udiff-row.udiff-add {
+  background: rgba(63, 185, 80, 0.10);
+}
+
+.udiff-row.udiff-del {
+  background: rgba(248, 81, 73, 0.10);
+}
+
+.udiff-row.udiff-add .udiff-prefix {
+  color: #3fb950;
+}
+
+.udiff-row.udiff-del .udiff-prefix {
+  color: #f85149;
+}
+
+/* 工具卡片内的 diff 包装 */
+.unified-diff-wrap {
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
