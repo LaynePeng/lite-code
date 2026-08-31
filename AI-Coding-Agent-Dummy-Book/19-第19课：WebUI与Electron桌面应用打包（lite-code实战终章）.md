@@ -58,6 +58,28 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], ...)
 @app.get("/api/context/stats")   # 会话级上下文统计（切换会话时回填面板）
 @app.get("/api/workspace/tree")  # 文件树（旧：文本 ASCII 树）
 @app.get("/api/workspace/tree-json")  # 结构化目录树：按路径懒加载 + git 状态字母
+@app.get("/api/fs/read")         # 读文件内容 + 语言检测 + git diff（文件 Tab）
+@app.get("/api/workspace/diff")  # 单文件 git diff（工作区 vs HEAD）
+```
+
+**文件读取与 diff（文件 Tab 的数据源）**：`/api/fs/read` 返回文件内容、语言（按扩展名映射）、行数，并附带该文件的 git diff；`/api/workspace/diff` 单独返回 diff 与增删行数。两者都做了**路径越界防护**——必须位于工作区内：
+
+```python
+# server/app.py（核心）
+@app.get("/api/fs/read")
+async def fs_read(path: str, request: Request = None):
+    if request: _check_auth(request)
+    import os as _os
+    target = _os.path.abspath(_os.path.join(app.workspace, path))
+    if not (target == app.workspace or target.startswith(app.workspace + _os.sep)):
+        raise HTTPException(status_code=403, detail="路径越界")
+    if not _os.path.isfile(target):
+        raise HTTPException(status_code=404, detail=f"文件不存在: {path}")
+    content = open(target, encoding="utf-8", errors="replace").read()
+    language = _detect_language(_os.path.splitext(path)[1])  # 扩展名 → 语言
+    diff_text = _git_diff(app.workspace, path)               # git diff HEAD -- <path>
+    return {"path": path, "content": content, "language": language,
+            "lines": len(content.split("\n")), "size": len(content), "diff": diff_text}
 ```
 
 **SSE 流式推送**：每个任务创建独立的 `asyncio.Queue`，AgentLoop 运行时通过 `TypedEventBus` 广播事件（`llm:stream`、`tool:before_execute`、`approval:request` 等），`TaskRunner` 订阅事件并推送到队列，SSE 端点从队列消费：
@@ -186,51 +208,38 @@ function buildTurns(messages) {
 
 **后端新端点**：配套新增 `/api/agents` 返回 Agent 列表、`/api/workspace` 运行时切换工作区、`/api/fs/list` 浏览任意目录。
 
-**工具结果的 Diff 展示**：编辑工具（第 9 课）成功回执现在是 `[Patch Success]: 已更新 <path> (+N -M)` 摘要 + Unified Diff 正文，前端据此做 opencode 风格的"文件修改"渲染。渲染逻辑抽成共享组件 `FileDiff.tsx`（`DiffStats` / `DiffPre`），供**对话流工具卡片**（`ChatView`）复用；配套 `tool:after_execute` SSE 事件携带 `result` 字段，任务运行中就能立即展示 diff。`DiffStats` 解析回执首行生成文件徽标与增删行数，`DiffPre` 把 diff 正文逐行着色：
+**工具结果的 Diff 展示**：编辑工具（第 9 课）成功回执现在是 `[Patch Success]: 已更新 <path> (+N -M)` 摘要 + Unified Diff 正文。前端用 `UnifiedDiff` 组件做 opencode 风格的**行级 diff 渲染**——在一个文件视图里同时显示插入（绿底）和删除（红底）的行，带新旧行号、hunk 分隔条：
 
 ```tsx
-// FileDiff.tsx —— 解析 "[Patch Success]: 已更新 <path> (+N -M)" → 文件徽标
-function DiffStats({ text }: { text: string }) {
-  const m = text.match(/^\[Patch Success\]: 已更新 (.+?) \(\+(\d+) -(\d+)\)/);
-  if (!m) return null;
-  return (
-    <div className="diff-stats">
-      <span className="diff-file">📄 {m[1]}</span>
-      <span className="diff-add">+{m[2]}</span>
-      <span className="diff-del">−{m[3]}</span>
-    </div>
-  );
+// UnifiedDiff.tsx —— 解析 unified diff → 行级交错视图
+export function parseUnifiedDiff(diff: string): UnifiedDiffLine[] {
+  const out: UnifiedDiffLine[] = [];
+  // 正则解析每行类型：@@ 头 / + 插入 / - 删除 / 上下文
+  // 跟踪 oldLine / newLine 行号
+  ...
 }
 
-// 按行渲染 diff：+ 绿 / − 红 / @@ 高亮 / 文件头灰
-function DiffPre({ text }: { text: string }) {
-  const isDiff = text.includes("[Patch Success]") && text.includes("\n@@");
-  if (!isDiff) return <pre className="tool-result">{text}</pre>;
+export default function UnifiedDiff({ diff }: { diff: string }) {
   return (
-    <pre className="tool-result diff">
-      {text.split("\n").map((line, i) => {
-        const cls = line.startsWith("+++") || line.startsWith("---")
-          ? "diff-meta"
-          : line.startsWith("@@")
-            ? "diff-hunk"
-            : line.startsWith("+")
-              ? "diff-add"
-              : line.startsWith("-")
-                ? "diff-del"
-                : "";
-        return (
-          <span key={i} className={cls}>
-            {line}
-            {"\n"}
-          </span>
-        );
-      })}
-    </pre>
+    <table className="unified-diff-table">
+      {lines.map((l) => (
+        <tr className={`udiff-row udiff-${l.type}`}>
+          <td className="udiff-oldnum">{l.oldLine ?? ""}</td>
+          <td className="udiff-newnum">{l.newLine ?? ""}</td>
+          <td className="udiff-content">
+            <span className="udiff-prefix">{l.type === "add" ? "+" : l.type === "del" ? "-" : " "}</span>
+            {l.text.slice(1)}
+          </td>
+        </tr>
+      ))}
+    </table>
   );
 }
 ```
 
-配套 CSS（`styles.css`）：`.diff-add` 绿色 `#3fb950`、`.diff-del` 红色 `#f85149`（配浅色背景衬底）、`.diff-hunk` 用强调色、`.diff-meta` 用弱化灰。这样 Agent 每次改文件，对话流的工具卡片都会出现一条"📄 文件 (+N −M)"的彩色 diff，一眼看清改了什么。
+`UnifiedDiff` 组件供**两处**复用：对话流工具卡片（`DiffPre` 通过 `UnifiedDiff` 渲染 tool result 的 diff 正文）和**文件查看器**（`FileViewer` 在双击文件 Tab 时直接显示 `UnifiedDiff`）。配套 CSS（`.udiff-row.udiff-add` 绿底、`.udiff-row.udiff-del` 红底、`.udiff-oldnum`/`.udiff-newnum` 双栏行号）让每次改文件的结果一目了然。
+
+**文件查看器 FileViewer**：目录树文件双击 → 打开文件 Tab（`openFileTab`），该 Tab 不放对话。`FileViewer` 组件根据后端 `/api/fs/read` 返回的数据决定展示模式——有 git diff 时直接显示 `UnifiedDiff` 行级视图（只显示修改部分，不显示全量文件），无 diff 时显示普通文件内容（带行号的代码渲染）。顶部头部展示文件路径、语言徽标、行数、`+N −M` 增删徽标：
 
 工具卡片与回复气泡使用同一套宽度约束：`.tool-cards` 沿用 `.msg-row` 的居中 padding（`max(24px, calc((100% - 820px) / 2))`），`.tool-card` 设 `max-width: 76%` 与 `.bubble` 一致——工具调用内容不再铺满整行，而是与一般回答/思考气泡同样宽、同样左对齐，视觉上统一。
 
@@ -290,6 +299,48 @@ if (ctx.session && Object.keys(ctx.session).length > 0) {
   setContextStats({ model: "", context_window: 0, session: ctx.session });
 }
 ```
+
+#### 3.7 多 Tab 工作台（对话 / 文件 Tab 系统）
+
+在基础功能完成后，我们做了一个重要的架构升级——从**单会话模型**升级为**多 Tab 工作台**，每个 Tab 可以是一个对话会话或一个打开的文件，Tab 可独立切换/关闭，数据隔离。
+
+**为什么需要多 Tab？** 原来的架构里 `App.tsx` 只维护一个 `activeSessionId`，切换会话时直接把当前会话的 messages/streaming 等状态替换掉。这导致两个问题：切换回上一个会话时，它的滚动位置、流式状态全丢了；且无法同时打开一个文件查看器。
+
+**Tab 数据结构**（`types.ts`）：
+
+```typescript
+interface TabItem {
+  id: string;
+  kind: "chat" | "file";     // 对话 Tab 或文件 Tab
+  title: string;
+  sessionId?: string;         // chat Tab 关联的会话 ID
+  filePath?: string;          // file Tab 关联的文件路径
+  fileContent?: string;       // 文件内容（缓存）
+  fileDiff?: string;          // git diff（缓存）
+  fileLanguage?: string;      // 编程语言
+}
+```
+
+**多会话状态隔离**：每个 `chat` Tab 的独立状态（messages、streaming、running、stats 等）保存在 `chatStates: Record<sessionId, ChatSessionState>` Map 中。切换 Tab 时，`App.tsx` 把当前 Tab 的工作副本写回 Map，再从 Map 恢复目标 Tab 的状态——所以切换回来时滚动位置、流式内容、统计全部保留：
+
+```typescript
+// App.tsx — 切换 Tab 时保存/恢复会话状态
+const saveCurrentChatState = () => {
+  const sid = activeSessionRef.current;
+  if (!sid) return;
+  setChatStates(prev => ({
+    ...prev, [sid]: { messages, streaming, running, turn, stats, contextStats, error, pendingApproval, stalled }
+  }));
+};
+```
+
+**TabBar 组件**：水平 Tab 栏，左侧显示 Tab 列表（图标 + 标题），每个 Tab 可关闭（✕），至少保留一个 Tab。点击 Tab 切换时调用 `closeStream()` + `setActiveTabId(id)`，`activeTab` 通过 `useMemo` 从 `tabs` 和 `activeTabId` 实时计算得出。
+
+**关键坑：`.drag-region` 覆盖层**：Electron 无边框窗口的拖拽区（`position: fixed; height: 38px; z-index: 100`）正好盖在 `.main` 顶部的 TabBar 上，导致所有点击被拦截。解决：`.main` 加 `padding-top: 38px`，让 TabBar 从拖拽区下方开始。
+
+**文件 Tab 的打开**：`Sidebar` 的目录树文件项增加 `onDoubleClick` 事件 → `App.tsx` 的 `openFileTab(filePath)` → 调用 `/api/fs/read` 读取文件内容 + git diff → 创建 `kind: "file"` 的 Tab（不显示 Composer / ToolPanel，只显示 FileViewer）。`FileViewer` 有 diff 时展示 `UnifiedDiff`（仅修改部分），无 diff 时展示普通文件内容（带行号）。
+
+**切项目时 Tab 清空**：切换项目（`selectProject`）时调用 `setChatStates({})` 清空所有会话状态，仅保留一个新会话 Tab。`openSessionTab` 确保同一个 session 不会重复开 Tab。
 
 #### 4. 多 LLM 配置界面 (`SettingsModal.tsx`)
 
@@ -514,24 +565,63 @@ async def _stream():
 
 ```bash
 npm run build:web                    # 构建 React 前端 → web/dist/
-node scripts/package-backend.mjs     # PyInstaller → release/backend/lite-code-backend(.exe)
-npx electron-builder --win nsis      # Windows 安装包（macOS 用 --mac）
+node scripts/package-backend.mjs     # PyInstaller --onedir → release/backend/lite-code-backend/
+node scripts/package.mjs             # macOS 完整打包：图标 → 后端 → .app → DMG
 ```
 
-Windows 一键打包脚本 `scripts/build-windows.ps1` 把上述步骤串起来：创建 venv → 安装 Python 依赖 → 安装前端依赖 → 构建前端 → PyInstaller 后端 → NSIS 安装包。
+**PyInstaller 模式：`--onedir` 优先**：早期版本用 `--onefile`（单文件），但每次打包需压缩+合并所有资源，耗时 2-3 分钟。`--onedir` 产出目录结构（`release/backend/lite-code-backend/lite-code-backend + _internal/`），打包速度提升 2-3x，启动也更快（免解压）。electron-builder 的 `extraResources` 用通配符 (`from: "release/backend/lite-code-backend*"`) 同时兼容单文件和目录：
 
-**产物**（以 Windows 为例）：
+```javascript
+// electron/main.js — 查找 onedir 结构，兼容旧版
+function resolvePython() {
+  if (app.isPackaged) {
+    const dir = path.join(process.resourcesPath, "litecode-bin", "lite-code-backend");
+    const bundled = path.join(dir, process.platform === "win32" ? "lite-code-backend.exe" : "lite-code-backend");
+    if (fs.existsSync(bundled)) return bundled;
+    // 兼容旧版单文件
+    const legacy = path.join(process.resourcesPath, "litecode-bin", "lite-code-backend");
+    if (fs.existsSync(legacy)) return legacy;
+  }
+  ...
+}
+```
+
+**国内网络加速**：`pip install --no-build-isolation`（复用 venv 已有构建依赖，跳过隔离构建环境创建，`tree-sitter` 等原生包安装明显提速）；`npm ci` 替代 `npm install`（有 lockfile 时更快）。Windows 一键打包脚本 `scripts/build-windows.ps1` 内置了这些优化，并默认设置 npmmirror 镜像：
+
+```powershell
+# build-windows.ps1 核心片段
+& $venvPip install --no-build-isolation -e ".[dev,package]"  # --no-build-isolation 加速
+$npmArgs = "install"; if (Test-Path package-lock.json) { $npmArgs = "ci" }
+npm $npmArgs                                                   # npm ci 更快
+```
+
+**macOS 打包脚本 `package.mjs` 带进度显示**：每步打印耗时 (`(x.xs)`)，让用户知道在哪一步——icon/后端/electron-builder/hdiutil：
+
+```text
+[package] Step 0/4: Generate app icon
+[1245] icon... (0.3s)
+[package] Step 1/4: Package backend binary
+[1723] PyInstaller --onedir... (35.2s)
+[package] Step 2/4: electron-builder --dir produces .app
+[5312] electron-builder... (2.5s)
+[package] Step 3/4: Wrap DMG with hdiutil
+[7641] prepare... (0.2s)
+[7893] hdiutil create... (18.1s)
+[package] Done -> release/lite-code-0.8.0-rc0-arm64.dmg
+```
+
+**产物**（以 macOS 为例）：
 ```
 release/
-├── lite-code Setup <版本号>.exe    (约 116MB，NSIS 安装包，可改安装目录)
-├── lite-code Setup <版本号>.exe.blockmap
-└── win-unpacked/lite-code.exe       (解包目录，可直接运行)
+├── lite-code-0.8.0-rc0-arm64.dmg      (约 120MB，安装包)
+├── lite-code-0.8.0-rc0-arm64-mac.zip  (约 110MB，便携版)
+└── mac-arm64/lite-code.app             (解包目录，可直接运行)
 ```
 
 关键工程点：
-- **后端进包**：`package.json` 的 `extraResources` 把 `release/backend` 目录（含 `lite-code-backend.exe`）复制到安装后的 `resources/litecode-bin/`，Electron 主进程通过 `resolvePython()` 优先使用内置二进制；
+- **后端进包**：`extraResources` 把 `release/backend` 目录复制到 `resources/litecode-bin/`，Electron 主进程通过 `resolvePython()` 优先使用内置二进制；
 - **图标**：`scripts/app-icon.svg` 直接配置为 `win.icon`，electron-builder 自动栅格化为 ICO；
-- **加载页**：PyInstaller 单文件后端首次解压需 10-30s，主进程先显示 `loading.html`，后端就绪后跳转主界面。
+- **加载页**：`--onedir` 免解压，启动比 `--onefile` 快 2-3x，loading.html 等待时间显著缩短。
 
 **开发模式**：`npm run dev`（concurrently 编排 Python Core + Vite + Electron，一行命令三步启动）
 
