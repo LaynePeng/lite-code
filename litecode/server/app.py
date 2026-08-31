@@ -19,7 +19,7 @@ from .tasks import TaskManager
 
 logger = logging.getLogger("litecode.server")
 
-VERSION = "0.6.3rc0"
+VERSION = "0.7.0rc0"
 
 
 # ---------------------------------------------------------------- 请求模型
@@ -360,6 +360,80 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
             "files": files[:cap],
             "truncated": len(dirs) + len(files) > cap,
         }
+
+    @fast_app.get("/api/fs/read")
+    async def fs_read(path: str, request: Request = None):
+        """读取工作区内的文件，返回内容、语言、行数和 git diff。"""
+        if request:
+            _check_auth(request)
+        import os as _os
+
+        target = _os.path.abspath(_os.path.join(app.workspace, path))
+        if not (target == app.workspace or target.startswith(app.workspace + _os.sep)):
+            raise HTTPException(status_code=403, detail="路径越界")
+        if not _os.path.isfile(target):
+            raise HTTPException(status_code=404, detail=f"文件不存在: {path}")
+
+        with open(target, "r", encoding="utf-8", errors="replace") as f:
+            content = f.read()
+
+        lines = content.split("\n")
+        ext = _os.path.splitext(path)[1].lower()
+
+        # 简单语言检测
+        lang_map = {
+            ".py": "python", ".js": "javascript", ".ts": "typescript", ".tsx": "tsx",
+            ".jsx": "jsx", ".go": "go", ".rs": "rust", ".java": "java",
+            ".c": "c", ".cpp": "cpp", ".h": "c", ".hpp": "cpp",
+            ".css": "css", ".scss": "scss", ".less": "less",
+            ".html": "html", ".htm": "html", ".xml": "xml", ".json": "json",
+            ".yaml": "yaml", ".yml": "yaml", ".toml": "toml",
+            ".md": "markdown", ".txt": "text", ".sh": "bash", ".bash": "bash",
+            ".zsh": "bash", ".sql": "sql", ".rb": "ruby",
+            ".swift": "swift", ".kt": "kotlin", ".svelte": "svelte",
+            ".vue": "vue", ".astro": "astro",
+        }
+        language = lang_map.get(ext, "")
+
+        # 获取 git diff（工作区 vs HEAD）
+        diff_text = ""
+        try:
+            proc = __import__("subprocess").run(
+                ["git", "-C", app.workspace, "diff", "HEAD", "--", path],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=10,
+            )
+            if proc.returncode == 0:
+                diff_text = proc.stdout
+        except Exception:
+            pass
+
+        return {
+            "path": path,
+            "content": content,
+            "language": language,
+            "lines": len(lines),
+            "size": len(content),
+            "diff": diff_text,
+        }
+
+    @fast_app.get("/api/workspace/diff")
+    async def workspace_file_diff(path: str, request: Request = None):
+        """获取单个文件的 git diff（工作区 vs HEAD）。"""
+        if request:
+            _check_auth(request)
+        try:
+            proc = __import__("subprocess").run(
+                ["git", "-C", app.workspace, "diff", "HEAD", "--", path],
+                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                timeout=10,
+            )
+            diff_text = proc.stdout if proc.returncode == 0 else ""
+        except Exception:
+            diff_text = ""
+        additions = len([l for l in diff_text.split("\n") if l.startswith("+") and not l.startswith("+++")])
+        deletions = len([l for l in diff_text.split("\n") if l.startswith("-") and not l.startswith("---")])
+        return {"path": path, "diff": diff_text, "additions": additions, "deletions": deletions}
 
     # ------------------------------------------------------------ 聊天任务
 

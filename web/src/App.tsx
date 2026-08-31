@@ -2,11 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import ChatView from "./components/ChatView";
 import Composer from "./components/Composer";
+import FileViewer from "./components/FileViewer";
 import ProjectPicker from "./components/ProjectPicker";
 import SettingsModal from "./components/SettingsModal";
 import Sidebar from "./components/Sidebar";
+import TabBar from "./components/TabBar";
 import ToolPanel from "./components/ToolPanel";
-import type { AgentInfo, AppConfig, ContextStats, Msg, ServerStatus, SessionInfo, Stats, ToolCardInfo } from "./types";
+import type { AgentInfo, AppConfig, ContextStats, ChatSessionState, Msg, ServerStatus, SessionInfo, Stats, TabItem, ToolCardInfo } from "./types";
 
 interface PendingApproval {
   id: string;
@@ -20,7 +22,6 @@ interface StreamingState {
   turn?: number;
 }
 
-// 会改动工作区的工具：执行后触发侧边栏目录树动态刷新
 const TREE_TOUCH_TOOLS = new Set([
   "write_file",
   "apply_search_replace",
@@ -29,68 +30,90 @@ const TREE_TOUCH_TOOLS = new Set([
   "git_commit",
 ]);
 
+let tabSeq = 0;
+const nextTabId = () => `tab_${++tabSeq}`;
+
+const EMPTY_CHAT: ChatSessionState = {
+  messages: [],
+  streaming: null,
+  running: false,
+  turn: 0,
+  stats: null,
+  contextStats: null,
+  error: null,
+  pendingApproval: null,
+  stalled: false,
+};
+
 export default function App() {
+  const [tabs, setTabs] = useState<TabItem[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string>("");
+  const [chatStates, setChatStates] = useState<Record<string, ChatSessionState>>({});
+
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
-  const [messages, setMessages] = useState<Msg[]>([]);
-  const [streaming, setStreaming] = useState<StreamingState | null>(null);
-  const [running, setRunning] = useState(false);
-  const [turn, setTurn] = useState(0);
-  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(null);
-  const [stats, setStats] = useState<Stats | null>(null);
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const [config, setConfig] = useState<AppConfig | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<"sessions" | "files" | "stats">("sessions");
   const [loading, setLoading] = useState(true);
-  const [stalled, setStalled] = useState(false);
-  const [stopping, setStopping] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   const [currentAgent, setCurrentAgent] = useState<string>("build");
-  const [contextStats, setContextStats] = useState<ContextStats | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [treeRevision, setTreeRevision] = useState(0);
 
   const esRef = useRef<EventSource | null>(null);
   const taskIdRef = useRef<string | null>(null);
   const streamingRef = useRef<StreamingState | null>(null);
-  const messagesRef = useRef<Msg[]>([]);
-  const activeSessionRef = useRef<string | null>(null);
   const lastEventTimeRef = useRef<number>(Date.now());
+  const flushTimerRef = useRef<number | null>(null);
+  const chatStatesRef = useRef<Record<string, ChatSessionState>>({});
+  const tabsRef = useRef<TabItem[]>([]);
+
+  useEffect(() => { chatStatesRef.current = chatStates; }, [chatStates]);
+  useEffect(() => { tabsRef.current = tabs; }, [tabs]);
 
   const pushLog = useCallback((msg: string) => {
     const line = `${new Date().toLocaleTimeString()} ${msg}`;
     setDebugLogs((prev) => [...prev.slice(-200), line]);
   }, []);
 
-  useEffect(() => {
-    activeSessionRef.current = activeSessionId;
-  }, [activeSessionId]);
-  useEffect(() => {
-    messagesRef.current = messages;
-  }, [messages]);
-  useEffect(() => {
-    streamingRef.current = streaming;
-  }, [streaming]);
+  // ------------------------------------------------------------ 会话状态读写
 
-  useEffect(() => {
-    if (!running) {
-      setStalled(false);
-      return;
-    }
-    const timer = setInterval(() => {
-      const elapsed = Date.now() - lastEventTimeRef.current;
-      if (elapsed > 45000) {
-        setStalled(true);
-        pushLog(`⚠ 已 ${Math.round(elapsed / 1000)}s 无响应，可能卡住`);
-      }
-    }, 15000);
-    return () => clearInterval(timer);
-  }, [running, pushLog]);
+  const getChat = useCallback((sid: string): ChatSessionState => {
+    return chatStatesRef.current[sid] ?? EMPTY_CHAT;
+  }, []);
+
+  const patchChat = useCallback((sid: string, patch: Partial<ChatSessionState>) => {
+    setChatStates((prev) => {
+      const next = { ...prev, [sid]: { ...(prev[sid] ?? EMPTY_CHAT), ...patch } };
+      chatStatesRef.current = next;
+      return next;
+    });
+  }, []);
+
+  // ------------------------------------------------------------ 当前活跃 Tab
+
+  const activeTab = useMemo(
+    () => tabs.find((t) => t.id === activeTabId) ?? null,
+    [tabs, activeTabId]
+  );
+  const activeSessionId = activeTab?.kind === "chat" ? (activeTab.sessionId ?? null) : null;
+
+  // 活跃会话的工作副本（读写都走 ref 缓存，避免竞态）
+  const currentChat = activeSessionId ? getChat(activeSessionId) : EMPTY_CHAT;
+
+  const patchActiveChat = useCallback(
+    (patch: Partial<ChatSessionState>) => {
+      const sid = activeSessionId;
+      if (sid) patchChat(sid, patch);
+    },
+    [activeSessionId, patchChat]
+  );
+
+  // ------------------------------------------------------------ 会话列表
 
   const refreshSessions = useCallback(async () => {
     try {
@@ -107,19 +130,22 @@ export default function App() {
       setConfig(cfg);
       setAgents(ag);
     } catch (e) {
-      setError((e as Error).message);
+      setErrorPublic((e as Error).message);
     } finally {
       setLoading(false);
     }
     await refreshSessions();
   }, [refreshSessions]);
 
+  function setErrorPublic(msg: string | null) {
+    patchActiveChat({ error: msg });
+  }
+
   useEffect(() => {
     void refreshAll();
   }, [refreshAll]);
 
-  // Tab 键切换 agent（参考 OpenCode：Tab 在 Build/Plan 之间循环）
-  // 无论焦点在哪都拦截，且 preventDefault 避免跳走焦点
+  // Tab 键切换 agent
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Tab") return;
@@ -136,59 +162,7 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [agents]);
 
-  const selectSession = useCallback(
-    async (id: string) => {
-      closeStream();
-      setActiveSessionId(id);
-      setMessages([]);
-      setStreaming(null);
-      setStats(null);
-      setContextStats(null);
-      try {
-        const snap = await api.getSession(id);
-        setMessages(snap.messages ?? []);
-      } catch {
-        setMessages([]);
-      }
-      // 拉取该会话的上下文累计统计
-      try {
-        const ctx = await api.contextStats(id);
-        if (ctx.session && Object.keys(ctx.session).length > 0) {
-          setContextStats({ model: "", context_window: 0, session: ctx.session });
-        }
-      } catch {
-        /* ignore */
-      }
-    },
-    []
-  );
-
-  const newSession = useCallback(async () => {
-    try {
-      const { session_id } = await api.createSession();
-      await selectSession(session_id);
-      await refreshSessions();
-    } catch {
-      /* ignore */
-    }
-  }, [refreshSessions, selectSession]);
-
-  const deleteSession = useCallback(
-    async (id: string) => {
-      try {
-        await api.deleteSession(id);
-        if (activeSessionRef.current === id) {
-          setActiveSessionId(null);
-          setMessages([]);
-          setStreaming(null);
-        }
-        await refreshSessions();
-      } catch {
-        /* ignore */
-      }
-    },
-    [refreshSessions]
-  );
+  // ------------------------------------------------------------ Tab 操作
 
   const closeStream = useCallback(() => {
     if (esRef.current) {
@@ -198,17 +172,179 @@ export default function App() {
     taskIdRef.current = null;
   }, []);
 
-  // 流式 chunk 渲染节流：内容立即累积到 ref，setStreaming 合并到 ~80ms 一次，
-  // 避免高频 setState 导致 Markdown 重解析与滚动动画追不上（气泡抖动）
-  const flushTimerRef = useRef<number | null>(null);
+  const openSessionTab = useCallback(
+    (sid: string, title: string) => {
+      setTabs((prev) => {
+        const existing = prev.find((t) => t.kind === "chat" && t.sessionId === sid);
+        if (existing) {
+          setActiveTabId(existing.id);
+          return prev;
+        }
+        const tab: TabItem = { id: nextTabId(), kind: "chat", sessionId: sid, title };
+        setActiveTabId(tab.id);
+        return [...prev, tab];
+      });
+    },
+    []
+  );
+
+  const openFileTab = useCallback(async (filePath: string) => {
+    closeStream();
+    let content = "", diff = "", language = "";
+    try {
+      const r = await api.readFile(filePath);
+      content = r.content;
+      language = r.language;
+      diff = r.diff;
+    } catch (e) {
+      content = `// 无法读取文件：${(e as Error).message}`;
+    }
+    setTabs((prev) => {
+      const existing = prev.find((t) => t.kind === "file" && t.filePath === filePath);
+      if (existing) {
+        setActiveTabId(existing.id);
+        return prev.map((t) =>
+          t.id === existing.id ? { ...t, fileContent: content, fileDiff: diff, fileLanguage: language } : t
+        );
+      }
+      const tab: TabItem = {
+        id: nextTabId(), kind: "file", title: filePath.split("/").pop() ?? filePath,
+        filePath, fileContent: content, fileDiff: diff, fileLanguage: language,
+      };
+      setActiveTabId(tab.id);
+      return [...prev, tab];
+    });
+    setSidebarTab("files");
+  }, [closeStream]);
+
+  const closeTab = useCallback(
+    (id: string) => {
+      setTabs((prev) => {
+        if (prev.length <= 1) return prev; // 至少保留一个
+        const idx = prev.findIndex((t) => t.id === id);
+        if (idx < 0) return prev;
+        const next = prev.filter((t) => t.id !== id);
+        if (activeTabId === id) {
+          const neighbor = next[Math.min(idx, next.length - 1)];
+          setActiveTabId(neighbor.id);
+        }
+        return next;
+      });
+    },
+    [activeTabId]
+  );
+
+  const newChatTab = useCallback(async () => {
+    closeStream();
+    const { session_id } = await api.createSession();
+    await refreshSessions();
+    patchChat(session_id, { ...EMPTY_CHAT, messages: [] });
+    openSessionTab(session_id, "新会话");
+  }, [closeStream, refreshSessions, patchChat, openSessionTab]);
+
+  const selectSession = useCallback(
+    async (sid: string) => {
+      closeStream();
+      openSessionTab(sid, sid);
+      if (!chatStatesRef.current[sid]) {
+        const snap = await api.getSession(sid);
+        patchChat(sid, { ...EMPTY_CHAT, messages: snap?.messages ?? [] });
+        try {
+          const ctx = await api.contextStats(sid);
+          if (ctx.session && Object.keys(ctx.session).length > 0) {
+            patchChat(sid, { contextStats: { model: "", context_window: 0, session: ctx.session } });
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    },
+    [closeStream, openSessionTab, patchChat]
+  );
+
+  const deleteSession = useCallback(
+    async (id: string) => {
+      try {
+        await api.deleteSession(id);
+        setTabs((prev) => {
+          const next = prev.filter((t) => t.sessionId !== id);
+          if (next.length === 0) {
+            void newChatTab();
+            return prev;
+          }
+          if (activeTabId === id || prev.find((t) => t.id === activeTabId)?.sessionId === id) {
+            const nb = next[next.length - 1];
+            setActiveTabId(nb.id);
+          }
+          return next;
+        });
+        await refreshSessions();
+      } catch {
+        /* ignore */
+      }
+    },
+    [activeTabId, refreshSessions, newChatTab]
+  );
+
+  const openProject = useCallback(async () => {
+    if (window.liteCode) {
+      try {
+        const result = await window.liteCode.openProject();
+        if (!result.ok && result.error !== "cancelled") {
+          patchActiveChat({ error: result.error ?? "无法切换项目" });
+        }
+        if (result.ok) window.location.reload();
+      } catch (e) {
+        patchActiveChat({ error: (e as Error).message });
+      }
+      return;
+    }
+    setShowPicker(true);
+  }, [patchActiveChat]);
+
+  const selectProject = useCallback(
+    async (path: string) => {
+      setShowPicker(false);
+      try {
+        const res = await api.setWorkspace(path);
+        if (res.ok) {
+          setStatus((prev) => (prev ? { ...prev, workspace: res.workspace } : prev));
+          setSidebarTab("files");
+          setSuccess(`已切换到项目: ${res.workspace}`);
+          pushLog(`📂 已切换到项目: ${res.workspace}`);
+          setTimeout(() => setSuccess(null), 4000);
+          closeStream();
+          setChatStates({});
+          chatStatesRef.current = {};
+          const { session_id } = await api.createSession();
+          openSessionTab(session_id, "新会话");
+          await refreshSessions();
+        }
+      } catch (e) {
+        patchActiveChat({ error: (e as Error).message });
+      }
+    },
+    [pushLog, refreshSessions, closeStream, openSessionTab, patchActiveChat]
+  );
+
+  // 首次启动：新建一个会话 tab
+  useEffect(() => {
+    if (!loading && tabsRef.current.length === 0) {
+      void newChatTab();
+    }
+  }, [loading, newChatTab]);
+
+  // ------------------------------------------------------------ 流式节流
 
   const scheduleStreamFlush = useCallback(() => {
     if (flushTimerRef.current !== null) return;
     flushTimerRef.current = window.setTimeout(() => {
       flushTimerRef.current = null;
-      setStreaming({ ...(streamingRef.current ?? { content: "", cards: [] }) });
+      const cur = streamingRef.current ?? { content: "", cards: [] };
+      const sid = tabsRef.current.find((t) => t.id === activeTabId)?.sessionId;
+      if (sid) patchChat(sid, { streaming: { ...cur } });
     }, 80);
-  }, []);
+  }, [activeTabId, patchChat]);
 
   const cancelStreamFlush = useCallback(() => {
     if (flushTimerRef.current !== null) {
@@ -222,21 +358,24 @@ export default function App() {
   const handleSSEEvent = useCallback(
     (ev: import("./types").SSEEvent) => {
       lastEventTimeRef.current = Date.now();
-      setStalled(false);
+      const sid = activeTabId ? tabsRef.current.find((t) => t.id === activeTabId)?.sessionId : null;
+      if (!sid) return;
+      const st = () => patchChat(sid!, { stalled: false });
+      st();
       const log = (msg: string) => pushLog(msg);
+
       switch (ev.type) {
         case "llm:stream": {
-          const cur = streamingRef.current ?? { content: "", cards: [] };
+          const cur = getChat(sid).streaming ?? { content: "", cards: [] };
           streamingRef.current = { ...cur, content: cur.content + ev.data.chunk };
           scheduleStreamFlush();
           break;
         }
         case "llm:turn_start": {
-          setTurn(ev.data.turn);
           log(`⟳ 第 ${ev.data.turn} 轮`);
-          const cur = streamingRef.current ?? { content: "", cards: [] };
+          const cur = getChat(sid).streaming ?? { content: "", cards: [] };
           streamingRef.current = { ...cur, turn: ev.data.turn };
-          setStreaming({ ...streamingRef.current });
+          patchChat(sid, { streaming: { ...streamingRef.current } });
           break;
         }
         case "tool:before_execute": {
@@ -247,15 +386,15 @@ export default function App() {
             args: ev.data.args,
             status: "running",
           };
-          const cur = streamingRef.current ?? { content: "", cards: [] };
+          const cur = getChat(sid).streaming ?? { content: "", cards: [] };
           streamingRef.current = { ...cur, cards: [...cur.cards, card] };
-          setStreaming({ ...streamingRef.current });
+          patchChat(sid, { streaming: { ...streamingRef.current } });
           break;
         }
         case "tool:after_execute": {
           log(`✔ ${ev.data.toolName} (${ev.data.durationMs}ms)`);
           if (TREE_TOUCH_TOOLS.has(ev.data.toolName)) setTreeRevision((v) => v + 1);
-          const cur = streamingRef.current;
+          const cur = getChat(sid).streaming;
           if (!cur) break;
           const cards = cur.cards.map((c) =>
             c.name === ev.data.toolName && c.status === "running"
@@ -268,62 +407,57 @@ export default function App() {
               : c
           );
           streamingRef.current = { ...cur, cards };
-          setStreaming({ ...streamingRef.current });
+          patchChat(sid, { streaming: { ...streamingRef.current } });
           break;
         }
         case "approval:request": {
-          setPendingApproval({ id: ev.data.id, action: ev.data.action, reason: ev.data.reason });
+          patchChat(sid, { pendingApproval: { id: ev.data.id, action: ev.data.action, reason: ev.data.reason } });
           break;
         }
         case "approval:resolved": {
-          setPendingApproval((p) => (p && p.id === ev.data.id ? null : p));
+          patchChat(sid, { pendingApproval: null });
           break;
         }
         case "stats:update": {
-          setStats(ev.data);
+          patchChat(sid, { stats: ev.data });
           break;
         }
         case "context:stats": {
-          setContextStats(ev.data);
+          patchChat(sid, { contextStats: ev.data });
           break;
         }
         case "task:done": {
-          setStats(ev.data.stats);
           setTreeRevision((v) => v + 1);
           const cur = streamingRef.current;
-          const finalMsg: Msg = {
-            role: "assistant",
-            content: cur?.content || ev.data.content,
-          };
-          setMessages((prev) => [...prev, finalMsg]);
+          const finalMsg: Msg = { role: "assistant", content: cur?.content || ev.data.content };
+          patchChat(sid, {
+            messages: [...getChat(sid).messages, finalMsg],
+            stats: ev.data.stats,
+            streaming: null,
+            running: false,
+            turn: 0,
+          });
           cancelStreamFlush();
           streamingRef.current = null;
-          setStreaming(null);
-          setRunning(false);
-          setTurn(0);
-          setStopping(false);
           closeStream();
           pushLog("■ 任务结束");
           void (async () => {
-            const snap = await api.getSession(activeSessionRef.current!);
-            if (snap) setMessages(snap.messages ?? []);
+            const snap = await api.getSession(sid);
+            if (snap) patchChat(sid, { messages: snap.messages ?? [] });
           })();
           void refreshSessions();
           break;
         }
         case "task:error": {
-          setError(ev.data.message);
           pushLog(`✗ 任务错误: ${ev.data.message}`);
+          patchChat(sid, { error: ev.data.message, running: false });
           cancelStreamFlush();
-          setRunning(false);
-          setStopping(false);
           closeStream();
           setTreeRevision((v) => v + 1);
           void refreshSessions();
           break;
         }
         case "subagent:completed": {
-          // 子 Agent（refactor 等）可能改动文件 → 目录树刷新
           setTreeRevision((v) => v + 1);
           break;
         }
@@ -331,26 +465,30 @@ export default function App() {
           break;
       }
     },
-    [closeStream, refreshSessions, pushLog, scheduleStreamFlush, cancelStreamFlush]
+    [activeTabId, getChat, patchChat, pushLog, scheduleStreamFlush, cancelStreamFlush, closeStream, refreshSessions]
   );
 
   // ------------------------------------------------------------ 发送
 
   const send = useCallback(
     async (prompt: string) => {
-      if (!activeSessionRef.current) {
+      let sid = activeTabId ? tabsRef.current.find((t) => t.id === activeTabId)?.sessionId : null;
+      if (!sid) {
         const { session_id } = await api.createSession();
-        setActiveSessionId(session_id);
-        activeSessionRef.current = session_id;
+        sid = session_id;
+        patchChat(session_id, { ...EMPTY_CHAT, messages: [] });
+        openSessionTab(session_id, "新会话");
         await refreshSessions();
       }
-      const sid = activeSessionRef.current;
-      setError(null);
-      setMessages((prev) => [...prev, { role: "user", content: prompt }]);
+      const base = getChat(sid);
+      patchChat(sid, {
+        messages: [...(base.messages ?? []), { role: "user", content: prompt }],
+        error: null,
+        running: true,
+      });
       cancelStreamFlush();
       streamingRef.current = { content: "", cards: [] };
-      setStreaming({ content: "", cards: [] });
-      setRunning(true);
+      patchChat(sid, { streaming: { content: "", cards: [] } });
 
       const connect = (taskId: string) => {
         const es = new EventSource(`/api/tasks/${taskId}/events`);
@@ -378,81 +516,44 @@ export default function App() {
 
       try {
         pushLog("➤ 提交任务…");
-        const { task_id } = await api.chat(sid!, prompt, currentAgent);
+        const { task_id } = await api.chat(sid, prompt, currentAgent);
         taskIdRef.current = task_id;
         connect(task_id);
       } catch (e) {
-        setError((e as Error).message);
+        patchChat(sid, { error: (e as Error).message, running: false, streaming: null });
         pushLog(`✗ 提交失败: ${(e as Error).message}`);
-        setRunning(false);
-        setStreaming(null);
       }
     },
-    [handleSSEEvent, refreshSessions, pushLog, currentAgent]
+    [activeTabId, getChat, patchChat, openSessionTab, refreshSessions, cancelStreamFlush, handleSSEEvent, pushLog, currentAgent]
   );
 
   const stop = useCallback(() => {
     const tid = taskIdRef.current;
     if (!tid) return;
-    setStopping(true);
     pushLog("■ 请求停止任务…");
-    void api.stopTask(tid).catch(() => setStopping(false));
+    void api.stopTask(tid).catch(() => {});
   }, [pushLog]);
 
   const approve = useCallback(
     async (approved: boolean) => {
-      if (!pendingApproval) return;
-      const id = pendingApproval.id;
-      setPendingApproval(null);
+      const pa = currentChat.pendingApproval;
+      if (!pa) return;
+      patchActiveChat({ pendingApproval: null });
       try {
-        await api.approve(id, approved);
+        await api.approve(pa.id, approved);
       } catch {
         /* ignore */
       }
     },
-    [pendingApproval]
+    [currentChat.pendingApproval, patchActiveChat]
   );
 
-  const openProject = useCallback(async () => {
-    // Electron：走原生目录选择器；浏览器：弹出目录树选择器
-    if (window.liteCode) {
-      setError(null);
-      try {
-        const result = await window.liteCode.openProject();
-        if (!result.ok) {
-          if (result.error !== "cancelled") setError(result.error ?? "无法切换项目");
-          return;
-        }
-        window.location.reload();
-      } catch (e) {
-        setError((e as Error).message);
-      }
-      return;
-    }
-    setShowPicker(true);
-  }, []);
+  const activeSessionTitle = useMemo(() => {
+    if (!activeSessionId) return "";
+    return sessions.find((s) => s.session_id === activeSessionId)?.title ?? "新会话";
+  }, [activeSessionId, sessions]);
 
-  const selectProject = useCallback(async (path: string) => {
-    setShowPicker(false);
-    setError(null);
-    try {
-      const res = await api.setWorkspace(path);
-      if (res.ok) {
-        setStatus((prev) => prev ? { ...prev, workspace: res.workspace } : prev);
-        setSidebarTab("files");
-        setSuccess(`已切换到项目: ${res.workspace}`);
-        pushLog(`📂 已切换到项目: ${res.workspace}`);
-        setTimeout(() => setSuccess(null), 4000);
-      }
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }, [pushLog]);
-
-  const activeSessionTitle = useMemo(
-    () => sessions.find((s) => s.session_id === activeSessionId)?.title ?? activeSessionId ?? "",
-    [sessions, activeSessionId]
-  );
+  const sidebarStats = currentChat.stats;
 
   if (loading) {
     return (
@@ -466,16 +567,16 @@ export default function App() {
     );
   }
 
-  if (!status && error) {
+  if (!status && currentChat.error) {
     return (
       <div className="app">
         <div className="drag-region" />
         <div className="crash-screen">
           <div className="crash-icon">⚠️</div>
           <h2>无法连接后端服务</h2>
-          <p className="crash-message">{error}</p>
+          <p className="crash-message">{currentChat.error}</p>
           <div className="crash-actions">
-            <button onClick={() => { setError(null); setLoading(true); void refreshAll(); }}>
+            <button onClick={() => { patchActiveChat({ error: null }); setLoading(true); void refreshAll(); }}>
               🔄 重试
             </button>
           </div>
@@ -488,55 +589,67 @@ export default function App() {
     <div className="app">
       <div className="drag-region" />
       <Sidebar
-        sessions={sessions}        activeSessionId={activeSessionId}
+        sessions={sessions}
+        activeSessionId={activeSessionId}
         workspace={status?.workspace ?? "…"}
-        stats={stats}
+        stats={sidebarStats}
         tab={sidebarTab}
         treeRevision={treeRevision}
         onTabChange={setSidebarTab}
         onSelectSession={(id) => void selectSession(id)}
-        onNewSession={() => void newSession()}
+        onNewSession={() => void newChatTab()}
         onDeleteSession={(id) => void deleteSession(id)}
         onOpenProject={() => void openProject()}
         onOpenSettings={() => setShowSettings(true)}
+        onFileOpen={(p) => void openFileTab(p)}
       />
       <main className="main">
-        <ChatView
-          sessionId={activeSessionId ?? "（未选择）"}
-          sessionTitle={activeSessionTitle}
-          messages={messages}
-          streaming={streaming}
-          running={running}
-          turn={turn}
-          pendingApproval={pendingApproval}
-          onSend={(p) => void send(p)}
-          onStop={stop}
-          onApprove={(a) => void approve(a)}
+        <TabBar
+          tabs={tabs}
+          activeTabId={activeTabId}
+          onSelect={(id) => { closeStream(); setActiveTabId(id); }}
+          onClose={closeTab}
         />
-        <Composer
-          disabled={running}
-          running={running}
-          agents={agents}
-          currentAgent={currentAgent}
-          onSelectAgent={setCurrentAgent}
-          onSend={(p) => void send(p)}
-          onStop={stop}
-        />
-        <button className="debug-toggle" onClick={() => setShowDebug(!showDebug)} title="调试日志">
-          {showDebug ? "隐藏日志" : "日志"}
-        </button>
-        {stalled && running && (
+        {activeTab?.kind === "file" ? (
+          <FileViewer tab={activeTab} />
+        ) : (
+          <>
+            <ChatView
+              sessionId={activeSessionId ?? "（未选择）"}
+              sessionTitle={activeSessionTitle}
+              messages={currentChat.messages}
+              streaming={currentChat.streaming}
+              running={currentChat.running}
+              turn={currentChat.turn}
+              pendingApproval={currentChat.pendingApproval}
+              onSend={(p) => void send(p)}
+              onStop={stop}
+              onApprove={(a) => void approve(a)}
+            />
+            <Composer
+              disabled={currentChat.running}
+              running={currentChat.running}
+              agents={agents}
+              currentAgent={currentAgent}
+              onSelectAgent={setCurrentAgent}
+              onSend={(p) => void send(p)}
+              onStop={stop}
+            />
+            <button className="debug-toggle" onClick={() => setShowDebug(!showDebug)} title="调试日志">
+              {showDebug ? "隐藏日志" : "日志"}
+            </button>
+          </>
+        )}
+        {currentChat.stalled && currentChat.running && (
           <div className="error-banner stalled">
             <span>⚠ 任务长时间无响应（可能 LLM 超时或网络问题）</span>
-            <button onClick={stop} disabled={stopping}>
-              {stopping ? "正在停止…" : "■ 停止任务"}
-            </button>
+            <button onClick={stop}>■ 停止任务</button>
           </div>
         )}
-        {error && (
+        {currentChat.error && (
           <div className="error-banner">
-            <span>⚠ {error}</span>
-            <button onClick={() => setError(null)}>✕</button>
+            <span>⚠ {currentChat.error}</span>
+            <button onClick={() => patchActiveChat({ error: null })}>✕</button>
           </div>
         )}
         {success && (
@@ -558,7 +671,7 @@ export default function App() {
           </div>
         )}
       </main>
-      <ToolPanel contextStats={contextStats} />
+      {activeTab?.kind === "chat" && <ToolPanel contextStats={currentChat.contextStats} />}
       {showSettings && (
         <SettingsModal
           onClose={() => setShowSettings(false)}

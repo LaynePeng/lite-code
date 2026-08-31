@@ -5,7 +5,7 @@ import type { SessionInfo, TreeEntry } from "../types";
 
 // ---------------------------------------------------------------- 目录树
 
-function FileTree({ workspace, revision }: { workspace: string; revision: number }) {
+function FileTree({ workspace, revision, onFileOpen }: { workspace: string; revision: number; onFileOpen?: (path: string) => void }) {
   const [dirs, setDirs] = useState<Map<string, TreeEntry[]>>(new Map());
   const [open, setOpen] = useState<Set<string>>(new Set([""]));
   const [branch, setBranch] = useState<string | null>(null);
@@ -92,6 +92,7 @@ function FileTree({ workspace, revision }: { workspace: string; revision: number
           className={`tree-row file ${n.status ? `st-${n.status}` : ""}`}
           style={{ paddingLeft: depth * 14 + 8 }}
           title={n.path}
+          onDoubleClick={() => onFileOpen?.(n.path)}
         >
           <span className="tree-caret-placeholder" />
           <span className="tree-icon">{n.status === "D" ? "✕" : "📄"}</span>
@@ -149,6 +150,7 @@ export default function Sidebar({
   onDeleteSession,
   onOpenProject,
   onOpenSettings,
+  onFileOpen,
 }: {
   sessions: SessionInfo[];
   activeSessionId: string | null;
@@ -162,6 +164,7 @@ export default function Sidebar({
   onDeleteSession: (id: string) => void;
   onOpenProject: () => void;
   onOpenSettings: () => void;
+  onFileOpen?: (path: string) => void;
 }) {
   const [tools, setTools] = useState<{ name: string; description: string }[]>([]);
 
@@ -224,7 +227,7 @@ export default function Sidebar({
           </div>
         )}
 
-        {tab === "files" && <FileTree workspace={workspace} revision={treeRevision} />}
+        {tab === "files" && <FileTree workspace={workspace} revision={treeRevision} onFileOpen={onFileOpen} />}
 
         {tab === "stats" && (
           <div className="stats-panel">
@@ -268,7 +271,7 @@ export default function Sidebar({
         <button className="btn-open-settings" onClick={onOpenSettings}>
           ⚙️ LLM 设置
         </button>
-        <div className="footer-version">lite-code v0.6.3-rc · 手写 Agent Harness</div>
+        <div className="footer-version">lite-code v0.7.0-rc · 手写 Agent Harness</div>
       </div>
     </aside>
   );

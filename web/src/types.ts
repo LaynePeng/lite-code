@@ -176,3 +176,48 @@ export interface ToolCardInfo {
   durationMs?: number;
   result?: string;
 }
+
+// 文件读取响应（/api/fs/read）
+export interface FileReadResponse {
+  path: string;
+  content: string;
+  language: string;
+  lines: number;
+  size: number;
+  diff: string;
+}
+
+// 文件 diff 响应（/api/workspace/diff）
+export interface FileDiffResponse {
+  path: string;
+  diff: string;
+  additions: number;
+  deletions: number;
+}
+
+// Tab 项：对话 或 文件
+export interface TabItem {
+  id: string;
+  kind: "chat" | "file";
+  title: string;
+  // chat tab
+  sessionId?: string;
+  // file tab
+  filePath?: string;
+  fileLanguage?: string;
+  fileContent?: string;
+  fileDiff?: string;
+}
+
+// 单个会话的独立状态
+export interface ChatSessionState {
+  messages: Msg[];
+  streaming: { content: string; cards: ToolCardInfo[]; turn?: number } | null;
+  running: boolean;
+  turn: number;
+  stats: Stats | null;
+  contextStats: ContextStats | null;
+  error: string | null;
+  pendingApproval: { id: string; action: string; reason: string } | null;
+  stalled: boolean;
+}

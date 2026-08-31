@@ -92,6 +92,8 @@ button {
   flex-direction: column;
   min-width: 0;
   position: relative;
+  /* 避开顶部 drag-region（fixed 覆盖层 38px），否则 TabBar 无法点击 */
+  padding-top: 38px;
 }
 
 /* ============================== 侧边栏 ============================== */
@@ -2132,4 +2134,210 @@ button {
   text-align: center;
   color: var(--text-3);
   font-size: 12px;
+}
+
+/* ─────────────────────────────────── Tab 栏 */
+.tab-bar {
+  display: flex;
+  gap: 0;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  overflow-x: auto;
+  padding: 0 0 0 8px;
+  min-height: 36px;
+  align-items: stretch;
+}
+
+.tab-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--text-2);
+  cursor: pointer;
+  border-right: 1px solid var(--border);
+  white-space: nowrap;
+  user-select: none;
+  transition: background 0.1s, color 0.1s;
+  min-width: 0;
+}
+
+.tab-item:hover {
+  background: var(--bg-2);
+  color: var(--text-0);
+}
+
+.tab-item.active {
+  background: var(--bg-0);
+  color: var(--text-0);
+  border-bottom: 2px solid var(--accent);
+}
+
+.tab-icon {
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.tab-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+}
+
+.tab-close {
+  font-size: 10px;
+  color: var(--text-3);
+  padding: 1px 3px;
+  border-radius: 3px;
+  margin-left: 2px;
+  flex-shrink: 0;
+}
+
+.tab-close:hover {
+  background: var(--bg-3);
+  color: var(--text-0);
+}
+
+/* ─────────────────────────────────── 文件查看器 */
+.file-viewer {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--bg-0);
+}
+
+.file-viewer-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 16px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.file-viewer-path {
+  font-family: var(--font-mono);
+  color: var(--text-0);
+  font-weight: 600;
+}
+
+.file-viewer-lang {
+  font-size: 10px;
+  color: var(--accent);
+  background: rgba(79, 140, 255, 0.12);
+  padding: 1px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.file-viewer-lines {
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.file-viewer-diff-toggle {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-2);
+  padding: 3px 8px;
+  border-radius: 4px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.file-viewer-diff-toggle:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* diff 面板 */
+.file-diff-panel {
+  border-bottom: 1px solid var(--border);
+  max-height: 300px;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.file-diff-header {
+  font-size: 11px;
+  color: var(--text-2);
+  padding: 6px 16px;
+  background: var(--bg-2);
+  border-bottom: 1px solid var(--border);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.file-diff-body {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.diff-line {
+  display: flex;
+  padding: 0 16px;
+}
+
+.diff-line-num {
+  width: 40px;
+  flex-shrink: 0;
+}
+
+.diff-add { background: rgba(63, 185, 80, 0.12); }
+.diff-del { background: rgba(248, 81, 73, 0.12); }
+.diff-hunk { background: var(--bg-2); color: var(--accent); }
+.diff-meta { color: var(--text-3); }
+.diff-context { color: var(--text-1); }
+
+.diff-line-content {
+  white-space: pre;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 文件内容 */
+.file-content {
+  flex: 1;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.file-code-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.code-line {
+  display: flex;
+}
+
+.code-line:nth-child(even) {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.code-line-num {
+  width: 48px;
+  min-width: 48px;
+  text-align: right;
+  padding: 0 10px 0 0;
+  color: var(--text-3);
+  user-select: none;
+  border-right: 1px solid var(--border);
+  margin-right: 10px;
+  font-size: 11px;
+}
+
+.code-line-content {
+  padding: 0 0 0 10px;
+  white-space: pre;
+  color: var(--text-0);
 }

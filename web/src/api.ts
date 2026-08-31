@@ -1,4 +1,4 @@
-import type { AgentInfo, AppConfig, LLMConfig, LLMProviderMeta, ServerStatus, SessionInfo, ToolDef, TreeResponse } from "./types";
+import type { AgentInfo, AppConfig, FileDiffResponse, FileReadResponse, LLMConfig, LLMProviderMeta, ServerStatus, SessionInfo, ToolDef, TreeResponse } from "./types";
 
 const TIMEOUT = 15000;
 
@@ -47,6 +47,10 @@ export const api = {
     req<{ path: string; parent: string | null; home: string; is_workspace: boolean; dirs: string[]; files: string[]; truncated: boolean }>(
       `/api/fs/list${path ? `?path=${encodeURIComponent(path)}` : ""}`
     ),
+  readFile: (path: string) =>
+    req<FileReadResponse>(`/api/fs/read?path=${encodeURIComponent(path)}`),
+  fileDiff: (path: string) =>
+    req<FileDiffResponse>(`/api/workspace/diff?path=${encodeURIComponent(path)}`),
   setWorkspace: (path: string) =>
     req<{ ok: boolean; workspace: string }>("/api/workspace", {
       method: "POST", body: JSON.stringify({ path }),
