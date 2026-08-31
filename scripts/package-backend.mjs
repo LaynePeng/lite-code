@@ -35,7 +35,7 @@ const sep = isWindows ? ";" : ":";
 const specArgs = [
   "--noconfirm",
   "--clean",
-  "--onefile",
+  "--onedir",
   "--name", "lite-code-backend",
   "--distpath", outDir,
   "--workpath", path.join(root, "release", "_build"),
@@ -65,15 +65,16 @@ const specArgs = [
 
 console.log("[package] Packaging backend with PyInstaller...");
 console.log(`  python: ${python}`);
-console.log(`  output: ${outDir}/lite-code-backend${isWindows ? ".exe" : ""}`);
-console.log(`  mode: --onefile (this may take 1-3 min, mostly collecting tree-sitter etc.)`);
+console.log(`  output: ${outDir}/lite-code-backend/ (--onedir, faster than onefile)`);
+console.log(`  mode: --onedir (this may take 30-90s)`);
 execSync([python, "-m", "PyInstaller", ...specArgs].join(" "), {
   cwd: root,
   stdio: "inherit",
   env: { ...process.env, PYTHONPATH: root },
 });
 
-const binary = path.join(outDir, isWindows ? "lite-code-backend.exe" : "lite-code-backend");
+const outDirName = isWindows ? "lite-code-backend.exe" : "lite-code-backend";
+const binary = path.join(outDir, "lite-code-backend", outDirName);
 if (!fs.existsSync(binary)) {
   console.error("[package] Backend packaging failed: binary was not generated");
   process.exit(1);

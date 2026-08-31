@@ -85,14 +85,16 @@ function createWindow(url) {
 }
 
 function resolvePython() {
-  // 打包模式：使用内置后端二进制（Windows 为 .exe）
+  // 打包模式：使用内置后端二进制（PyInstaller --onedir 结构：litecode-bin/lite-code-backend/lite-code-backend）
   if (app.isPackaged) {
     const isWin = process.platform === "win32";
-    const bundled = path.join(
-      process.resourcesPath, "litecode-bin",
-      isWin ? "lite-code-backend.exe" : "lite-code-backend"
-    );
+    const exe = isWin ? "lite-code-backend.exe" : "lite-code-backend";
+    const dir = path.join(process.resourcesPath, "litecode-bin", "lite-code-backend");
+    const bundled = path.join(dir, exe);
     if (fs.existsSync(bundled)) return bundled;
+    // 兼容旧版单文件
+    const legacy = path.join(process.resourcesPath, "litecode-bin", exe);
+    if (fs.existsSync(legacy)) return legacy;
   }
   // 开发模式：优先项目 venv，其次系统 python3
   const projectRoot = app.getAppPath();
