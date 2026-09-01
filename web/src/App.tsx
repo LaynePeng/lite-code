@@ -767,6 +767,7 @@ export default function App() {
         stats={sidebarStats}
         tab={sidebarTab}
         treeRevision={treeRevision}
+        version={status?.version ?? "?"}
         onTabChange={setSidebarTab}
         onSelectSession={(id) => void selectSession(id)}
         onNewSession={requestNewChat}

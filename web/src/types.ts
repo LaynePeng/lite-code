@@ -146,6 +146,7 @@ export interface LLMProviderSettings {
   name?: string;
   temperature: number;
   context_window?: number | null;
+  custom_headers?: Record<string, string>;
 }
 
 export interface LLMConfig {

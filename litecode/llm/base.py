@@ -1,7 +1,7 @@
 """LLM 适配器抽象基类。"""
 from __future__ import annotations
 
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..core.events import TypedEventBus
 from ..core.types import Message, ToolCall, ToolDefinition
@@ -17,6 +17,24 @@ def decode_utf8_incremental(buffer: bytes, chunk: bytes) -> Tuple[str, bytes]:
         if exc.reason == "unexpected end of data" and exc.start < len(data):
             return data[:exc.start].decode("utf-8"), data[exc.start:]
         return data.decode("utf-8", errors="replace"), b""
+
+
+def clean_custom_headers(raw: Optional[Any]) -> Dict[str, str]:
+    """清洗用户自定义 HTTP 头：仅保留 str:str、去空键空值。
+
+    作为适配器构造的最终防线——配置层校验失守时保证非法值不进真实请求。
+    """
+    if not isinstance(raw, dict):
+        return {}
+    cleaned: Dict[str, str] = {}
+    for k, v in raw.items():
+        if not isinstance(k, str) or not isinstance(v, str):
+            continue
+        key = k.strip()
+        value = v.strip()
+        if key and value:
+            cleaned[key] = value
+    return cleaned
 
 
 class LLMError(Exception):

@@ -47,6 +47,8 @@ function createWindow(url) {
       nodeIntegration: false,
       sandbox: true,
       preload: path.join(__dirname, "preload.js"),
+      // 把应用版本传给 preload（app.getVersion 自动读 package.json，dev/打包都正确）
+      additionalArguments: [`--litecode-version=${app.getVersion()}`],
     },
   });
 

@@ -194,6 +194,7 @@ class LLMRegistry:
                     "model": "",
                     "models": [],
                     "temperature": 0.2,
+                    "custom_headers": {},
                 }
             # 跳过脱敏 / 空的 api_key，防止用「sk-c…1f74」这种脱敏值覆盖真实 key
             api_key = settings.get("api_key")
@@ -230,6 +231,7 @@ class LLMRegistry:
                 "models": p.get("models", []),
                 "temperature": p.get("temperature", 0.2),
                 "context_window": p.get("context_window"),
+                "custom_headers": p.get("custom_headers") or {},
             }
         return {"active": self.active, "providers": providers}
 
@@ -314,6 +316,7 @@ class LLMRegistry:
             temperature=float(settings.get("temperature", 0.2)),
             provider_id=pid,
             enable_cache=bool(settings.get("enable_cache", True)),
+            custom_headers=settings.get("custom_headers") or {},
         )
         if meta["kind"] == "anthropic":
             return AnthropicAdapter(**common)

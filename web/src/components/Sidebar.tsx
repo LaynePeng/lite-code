@@ -145,6 +145,7 @@ export default function Sidebar({
   stats,
   tab,
   treeRevision,
+  version,
   onTabChange,
   onSelectSession,
   onNewSession,
@@ -161,6 +162,7 @@ export default function Sidebar({
   stats: { input_tokens: number; output_tokens: number; cost_estimate: number; tool_calls: number; blocked: number } | null;
   tab: "sessions" | "files" | "stats";
   treeRevision: number;
+  version: string;
   onTabChange: (tab: "sessions" | "files" | "stats") => void;
   onSelectSession: (id: string) => void;
   onNewSession: () => void;
@@ -282,7 +284,7 @@ export default function Sidebar({
           ⚙️ 设置
         </button>
         <button className="footer-version footer-version-btn" onClick={onOpenAbout} title="关于 lite-code">
-          lite-code v0.11.0 · 手写 Agent Harness
+          lite-code v{version} · 手写 Agent Harness
         </button>
       </div>
     </aside>

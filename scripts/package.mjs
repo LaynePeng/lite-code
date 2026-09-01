@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const pkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf-8"));
-const version = pkg.version;
+let version = pkg.version;
 
 const env = { ...process.env };
 
@@ -31,6 +31,12 @@ function step(label, fn) {
   fn();
   console.log(`(${((Date.now() - start) / 1000).toFixed(1)}s)`);
 }
+
+// Version single source of truth: sync npm-side version fields from litecode/__version__
+step("sync-version", () => execSync("node scripts/sync-version.mjs", { cwd: root, stdio: "inherit" }));
+// Re-read after sync so the DMG name follows the single source of truth
+const syncedPkg = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf-8"));
+version = syncedPkg.version;
 
 console.log("[package] Step 0/4: Generate app icon");
 step("icon", () => execSync("node scripts/generate-icon.mjs", { cwd: root, stdio: "inherit" }));

@@ -15,12 +15,13 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from .. import __version__
 from ..app import AgentApp
 from .tasks import TaskManager
 
 logger = logging.getLogger("litecode.server")
 
-VERSION = "0.11.0"
+VERSION = __version__
 
 
 # ---------------------------------------------------------------- 请求模型

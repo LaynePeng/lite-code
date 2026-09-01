@@ -18,10 +18,11 @@ import time
 
 import uvicorn
 
+from . import __version__
 from .app import AgentApp
 from .server.app import create_app
 
-VERSION = "0.10.0"
+VERSION = __version__
 
 
 def _parse_args(argv: list) -> argparse.Namespace:

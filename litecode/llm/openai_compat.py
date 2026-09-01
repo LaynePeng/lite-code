@@ -16,7 +16,7 @@ import httpx
 
 from ..core.events import TypedEventBus
 from ..core.types import Message, ToolCall, ToolDefinition
-from .base import BaseLLMAdapter, LLMError, decode_utf8_incremental
+from .base import BaseLLMAdapter, LLMError, clean_custom_headers, decode_utf8_incremental
 
 logger = logging.getLogger("litecode.llm")
 
@@ -34,6 +34,7 @@ class OpenAICompatAdapter(BaseLLMAdapter):
         temperature: float = 0.2,
         provider_id: str = "deepseek",
         enable_cache: bool = True,
+        custom_headers: Optional[Dict[str, str]] = None,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -42,6 +43,8 @@ class OpenAICompatAdapter(BaseLLMAdapter):
         self.temperature = temperature
         self.provider_id = provider_id
         self.enable_cache = enable_cache
+        # 自定义请求头：清洗后叠加在默认头之上（可覆盖 Authorization，适配网关自定义鉴权）
+        self.custom_headers = clean_custom_headers(custom_headers)
         self._client: Optional[httpx.AsyncClient] = None
 
     def _get_client(self) -> httpx.AsyncClient:
@@ -58,6 +61,7 @@ class OpenAICompatAdapter(BaseLLMAdapter):
         return {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
+            **self.custom_headers,
         }
 
     def _build_payload(

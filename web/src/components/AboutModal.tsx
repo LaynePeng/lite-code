@@ -3,7 +3,6 @@ import AppIcon from "./AppIcon";
 
 const GITHUB_URL = "https://github.com/LaynePeng/lite-code";
 const TUTORIAL_URL = "https://laynepeng.gitbook.io/ai-code-agent-shou-ba-shou";
-const APP_VERSION = "0.11.0";
 
 function GitHubIcon() {
   return (
@@ -23,7 +22,8 @@ export default function AboutModal({ onClose, serverVersion }: { onClose: () => 
   }, [onClose]);
 
   const desktopVersion = window.liteCode?.version;
-  const coreVersion = serverVersion || desktopVersion || APP_VERSION;
+  // 展示版本运行时获取：Core 版本（/api/status）→ 桌面版本（app.getVersion），不再硬编码
+  const shownVersion = serverVersion || desktopVersion || "?";
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -35,7 +35,7 @@ export default function AboutModal({ onClose, serverVersion }: { onClose: () => 
         <div className="modal-body about-body">
           <div className="about-logo"><AppIcon size={72} /></div>
           <h3 className="about-name">lite-code</h3>
-          <div className="about-version-pill">v{APP_VERSION}<span className="about-core">Core v{coreVersion}</span></div>
+          <div className="about-version-pill">v{shownVersion}<span className="about-core">Core v{shownVersion}</span></div>
           <p className="about-desc">
             手写内核的 Code Agent 桌面应用——Python 内核 + React UI + Electron 外壳，
             从 LLM 流式解析、上下文压缩到沙箱审批全部纯手写，不依赖 LangChain 等高层框架。

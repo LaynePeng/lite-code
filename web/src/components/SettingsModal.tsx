@@ -25,6 +25,9 @@ export default function SettingsModal({
   const [mcpSaving, setMcpSaving] = useState(false);
   const [mcpResult, setMcpResult] = useState<string | null>(null);
 
+  // 自定义 Header 的编辑文本（每行 "Key: Value" 或 "Key=Value"），blur 时解析提交
+  const [headersText, setHeadersText] = useState<Record<string, string>>({});
+
   useEffect(() => {
     Promise.all([api.llmProviders(), api.llmConfig(), api.mcpStatus()]).then(([p, c, m]) => {
       setProviders(p);
@@ -43,6 +46,13 @@ export default function SettingsModal({
         cfg[s.name] = { command: s.command, args: s.args, enabled: s.enabled };
       }
       setMcpServers(cfg);
+      // 自定义 Header：dict → 每行 "Key: Value" 的可编辑文本
+      const texts: Record<string, string> = {};
+      for (const [pid, s] of Object.entries(c.providers)) {
+        const headers = (s as LLMProviderSettings).custom_headers || {};
+        texts[pid] = Object.entries(headers).map(([k, v]) => `${k}: ${v}`).join("\n");
+      }
+      setHeadersText(texts);
     }).catch(() => {});
   }, []);
 
@@ -90,8 +100,26 @@ export default function SettingsModal({
     }
   }, [mcpServers, onSaved]);
 
-  const update = (pid: string, key: string, value: string | string[] | number | boolean | null) => {
+  const update = (pid: string, key: string, value: string | string[] | number | boolean | null | Record<string, string>) => {
     setEditing((e) => ({ ...e, [pid]: { ...(e[pid] || {}), [key]: value } }));
+  };
+
+  // 自定义 Header 文本 → dict：每行按第一个冒号/等号切分（值可含冒号，如 URL），
+  // 空行、# 注释、无分隔符的行忽略；同键后者覆盖。blur 时提交。
+  const commitHeaders = (pid: string, text: string) => {
+    const headers: Record<string, string> = {};
+    for (const line of text.split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const sepIdx = Math.min(
+        ...[trimmed.indexOf(":"), trimmed.indexOf("=")].filter((i) => i > 0).concat([Infinity]),
+      );
+      if (!Number.isFinite(sepIdx)) continue;
+      const key = trimmed.slice(0, sepIdx).trim();
+      const value = trimmed.slice(sepIdx + 1).trim();
+      if (key && value) headers[key] = value;
+    }
+    update(pid, "custom_headers", headers);
   };
 
   const providerMeta = providers.find((p) => p.id === activeProvider);
@@ -103,7 +131,7 @@ export default function SettingsModal({
     const id = `custom_${Date.now()}`;
     const next: LLMProviderSettings = {
       api_key: "", has_key: false, base_url: "", model: "", models: [],
-      temperature: 0.2, name: "自定义供应商",
+      temperature: 0.2, name: "自定义供应商", custom_headers: {},
     };
     setProviders((prev) => [...prev, {
       id, name: next.name || id, kind: "openai", models: [], default_base_url: "",
@@ -132,6 +160,25 @@ export default function SettingsModal({
       if (e?.base_url) overrides.base_url = e.base_url;
       if (e?.model) overrides.model = e.model;
       if (e?.temperature) overrides.temperature = e.temperature;
+      // 测试连接带上当前编辑的自定义 Header（含未 blur 的文本框内容）
+      const liveText = headersText[activeProvider];
+      if (liveText !== undefined) {
+        const headers: Record<string, string> = {};
+        for (const line of liveText.split("\n")) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith("#")) continue;
+          const sepIdx = Math.min(
+            ...[trimmed.indexOf(":"), trimmed.indexOf("=")].filter((i) => i > 0).concat([Infinity]),
+          );
+          if (!Number.isFinite(sepIdx)) continue;
+          const key = trimmed.slice(0, sepIdx).trim();
+          const value = trimmed.slice(sepIdx + 1).trim();
+          if (key && value) headers[key] = value;
+        }
+        overrides.custom_headers = headers;
+      } else if (e?.custom_headers && Object.keys(e.custom_headers).length > 0) {
+        overrides.custom_headers = e.custom_headers;
+      }
       const res = await api.testLLM(activeProvider, Object.keys(overrides).length ? overrides : undefined);
       setTestResult(res);
     } catch (err) {
@@ -139,7 +186,7 @@ export default function SettingsModal({
     } finally {
       setTesting(false);
     }
-  }, [activeProvider, editing]);
+  }, [activeProvider, editing, headersText]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -235,6 +282,24 @@ export default function SettingsModal({
                       value={(currentEdit.base_url as string) || ""}
                       onChange={(e) => update(activeProvider, "base_url", e.target.value)}
                     />
+                  </div>
+
+                  <div className="form-group">
+                    <label>自定义 Header（每行一个，可留空）</label>
+                    <textarea
+                      className="form-input"
+                      rows={3}
+                      placeholder={"X-Title: My App\nHTTP-Referer: https://myapp.dev"}
+                      value={headersText[activeProvider] ?? ""}
+                      onChange={(e) =>
+                        setHeadersText((prev) => ({ ...prev, [activeProvider]: e.target.value }))
+                      }
+                      onBlur={(e) => commitHeaders(activeProvider, e.target.value)}
+                    />
+                    <small>
+                      格式 <code>Key: Value</code> 或 <code>Key=Value</code>（按第一个分隔符切分，值可含冒号）；
+                      支持任意多个，可覆盖默认 Authorization 头；<code>#</code> 开头的行忽略。
+                    </small>
                   </div>
 
                   <div className="form-group">

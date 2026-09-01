@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from .. import __version__
 from ..core.types import ToolDefinition
 
 logger = logging.getLogger("litecode.tools")
@@ -31,7 +32,7 @@ logger = logging.getLogger("litecode.tools")
 MAX_READ_BYTES = 2 * 1024 * 1024  # 最多读取 2MB
 DEFAULT_MAX_CHARS = 12_000
 TIMEOUT = 15.0
-USER_AGENT = "lite-code-agent/0.6.3 (web research)"
+USER_AGENT = f"lite-code-agent/{__version__} (web research)"
 CACHE_TTL = 3600  # 缓存有效期：1 小时
 MAX_BATCH_URLS = 8  # 单次批量抓取上限
 BATCH_CONCURRENCY = 4  # 批量并发数（温和限速）

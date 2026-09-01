@@ -231,6 +231,16 @@ class AgentApp:
                 # 空/无效的 context_window（手动覆盖）视为未设置
                 if settings.get("context_window") in (None, "", 0):
                     settings.pop("context_window", None)
+                # custom_headers 必须是 str:str 字典；非法或空字典视为未设置
+                raw_headers = settings.get("custom_headers")
+                if not isinstance(raw_headers, dict) or not raw_headers:
+                    settings.pop("custom_headers", None)
+                else:
+                    settings["custom_headers"] = {
+                        str(k).strip(): str(v).strip()
+                        for k, v in raw_headers.items()
+                        if str(k).strip() and str(v).strip()
+                    }
                 merged = {**current, **settings}
                 if pid.startswith("custom_"):
                     merged["name"] = str(merged.get("name") or pid).strip()

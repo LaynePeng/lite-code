@@ -43,6 +43,11 @@ function Invoke-Step([string]$Name, [scriptblock]$Block) {
     }
 }
 
+# Version single source of truth: sync npm-side version fields from litecode/__init__.py
+Invoke-Step "Sync version from litecode/__init__.py" {
+    node scripts/sync-version.mjs
+}
+
 # ------------------------------------------------------------ Python environment
 
 $venvPython = Join-Path $PWD ".venv\Scripts\python.exe"

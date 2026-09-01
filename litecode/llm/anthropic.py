@@ -15,7 +15,7 @@ import httpx
 
 from ..core.events import TypedEventBus
 from ..core.types import Message, ToolCall, ToolDefinition
-from .base import BaseLLMAdapter, LLMError, decode_utf8_incremental
+from .base import BaseLLMAdapter, LLMError, clean_custom_headers, decode_utf8_incremental
 
 logger = logging.getLogger("litecode.llm")
 
@@ -34,6 +34,7 @@ class AnthropicAdapter(BaseLLMAdapter):
         max_tokens: int = 8192,
         provider_id: str = "anthropic",
         enable_cache: bool = True,
+        custom_headers: Optional[Dict[str, str]] = None,
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -43,6 +44,8 @@ class AnthropicAdapter(BaseLLMAdapter):
         self.max_tokens = max_tokens
         self.provider_id = provider_id
         self.enable_cache = enable_cache
+        # 自定义请求头：清洗后叠加在默认头之上（可覆盖 x-api-key / anthropic-version）
+        self.custom_headers = clean_custom_headers(custom_headers)
         self._client: Optional[httpx.AsyncClient] = None
 
     def _get_client(self) -> httpx.AsyncClient:
@@ -60,6 +63,7 @@ class AnthropicAdapter(BaseLLMAdapter):
             "Content-Type": "application/json",
             "x-api-key": self.api_key,
             "anthropic-version": "2023-06-01",
+            **self.custom_headers,
         }
 
     @staticmethod

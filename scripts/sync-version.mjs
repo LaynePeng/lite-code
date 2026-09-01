@@ -1,0 +1,44 @@
+// Sync npm-side version fields from the single source of truth: litecode/__init__.py __version__.
+// Updates the top-level "version" in package.json, web/package.json and both lockfiles.
+// Runs automatically at the start of every build; also guarded by tests/test_version_sync.py.
+import { execSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+
+function readVersion() {
+  const init = fs.readFileSync(path.join(root, "litecode", "__init__.py"), "utf-8");
+  const m = init.match(/^__version__\s*=\s*["']([^"']+)["']/m);
+  if (!m) {
+    console.error("[sync-version] __version__ not found in litecode/__init__.py");
+    process.exit(1);
+  }
+  return m[1];
+}
+
+function updateJsonTopLevelVersion(file, version) {
+  const full = path.join(root, file);
+  if (!fs.existsSync(full)) return false;
+  const raw = fs.readFileSync(full, "utf-8");
+  const data = JSON.parse(raw);
+  if (data.version === version) return false;
+  data.version = version;
+  fs.writeFileSync(full, JSON.stringify(data, null, 2) + "\n");
+  return true;
+}
+
+const version = readVersion();
+const targets = ["package.json", "web/package.json", "package-lock.json", "web/package-lock.json"];
+let changed = 0;
+for (const t of targets) {
+  if (updateJsonTopLevelVersion(t, version)) {
+    console.log(`[sync-version] ${t}: -> ${version}`);
+    changed += 1;
+  }
+}
+if (changed === 0) console.log(`[sync-version] all in sync at ${version}`);
+
+// Exported for programmatic use in package.mjs
+export { readVersion, version };
