@@ -131,18 +131,21 @@ class SecurityGuard:
         return SecurityCheckResult(ThreatLevel.SAFE)
 
     def check_shell_command(self, command: str) -> SecurityCheckResult:
-        """检查 Shell 指令的安全风险等级（动态白名单优先）。"""
+        """检查 Shell 指令的安全风险等级。"""
         stripped = command.strip()
-        # 0. 白名单精确前缀放行
-        for prefix in self.whitelist:
-            if stripped.startswith(prefix):
-                return SecurityCheckResult(ThreatLevel.SAFE)
-        # 1. 高危黑名单拦截
+        # 1. 高危黑名单永远最先检查——硬边界，白名单不可绕过
+        #    （否则 `git push --force` 会因命中白名单 `git push` 而漏过拦截）
         for pattern in self._compiled_high:
             if pattern.search(command):
                 return SecurityCheckResult(ThreatLevel.HIGH,
                     f'命令命中高危黑名单规则: /{pattern.pattern}/')
-        # 2. 中危模式（提权 / 破坏性操作）→ 人工确认
+        # 2. 白名单精确前缀放行——仅对"简单命令"生效
+        if not _COMPOUND_HINT_RE.search(command):   # 含 && ; | ` $() > 等即为复合命令
+            for prefix in self.whitelist:
+                if stripped.startswith(prefix):
+                    return SecurityCheckResult(ThreatLevel.SAFE)
+        # 3. 中危模式（提权 / 破坏性操作）→ 人工确认
+        #    正则全文搜索：复合命令中的每个子命令都会被覆盖
         for pattern in self._compiled_medium:
             if pattern.search(command):
                 return SecurityCheckResult(ThreatLevel.MEDIUM,
@@ -150,9 +153,16 @@ class SecurityGuard:
         return SecurityCheckResult(ThreatLevel.SAFE)
 ```
 
+**真实踩坑：白名单前缀绕过（v0.10.0 修复）**。初版实现把白名单检查放在了**最前面**且无条件生效，结果出现了两个绕过通道：
+
+1. **复合命令拼接**：用户要求删除文件，Agent 生成了 `cd /Users/xx/Test && rm hello.py && echo "已删除"`——命令以白名单前缀 `cd ` 开头，直接 SAFE 放行，后面的 `rm` 根本没被正则审查。更糟的是 Agent 事后向用户解释"删除单文件不算高危所以没触发"，完全没意识到这是绕过漏洞——**安全缺陷的可怕之处在于它对使用者也透明**；
+2. **优先级倒置**：白名单 `git push` 在高危检查之前放行，`git push --force` 因此漏过 HIGH 拦截。
+
+修复确立了三条铁律：**①高危黑名单永远最先检查**（硬边界，任何机制不能前置）；**②白名单只对简单命令生效**——含 `&&`/`;`/`|`/反引号/`$()`/重定向的复合命令必须整条走正则（正则全文搜索天然覆盖每个子命令）；**③宁可误判不可漏判**——`echo "a && b"` 这类含引号字面量的命令会被误判为复合、多走一遍正则，结果仍是 SAFE，代价为零；反过来漏判的代价是文件被删。这与第 22 课"MCP 工具一刀切审批"是同一个思想：**不确定的风险按最坏假设处理**。
+
 **增强点（相比第 8 课的命令级过滤）**：
 1. **动态黑白名单**：规则通过 `.lite-code/config.json` 热加载，改配置即生效，无需改代码；
-2. **白名单机制**：精确前缀放行覆盖默认检查（如 `git status`、`pytest` 等安全命令直接放行）；
+2. **白名单机制**：精确前缀放行仅覆盖简单命令的默认检查（如 `git status`、`pytest` 直接放行），复合命令强制全量审查；
 3. **非法正则忽略**：编译失败的规则自动跳过，不会导致整体崩溃。
 
 #### 3. 手写 Human-in-the-Loop 审批门 (`litecode/security/approval.py`)

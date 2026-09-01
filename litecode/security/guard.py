@@ -2,9 +2,9 @@
 
 防御体系（Defense-in-Depth）：
 - Layer 1: 敏感路径检查（/etc/shadow、.env、~/.ssh 等）
-- Layer 2: 高危命令 AST/正则黑名单 → HIGH 直接阻断
-- Layer 3: 中危模式 → MEDIUM 触发人工确认
-- Layer 4: 动态白名单（精确前缀放行）覆盖默认检查
+- Layer 2: 高危命令 AST/正则黑名单 → HIGH 直接阻断（硬边界，白名单不可绕过）
+- Layer 3: 中危模式 → MEDIUM 触发人工确认（正则全文搜索，覆盖复合命令的每个子命令）
+- Layer 4: 动态白名单（精确前缀放行）仅对简单命令生效，覆盖默认检查
 - 黑白名单可通过 config.json 动态热加载，无需改代码（合并语义：代码默认规则
   为永不失效的基线，配置在其上增删覆盖）
 """
@@ -151,6 +151,13 @@ SENSITIVE_ENV_VARS = [
 ]
 
 
+# 复合命令痕迹：命令分隔符（&& || ; | 换行）、命令替换（反引号 / $()）或输出重定向。
+# 出现任意一种即视为"复合命令"——白名单前缀放行对其失效，必须整条走正则检查。
+# （正则是全文搜索，天然覆盖每个子命令；宁可对个别含引号字面量的命令误判为复合、
+#   多走一遍正则，也不能让 `cd xxx && rm file` 借白名单前缀绕过审查。）
+_COMPOUND_HINT_RE = re.compile(r"&&|\|\||[;|`>]|\$\(|\n|\r")
+
+
 class SecurityGuard:
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
         self.forbidden_paths: List[str] = list(DEFAULT_FORBIDDEN_PATHS)
@@ -234,13 +241,10 @@ class SecurityGuard:
     # ------------------------------------------------------------ 命令检查
 
     def check_shell_command(self, command: str) -> SecurityCheckResult:
-        # 0. 白名单精确前缀放行（动态白名单增强）
         stripped = command.strip()
-        for prefix in self.whitelist:
-            if stripped.startswith(prefix):
-                return SecurityCheckResult(ThreatLevel.SAFE)
 
-        # 1. 高危黑名单拦截
+        # 1. 高危黑名单永远最先检查——硬边界，白名单不可绕过
+        #    （否则 `git push --force` 会因命中白名单 `git push` 而漏过拦截）
         for pattern in self._compiled_high:
             if pattern.search(command):
                 return SecurityCheckResult(
@@ -248,7 +252,16 @@ class SecurityGuard:
                     f'命令命中高危黑名单规则: /{pattern.pattern}/',
                 )
 
-        # 2. 中危模式（提权 / 破坏性操作）→ 人工确认
+        # 2. 白名单前缀放行仅对"简单命令"生效。
+        #    复合命令（&& ; | 反引号 $() > 重定向等）可在白名单前缀之后拼接任意子命令，
+        #    前缀放行会形成绕过通道（如 `cd xxx && rm file`），必须整条走正则。
+        if not _COMPOUND_HINT_RE.search(command):
+            for prefix in self.whitelist:
+                if stripped.startswith(prefix):
+                    return SecurityCheckResult(ThreatLevel.SAFE)
+
+        # 3. 中危模式（提权 / 破坏性操作）→ 人工确认
+        #    正则全文搜索：复合命令中的每个子命令都会被覆盖
         for pattern in self._compiled_medium:
             if pattern.search(command):
                 return SecurityCheckResult(

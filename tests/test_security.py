@@ -53,6 +53,31 @@ def test_whitelist_prefix_bypasses_medium():
     assert guard.check_shell_command("git status --short").level == ThreatLevel.SAFE
 
 
+def test_whitelist_prefix_cannot_bypass_via_compound_command():
+    # 回归：`cd xxx && rm file` 曾因命中白名单前缀 `cd ` 直接 SAFE，rm 未被审查
+    guard = SecurityGuard()
+    assert guard.check_shell_command(
+        'cd /Users/layne/codes/Test && rm hello.py && echo "已删除"'
+    ).level == ThreatLevel.MEDIUM
+    # 分号 / 管道 / 反引号 / 命令替换 / 重定向 同样视为复合命令
+    assert guard.check_shell_command("cd /tmp; rm x").level == ThreatLevel.MEDIUM
+    assert guard.check_shell_command("cd /tmp | rm x").level == ThreatLevel.MEDIUM
+    assert guard.check_shell_command("cd /tmp `rm x`").level == ThreatLevel.MEDIUM
+    assert guard.check_shell_command("cd /tmp $(rm x)").level == ThreatLevel.MEDIUM
+    # 复合命令中的高危同样不可绕过
+    assert guard.check_shell_command("cd /tmp && rm -rf /").level == ThreatLevel.HIGH
+    assert guard.check_shell_command("echo hi && sudo rm x").level == ThreatLevel.MEDIUM
+
+
+def test_whitelist_never_overrides_high_risk():
+    # 回归：白名单 `git push` 曾在高危检查之前放行，`git push --force` 漏过拦截
+    guard = SecurityGuard()
+    assert guard.check_shell_command("git push --force origin main").level == ThreatLevel.HIGH
+    # 简单命令的白名单放行不受影响
+    assert guard.check_shell_command("git push").level == ThreatLevel.SAFE
+    assert guard.check_shell_command("git push origin main").level == ThreatLevel.SAFE
+
+
 def test_forbidden_paths():
     guard = SecurityGuard()
     assert guard.check_path(".env").level == ThreatLevel.HIGH
