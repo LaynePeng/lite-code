@@ -206,12 +206,12 @@ def create_loop(self, kernel, registry, agent_id=None) -> AgentLoop:
 ```python
 app = AgentApp(workspace="/path")
 print(app.get_agent("plan").tools)      # 只读工具
-print(len(app.create_agent_registry("build").get_tools()))  # 19 个工具（含 webfetch / webfetch_batch）
+print(len(app.create_agent_registry("build").get_tools()))  # 20 个内置工具（MCP 工具另按配置动态增加）
 ```
 
 #### 7. 与子 Agent 编排打通
 
-第 13 课的 `SubAgentRunner` 现在也接入 AgentRegistry：用户自定义的 `subagent` 也能被 `spawn_sub_agent` 直接派生。
+第 14 课的 `SubAgentRunner` 现在也接入 AgentRegistry：用户自定义的 `subagent` 也能被 `spawn_sub_agent` 直接派生。
 
 ```python
 # orchestration/sub_agent.py
@@ -241,8 +241,8 @@ async def run_task(self, task_description, role="general", ...):
 
 1. 理解了 **Primary Agent（Build/Plan）与 Subagent** 的架构区别；
 2. 用 `AgentProfile` + `AgentRegistry` 实现了 **Build/Plan 两种默认 Agent**；
-3. 打通了 **用户自定义 Agent** 的两条路径：`config.json` 的 `agents` 段 + `agents/*.json` 目录；
+3. 打通了 **用户自定义 Agent** 的三条路径：`config.json` 的 `agents` 段、`agents/*.json` 目录与对齐 OpenCode 的 `agents/*.md`（frontmatter + 正文即 System Prompt）；
 4. 学会了 **permissions 双保险**（工具白名单 + 权限 deny）；
 5. 让 `SubAgentRunner` 支持用户自定义的 subagent 角色。
 
-至此，**模块三：核心架构** 全部完结。下一步我们将进入 **模块四：手写实战**，从零构建完整的桌面 Code Agent 应用。在实战第一篇（第 15 课）中，我们会把前 14 课学到的全部机制整合进一个可运行的工程。
+至此，**模块三：核心架构** 全部完结。下一步我们将进入 **模块四：手写实战**，从零构建完整的桌面 Code Agent 应用。在实战第一篇（第 16 课）中，我们会把前 15 课学到的全部机制整合进一个可运行的工程。

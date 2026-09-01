@@ -21,7 +21,7 @@ import uvicorn
 from .app import AgentApp
 from .server.app import create_app
 
-VERSION = "0.9.5"
+VERSION = "0.10.0"
 
 
 def _parse_args(argv: list) -> argparse.Namespace:
@@ -35,7 +35,7 @@ def _parse_args(argv: list) -> argparse.Namespace:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8787)
     serve.add_argument("--token", default=None, help="远程访问令牌（可选）")
-    serve.add_argument("--workspace", default=None, help="工作区目录（默认当前目录）")
+    serve.add_argument("--workspace", default=None, help="工作区目录（默认不打开项目）")
     serve.add_argument("--config-dir", default=None, help="配置/会话目录（默认 ~/.lite-code）")
     serve.add_argument("--api-key", default=None, help="LLM API Key（默认读 DEEPSEEK_API_KEY）")
     serve.add_argument("--base-url", default=None, help="OpenAI 兼容 base_url（默认 DeepSeek）")

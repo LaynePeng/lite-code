@@ -195,7 +195,7 @@ def _diff_summary(rel_path: str, source: str, result: str) -> str:
 **为什么成功回执要附上 Diff？** 编辑工具的成功回执不只是"告知写好了"，而是携带了**完整的 Unified Diff 正文与 `(+N -M)` 增删统计**（`_diff_summary`）：
 
 1. **Agent 自检**：模型拿到 diff 后可以"复核"自己刚做的修改是否符合预期，发现多余改动时主动补救，形成闭环；
-2. **前端渲染**：`(+N -M)` 徽标与 diff 高亮，会在第 19 课的 Web UI 中渲染成 opencode 风格的"文件修改卡片"——`[Patch Success]: 已更新 xxx (+N -M)` 就是前后端约定的契约格式；
+2. **前端渲染**：`(+N -M)` 徽标与 diff 高亮，会在第 20 课的 Web UI 中渲染成 opencode 风格的"文件修改卡片"——`[Patch Success]: 已更新 xxx (+N -M)` 就是前后端约定的契约格式；
 3. **Token 可控**：diff 正文超过 4000 字符自动截断，避免长文件回执把上下文撑爆。
 
 ### 本课小结
@@ -207,4 +207,4 @@ def _diff_summary(rel_path: str, source: str, result: str) -> str:
 3. 实现了带 **锚点自适应偏移** 的 Diff 应用器；
 4. 建立了 Patch 失败时的 **Agent 上下文自愈反馈链条**，成功时返回 `(+N -M)` + Unified Diff 供自检与前端渲染。
 
-下一次我们将开启 **第10课：标准 Model Context Protocol (MCP) 接入** —— 学习如何让我们的 Harness 接入 Anthropic 提出的标准 MCP 协议，无缝加载外部丰富的 Tool Server 生态！
+下一次我们将开启 **第10课：项目指令文件与Skills系统** —— 学习如何让 Harness 读取 `AGENTS.md` / `CLAUDE.md` 项目指令，并通过"索引常驻 + 按需加载"的 Skills 机制接入专项工作流！

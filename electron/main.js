@@ -5,18 +5,21 @@
 //   3. 等待 LITECODE_CORE_READY 就绪标记后打开窗口
 //   4. 「打开项目」：通过当前 Core 热切换 workspace，不新建或重启后端
 //   5. 退出时回收后端进程
-const { app, BrowserWindow, session, shell, dialog, ipcMain } = require("electron");
+//
+// 注意：这里没有调用 app.requestSingleInstanceLock()。每次从系统启动应用都会
+// 创建独立的 Electron 进程与本地 Core，可分别绑定不同项目。
+const { app, BrowserWindow, Menu, session, shell, dialog, ipcMain } = require("electron");
 const { spawn } = require("child_process");
+const pty = require("node-pty");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
 const CLIENT_CONFIG = path.join(os.homedir(), ".lite-code", "client.json");
 
-let mainWindow = null;
-let coreChild = null; // 当前本地后端进程
 let coreMode = "local"; // "local" | "remote" | "dev"
-let coreUrl = ""; // 当前后端 HTTP 地址（热切换工作区用）
+const localInstances = new Map(); // webContents.id -> { window, child, url, workspace }
+const terminals = new Map(); // webContents.id -> pty process
 
 function loadClientConfig() {
   try {
@@ -30,7 +33,7 @@ function loadClientConfig() {
 }
 
 function createWindow(url) {
-  mainWindow = new BrowserWindow({
+  const window = new BrowserWindow({
     width: 1280,
     height: 820,
     minWidth: 960,
@@ -48,40 +51,40 @@ function createWindow(url) {
   });
 
   // 立即显示窗口 + 内置加载页，避免等待后端就绪时空白
-  mainWindow.once("ready-to-show", () => mainWindow.show());
-  mainWindow.loadURL(url);
-  mainWindow.webContents.setWindowOpenHandler(({ url: target }) => {
+  window.once("ready-to-show", () => window.show());
+  window.loadURL(url);
+  window.webContents.setWindowOpenHandler(({ url: target }) => {
     shell.openExternal(target);
     return { action: "deny" };
   });
   // preload 注入失败时输出错误，便于排查
-  mainWindow.webContents.on("preload-error", (event, preloadPath, error) => {
+  window.webContents.on("preload-error", (event, preloadPath, error) => {
     console.error(`[lite-code] preload 加载失败: ${preloadPath}`, error.message);
   });
   // 渲染进程崩溃 / 白屏自动恢复
-  mainWindow.webContents.on("render-process-gone", (event, details) => {
+  window.webContents.on("render-process-gone", (event, details) => {
     console.error("[lite-code] 渲染进程异常:", details.reason);
     setTimeout(() => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.reload();
+      if (!window.isDestroyed()) {
+        window.reload();
       }
     }, 1000);
   });
   // 页面加载失败（后端未就绪等）自动重试
   let failCount = 0;
-  mainWindow.webContents.on("did-fail-load", (event, code, desc) => {
+  window.webContents.on("did-fail-load", (event, code, desc) => {
     failCount += 1;
     console.warn(`[lite-code] 页面加载失败(${code}): ${desc}`);
     if (failCount <= 3) {
       setTimeout(() => {
-        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.reload();
+        if (!window.isDestroyed()) window.reload();
       }, 2000);
     }
   });
-  mainWindow.webContents.on("did-finish-load", () => {
+  window.webContents.on("did-finish-load", () => {
     failCount = 0;
   });
-  return mainWindow;
+  return window;
 }
 
 function resolvePython() {
@@ -111,14 +114,13 @@ function coreCwd() {
   return app.getAppPath();
 }
 
-function stopCore() {
-  if (coreChild) {
+function stopCore(child) {
+  if (child) {
     try {
-      coreChild.kill("SIGTERM");
+      child.kill("SIGTERM");
     } catch {
       /* ignore */
     }
-    coreChild = null;
   }
 }
 
@@ -169,9 +171,7 @@ function spawnLocalCore(workspace) {
         resolved = true;
         clearTimeout(timer);
         const port = parseInt(m[1], 10);
-        coreChild = child;
-        coreUrl = `http://127.0.0.1:${port}`;
-        resolve({ child, url: coreUrl });
+        resolve({ child, url: `http://127.0.0.1:${port}` });
       }
     };
 
@@ -182,16 +182,8 @@ function spawnLocalCore(workspace) {
         clearTimeout(timer);
         reject(new Error(`后端进程提前退出（code=${code}）`));
       }
-      if (coreChild === child) coreChild = null;
     });
 
-    app.on("will-quit", () => {
-      try {
-        child.kill("SIGTERM");
-      } catch {
-        /* ignore */
-      }
-    });
   });
 }
 
@@ -206,54 +198,167 @@ function injectRemoteToken(token) {
 // ------------------------------------------------------------ 打开项目
 
 // 热切换工作区：调用当前后端的 /api/workspace，进程不重启（快）
-async function hotSwitchWorkspace(workspace) {
-  if (!coreUrl) return false;
+async function hotSwitchWorkspace(instance, workspace) {
+  if (!instance?.url) return { ok: false, error: "当前窗口没有可用 Core" };
   try {
-    const resp = await fetch(`${coreUrl}/api/workspace`, {
+    const resp = await fetch(`${instance.url}/api/workspace`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ path: workspace }),
     });
-    if (!resp.ok) return false;
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      return { ok: false, error: body.detail || `切换工作区失败（HTTP ${resp.status}）` };
+    }
     const data = await resp.json();
-    if (!data.ok) return false;
+    if (!data.ok) return { ok: false, error: "切换工作区失败" };
+    instance.workspace = workspace;
+    if (instance.window && !instance.window.isDestroyed()) {
+      stopTerminal(instance.window.webContents.id);
+    }
     console.log(`[lite-code] 热切换工作区 → ${workspace}`);
-    return true;
+    return { ok: true };
   } catch (err) {
     console.warn("[lite-code] 热切换工作区失败:", err.message);
-    return false;
+    return { ok: false, error: err.message };
   }
 }
 
-async function handleOpenProject() {
+async function chooseWorkspace(owner) {
+  const result = await dialog.showOpenDialog(owner, {
+    title: "选择要打开的项目目录",
+    buttonLabel: "打开项目",
+    properties: ["openDirectory", "createDirectory"],
+  });
+  return result.canceled || result.filePaths.length === 0 ? null : result.filePaths[0];
+}
+
+async function handleOpenProject(event) {
   // 仅本地 Core 形态支持切换工作区
   if (coreMode !== "local") {
     return { ok: false, error: "当前为远程/开发模式，不支持切换工作区" };
   }
 
-  const result = await dialog.showOpenDialog(mainWindow, {
-    title: "选择要打开的项目目录",
-    buttonLabel: "打开项目",
-    properties: ["openDirectory", "createDirectory"],
-  });
-  if (result.canceled || result.filePaths.length === 0) {
-    return { ok: false, error: "cancelled" };
-  }
-  const workspace = result.filePaths[0];
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  const workspace = await chooseWorkspace(owner);
+  if (!workspace) return { ok: false, error: "cancelled" };
+  const instance = localInstances.get(event.sender.id);
 
   // 只允许当前 Core 热切换，避免新进程丢失现有模型配置和运行状态。
-  if (await hotSwitchWorkspace(workspace)) {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.loadURL(coreUrl);
-    return { ok: true, url: coreUrl, workspace };
-  }
-  return { ok: false, error: "切换工作区失败，当前 Core 和模型配置保持不变" };
+  const result = await hotSwitchWorkspace(instance, workspace);
+  return result.ok ? { ok: true, url: instance.url, workspace } : result;
 }
 
 ipcMain.handle("open-project", handleOpenProject);
 
+async function createLocalWindow(workspace = null) {
+  const loadingUrl = `file://${path.join(__dirname, "loading.html")}`;
+  const window = createWindow(loadingUrl);
+  try {
+    const instance = await spawnLocalCore(workspace);
+    const record = { window, ...instance, workspace };
+    const winId = window.webContents.id;
+    localInstances.set(winId, record);
+    window.once("closed", () => {
+      stopTerminal(winId);
+      stopCore(instance.child);
+      localInstances.delete(winId);
+    });
+    if (!window.isDestroyed()) window.loadURL(instance.url);
+    return { ok: true, workspace, url: instance.url };
+  } catch (err) {
+    if (!window.isDestroyed()) window.destroy();
+    return { ok: false, error: err.message };
+  }
+}
+
+ipcMain.handle("open-project-new-window", async (event) => {
+  if (coreMode !== "local") return { ok: false, error: "当前模式不支持新建本地项目窗口" };
+  const workspace = await chooseWorkspace(BrowserWindow.fromWebContents(event.sender));
+  return workspace ? createLocalWindow(workspace) : { ok: false, error: "cancelled" };
+});
+
+function stopTerminal(id) {
+  const term = terminals.get(id);
+  if (term) {
+    // kill 是异步的：pty 缓冲输出可能在此之后仍触发 onData/onExit 回调。
+    // 先从表中移除并丢弃监听依赖，回调侧依赖 sender 存活检查兜底。
+    terminals.delete(id);
+    try { term.kill(); } catch { /* ignore */ }
+  }
+}
+
+ipcMain.handle("terminal-start", (event, cols = 100, rows = 24) => {
+  const instance = localInstances.get(event.sender.id);
+  if (!instance?.workspace) return { ok: false, error: "请先打开项目" };
+  stopTerminal(event.sender.id);
+  const shellName = process.platform === "win32" ? "powershell.exe" : (process.env.SHELL || "/bin/zsh");
+  const term = pty.spawn(shellName, [], {
+    name: "xterm-256color", cols, rows, cwd: instance.workspace, env: process.env,
+  });
+  const winId = event.sender.id;
+  const sender = event.sender;
+  // 窗口关闭后 webContents 被销毁，但 pty 回调可能仍在触发（kill 异步 + 输出缓冲）。
+  // 对已销毁的 webContents 调用 send 会抛 "Object has been destroyed"，
+  // 必须在每次发送前检查存活状态（与 render-process-gone 的 reload 同一原则）。
+  const safeSend = (channel, payload) => {
+    if (!sender.isDestroyed()) sender.send(channel, payload);
+  };
+  terminals.set(winId, term);
+  term.onData((data) => safeSend("terminal-data", data));
+  term.onExit(({ exitCode }) => {
+    safeSend("terminal-exit", exitCode);
+    terminals.delete(winId);
+  });
+  return { ok: true };
+});
+ipcMain.on("terminal-input", (event, data) => terminals.get(event.sender.id)?.write(data));
+ipcMain.on("terminal-resize", (event, cols, rows) => terminals.get(event.sender.id)?.resize(cols, rows));
+ipcMain.on("terminal-stop", (event) => stopTerminal(event.sender.id));
+
+// ------------------------------------------------------------ 应用菜单
+
+// About 菜单不使用 Electron 原生面板，改为通知渲染进程弹出设计版「关于」对话框
+function showAbout() {
+  for (const instance of localInstances.values()) {
+    if (instance.window && !instance.window.isDestroyed()) {
+      instance.window.webContents.send("show-about");
+    }
+  }
+}
+
+function setupMenu() {
+  const isMac = process.platform === "darwin";
+  const aboutItem = { label: `关于 ${app.name}`, click: showAbout };
+  const template = [
+    ...(isMac ? [{
+      label: app.name,
+      submenu: [
+        aboutItem,
+        { type: "separator" },
+        { role: "services" },
+        { type: "separator" },
+        { role: "hide" },
+        { role: "hideOthers" },
+        { role: "unhide" },
+        { type: "separator" },
+        { role: "quit" },
+      ],
+    }] : []),
+    { role: "fileMenu" },
+    { role: "editMenu" },
+    { role: "viewMenu" },
+    { role: "windowMenu" },
+    ...(isMac ? [] : [{ role: "help", submenu: [aboutItem] }]),
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 // ------------------------------------------------------------ 启动
 
 app.whenReady().then(async () => {
+  setupMenu();
+
   // 开发模式：直接加载 Vite dev server
   if (process.env.LITECODE_DEV_URL) {
     coreMode = "dev";
@@ -278,33 +383,13 @@ app.whenReady().then(async () => {
   coreMode = "local";
 
   // 立即创建窗口 + 加载页（即使后端未就绪）
-  const loadingUrl = `file://${path.join(__dirname, "loading.html")}`;
-  createWindow(loadingUrl);
-  console.log("[lite-code] 窗口已创建，正在启动后端…");
-
-  try {
-    const { url } = await spawnLocalCore();
-    console.log(`[lite-code] 本地 Core 就绪 → ${url}`);
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.loadURL(url);
-    }
-    app.on("window-all-closed", () => {
-      stopCore();
-      app.quit();
-    });
-  } catch (err) {
-    console.error("[lite-code] 启动失败:", err.message);
-    // 加载页显示错误
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.executeJavaScript(`
-        document.querySelector('.spinner').style.display='none';
-        document.querySelector('.progress').style.display='none';
-        document.querySelector('.error').style.display='flex';
-      `);
-    }
-  }
+  await createLocalWindow();
 });
 
 app.on("window-all-closed", () => {
+  for (const instance of localInstances.values()) {
+    if (instance.child) stopCore(instance.child);
+  }
+  localInstances.clear();
   if (process.platform !== "darwin") app.quit();
 });

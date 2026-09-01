@@ -20,7 +20,7 @@ from .tasks import TaskManager
 
 logger = logging.getLogger("litecode.server")
 
-VERSION = "0.9.5"
+VERSION = "0.10.0"
 
 
 # ---------------------------------------------------------------- 请求模型
@@ -117,6 +117,7 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
             await _asyncio.to_thread(app.refresh_model_meta)
         except Exception:
             pass
+        await app.mcp_manager.start()
         yield
 
     fast_app = FastAPI(title="lite-code", version=VERSION, lifespan=_lifespan)
@@ -135,6 +136,11 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
         denied = auth.check(request)
         if denied is not None:
             raise HTTPException(status_code=401, detail="Unauthorized")
+
+    def _require_workspace() -> str:
+        if not app.workspace:
+            raise HTTPException(status_code=409, detail="请先打开项目后再创建会话或执行任务")
+        return app.workspace
 
     # ------------------------------------------------------------ 状态与配置
 
@@ -251,7 +257,7 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
     @fast_app.post("/api/sessions")
     async def create_session(payload: SessionCreateRequest, request: Request):
         _check_auth(request)
-        import time as _time
+        _require_workspace()
 
         # 毫秒时间戳在快速连续创建会话时会碰撞，导致新会话覆盖旧会话。
         session_id = f"session_{uuid.uuid4().hex}"
@@ -332,6 +338,7 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
     @fast_app.get("/api/tools")
     async def list_tools(request: Request):
         _check_auth(request)
+        _require_workspace()
         registry = app.build_registry()
         return [
             {"name": t.name, "description": t.description, "parameters": t.parameters}
@@ -344,8 +351,9 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
             _check_auth(request)
         from ..tools.filesystem import FileSystemTools
 
-        fs = FileSystemTools(app.workspace)
-        return {"workspace": app.workspace, "tree": fs._file_tree({"maxDepth": depth})}
+        workspace = _require_workspace()
+        fs = FileSystemTools(workspace)
+        return {"workspace": workspace, "tree": fs._file_tree({"maxDepth": depth})}
 
     @fast_app.get("/api/workspace/tree-json")
     async def workspace_tree_json(path: str = "", request: Request = None):
@@ -354,13 +362,14 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
             _check_auth(request)
         from .tree import list_tree
 
+        workspace = _require_workspace()
         rel = path.strip().lstrip("/\\") or ""
         try:
-            data = await asyncio.to_thread(list_tree, app.workspace, rel)
+            data = await asyncio.to_thread(list_tree, workspace, rel)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
         return {
-            "workspace": app.workspace,
+            "workspace": workspace,
             "path": rel,
             "git": {"branch": data["branch"], "has_repo": data["has_repo"]},
             "entries": data["entries"],
@@ -438,8 +447,9 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
             _check_auth(request)
         import os as _os
 
-        target = _os.path.abspath(_os.path.join(app.workspace, path))
-        if not (target == app.workspace or target.startswith(app.workspace + _os.sep)):
+        workspace = _require_workspace()
+        target = _os.path.abspath(_os.path.join(workspace, path))
+        if not (target == workspace or target.startswith(workspace + _os.sep)):
             raise HTTPException(status_code=403, detail="路径越界")
         if not _os.path.isfile(target):
             raise HTTPException(status_code=404, detail=f"文件不存在: {path}")
@@ -469,7 +479,7 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
         diff_text = ""
         try:
             proc = __import__("subprocess").run(
-                ["git", "-C", app.workspace, "diff", "HEAD", "--", path],
+                ["git", "-C", workspace, "diff", "HEAD", "--", path],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=10,
             )
@@ -492,9 +502,10 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
         """获取单个文件的 git diff（工作区 vs HEAD）。"""
         if request:
             _check_auth(request)
+        workspace = _require_workspace()
         try:
             proc = __import__("subprocess").run(
-                ["git", "-C", app.workspace, "diff", "HEAD", "--", path],
+                ["git", "-C", workspace, "diff", "HEAD", "--", path],
                 capture_output=True, text=True, encoding="utf-8", errors="replace",
                 timeout=10,
             )
@@ -510,6 +521,7 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
     @fast_app.post("/api/chat")
     async def chat(payload: ChatRequest, request: Request):
         _check_auth(request)
+        _require_workspace()
         session_id = payload.session_id.strip()
         if not session_id:
             raise HTTPException(status_code=400, detail="session_id 不能为空")

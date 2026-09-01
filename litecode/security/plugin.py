@@ -80,6 +80,17 @@ class SecurityPlugin(Plugin):
                         data["reason"] = "[User Rejected]: 操作被操作员明确拒绝。"
                         return await next(data)
 
+            if tool_name.startswith("mcp_"):
+                approved = await self._request_approval(
+                    kernel,
+                    f"调用 MCP 工具 {tool_name}",
+                    "MCP 工具由外部进程提供，可能访问文件、网络或其他本地资源。",
+                )
+                if not approved:
+                    data["cancel"] = True
+                    data["reason"] = "[User Rejected]: MCP 工具调用已被拒绝。"
+                    return await next(data)
+
             return await next(data)
 
         kernel.register_service("security_guard", self.guard)

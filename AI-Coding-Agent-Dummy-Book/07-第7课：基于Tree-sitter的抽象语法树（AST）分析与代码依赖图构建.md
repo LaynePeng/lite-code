@@ -89,10 +89,7 @@ class ASTAnalyzer:
         return symbols
 ```
 
-**与 TS 版的对应关系**：
-- `node.childForFieldName("name")` → `node.child_by_field_name("name")`
-- `node.startPosition.row` → `node.start_point[0]`
-- `node.startIndex` → `node.start_byte`（字节偏移，注意要按 bytes 切片再解码，避免中文截断）
+**API 速记**：Python 绑定里，`node.child_by_field_name("name")` 取命名子节点，`node.start_point[0]` 是 0 起始的行号（展示时记得 +1），`node.start_byte` 是字节偏移——按 bytes 切片再解码，避免中文注释被拦腰截断。
 
 #### 3. 实现精确上下文压缩器（Context Shrinker）
 
@@ -198,7 +195,7 @@ async def execute_ast_tool(name: str, args: dict, cwd: str) -> str:
 
 在本课中，我们实现了从"字符搜索"到"语法结构感知"的跃迁：
 
-1. 理解并封装了 **Tree-sitter C 语法树解析引擎**（Python 绑定）；
+1. 理解并封装了 **Tree-sitter 语法树解析引擎**（C 实现 + Python 绑定）；
 2. 实现了毫秒级的 **文件符号大纲提取（Symbol Outline）**；
 3. 编写了 **AST 骨架压缩机制（Skeleton Extraction）**，在保持代码语境完整的前提下，节约了 60%~80% 的上下文 Token 消耗。
 

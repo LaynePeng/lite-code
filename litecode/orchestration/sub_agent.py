@@ -13,7 +13,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from ..core.agent_loop import AgentLoop
-from ..core.system_prompt import SystemPromptBuilder
+from ..core.system_prompt import FINAL_REPORT_REQUIREMENT, SystemPromptBuilder
 from ..core.types import Message, ToolDefinition
 
 logger = logging.getLogger("litecode.orchestration")
@@ -81,7 +81,7 @@ class SubAgentRunner:
         tools: List[ToolDefinition] = registry.get_tools()
 
         system = (
-            f"{base_prompt}\n\n[你的具体任务]\n{task_description}\n\n"
+            f"{FINAL_REPORT_REQUIREMENT}\n\n{base_prompt}\n\n[你的具体任务]\n{task_description}\n\n"
             f"工作目录: {self.app.workspace}\n"
             f"{SystemPromptBuilder._git_info(self.app.workspace)}"
         )

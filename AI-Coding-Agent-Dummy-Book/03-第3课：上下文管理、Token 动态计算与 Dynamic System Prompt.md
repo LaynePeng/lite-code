@@ -341,7 +341,7 @@ async def run_context_aware_agent(user_prompt: str, tools, tool_executor):
     ]
 
     for turn in range(10):
-    # 2. 关键步骤：发送前执行滑动裁剪，防止上下文超限
+        # 2. 关键步骤：发送前执行滑动裁剪，防止上下文超限
         messages = context_manager.prune_messages(messages)
         print(f"\n--- [Turn {turn+1}] Context Size: {len(messages)} msgs ---")
 
@@ -381,8 +381,8 @@ async def run_context_aware_agent(user_prompt: str, tools, tool_executor):
 
 在本课中，我们完成了 Agent 底层控制循环的上下文建设：
 
-1. 学会了纯手写流式 Tool Calling 拼接；
-2. 实现了 JSON 自愈、死循环 Hash 预警与工具输出截断；
-3. 掌握了 Token 估算、保护 `assistant-tool` 完整性的**策略 B 两阶段裁剪**算法，以及稳定 System Prompt 与动态工具信息的分工。
+1. 封装了零依赖的 **TokenCounter**，对中英文与消息结构开销做出可靠估算；
+2. 掌握了保护 `assistant-tool` 完整性的**策略 B 两阶段裁剪**算法，以及大窗口模型的 90% 有效上限设计；
+3. 确立了**稳定 System Prompt 与动态工具信息的分工**——静态骨架进 System，Git 状态交给工具按需查询，为下一课的缓存命中打下地基。
 
 在下一课中，我们将进入 **第4课：Prompt 缓存机制** —— 学习如何让稳定前缀命中供应商的 KV 缓存，把输入 Token 成本砍到 10%。

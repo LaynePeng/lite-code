@@ -102,7 +102,7 @@ def _build_payload(self, messages, tools, system, enable_cache=True):
 "stream_options": {"include_usage": True}   # 流末帧返回 usage
 ```
 
-> **重要**：`cache_control` 是 Anthropic Messages API 专属字段，OpenAI 兼容接口一律静默忽略——往 system 消息上标注它既无效又污染载荷。命中数据必须靠 `include_usage` 返回的 usage 统计（提取逻辑到第 16 课适配器篇再实现）。如果供应商没有返回缓存字段，界面中的 0 只能表示“没有可观测数据”，不能据此断定缓存未命中。
+> **重要**：`cache_control` 是 Anthropic Messages API 专属字段，OpenAI 兼容接口一律静默忽略——往 system 消息上标注它既无效又污染载荷。命中数据必须靠 `include_usage` 返回的 usage 统计（提取逻辑到第 17 课适配器篇再实现）。如果供应商没有返回缓存字段，界面中的 0 只能表示“没有可观测数据”，不能据此断定缓存未命中。
 
 #### 5. 缓存感知的 Token 预算管理
 
@@ -175,7 +175,7 @@ if usage:
         stats["cache_miss_tokens"] += max(0, prompt - hit)
 ```
 
-**口径差异**：OpenAI 兼容接口的 `prompt_tokens` 已包含缓存命中部分，所以 `miss = prompt - hit`；而 Anthropic 的 `input_tokens` **不含** `cache_read_input_tokens`（命中部分在 message_delta 事件里单独返回，第 16 课适配器篇会展开），所以 `miss = input_tokens`。两家不能共用同一公式。
+**口径差异**：OpenAI 兼容接口的 `prompt_tokens` 已包含缓存命中部分，所以 `miss = prompt - hit`；而 Anthropic 的 `input_tokens` **不含** `cache_read_input_tokens`（命中部分在 message_delta 事件里单独返回，第 17 课适配器篇会展开），所以 `miss = input_tokens`。两家不能共用同一公式。
 
 命中率 = `cache_hit_tokens / (cache_hit_tokens + cache_miss_tokens)`。这个指标同时回答三个问题：
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 
 from litecode.app import AgentApp
+from litecode.core.system_prompt import FINAL_REPORT_REQUIREMENT, SystemPromptBuilder
 from litecode.server.tasks import TaskManager
 from tests.conftest import MockLLMAdapter, tool_call
 
@@ -22,6 +23,24 @@ class RecAdapter(MockLLMAdapter):
 
 WRITE_TOOLS = {"write_file", "apply_search_replace", "apply_unified_diff",
                "execute_command", "git_commit", "spawn_sub_agent"}
+
+
+def test_all_agent_prompts_require_final_report(tmp_path):
+    app = AgentApp(workspace=str(tmp_path), config_dir=str(tmp_path / ".lite-code"))
+    tools = app.build_registry().get_tools()
+    assert FINAL_REPORT_REQUIREMENT in SystemPromptBuilder.build(str(tmp_path), tools)
+    assert FINAL_REPORT_REQUIREMENT in app.get_agent("plan").system_prompt
+
+
+def test_project_instruction_files_are_included(tmp_path):
+    (tmp_path / "AGENTS.md").write_text("先运行单元测试。", encoding="utf-8")
+    (tmp_path / "Claude.md").write_text("使用项目既有命名规范。", encoding="utf-8")
+    prompt = SystemPromptBuilder.build(str(tmp_path), [])
+    assert "### 项目指令 (Project Instructions)" in prompt
+    assert "### AGENTS.md" in prompt
+    assert "先运行单元测试。" in prompt
+    assert "### Claude.md" in prompt
+    assert "使用项目既有命名规范。" in prompt
 
 
 async def test_plan_mode_never_leaks_write_tools(tmp_path):

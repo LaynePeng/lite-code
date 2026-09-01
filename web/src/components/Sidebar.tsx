@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { api } from "../api";
+import AppIcon from "./AppIcon";
 import type { SessionInfo, TreeEntry } from "../types";
 
 // ---------------------------------------------------------------- 目录树
@@ -149,7 +150,9 @@ export default function Sidebar({
   onNewSession,
   onDeleteSession,
   onOpenProject,
+  onOpenProjectNewWindow,
   onOpenSettings,
+  onOpenAbout,
   onFileOpen,
 }: {
   sessions: SessionInfo[];
@@ -163,7 +166,9 @@ export default function Sidebar({
   onNewSession: () => void;
   onDeleteSession: (id: string) => void;
   onOpenProject: () => void;
+  onOpenProjectNewWindow?: () => void;
   onOpenSettings: () => void;
+  onOpenAbout: () => void;
   onFileOpen?: (path: string) => void;
 }) {
   const [tools, setTools] = useState<{ name: string; description: string }[]>([]);
@@ -177,7 +182,7 @@ export default function Sidebar({
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
-        <span className="brand-logo">⚡</span>
+        <span className="brand-logo"><AppIcon size={30} /></span>
         <span className="brand-name">lite-code</span>
       </div>
 
@@ -202,6 +207,11 @@ export default function Sidebar({
             <button className="btn-open-session" onClick={onOpenProject} title="选择其他项目目录，切换工作区">
               📂 打开项目…
             </button>
+            {onOpenProjectNewWindow && (
+              <button className="btn-open-session" onClick={onOpenProjectNewWindow} title="在新窗口打开另一个项目">
+                ▣ 新窗口打开项目…
+              </button>
+            )}
             {sessions.length === 0 && <div className="sidebar-empty">还没有会话</div>}
             {sessions.map((s) => (
                 <div
@@ -271,7 +281,9 @@ export default function Sidebar({
         <button className="btn-open-settings" onClick={onOpenSettings}>
           ⚙️ LLM 设置
         </button>
-        <div className="footer-version">lite-code v0.9.5 · 手写 Agent Harness</div>
+        <button className="footer-version footer-version-btn" onClick={onOpenAbout} title="关于 lite-code">
+          lite-code v0.10.0 · 手写 Agent Harness
+        </button>
       </div>
     </aside>
   );

@@ -143,7 +143,7 @@ class LLMProvider:
                             }
 ```
 
-这个累加器还有一类**更隐蔽的坑**：`id` 只随首个 chunk 出现一次，甚至**部分供应商（Kimi/GLM/通义等）在流式响应里从头到尾都不携带 `id`**。空 id 的 `assistant(tool_calls)` 发出的 tool 消息在 API 侧无法匹配，会直接报 `HTTP 400: insufficient tool messages following tool_calls message`（第 1 课结论 1 的典型翻车现场）。因此**流收尾时必须兜底**——缺失的 id 用合成值补齐：
+这个累加器还有一类**更隐蔽的坑**：`id` 只随首个 chunk 出现一次，甚至**部分供应商（Kimi/GLM/通义等）在流式响应里从头到尾都不携带 `id`**。空 id 的 `assistant(tool_calls)` 发出的 tool 消息在 API 侧无法匹配，会直接报 `HTTP 400: insufficient tool messages following tool_calls message`（本课结论 1 的典型翻车现场）。因此**流收尾时必须兜底**——缺失的 id 用合成值补齐：
 
 ```python
 def finalize_tool_calls(pending_tool_calls: Dict[int, ToolCall]) -> List[ToolCall]:
@@ -200,7 +200,7 @@ async for chunk in response.aiter_bytes():
 
 这个模式对**任何**多字节编码的流式协议都通用（中文、emoji、韩文等），也值得抽取为公共工具函数放在适配器基类中，让所有供应商复用——我们在实战篇中就会这样做。
 
-> UTF-8 解码只负责保证字节转换正确，Web UI 还需要独立保证高频增量事件的状态累积正确。前端状态管理的处理方式见第 19 课。
+> UTF-8 解码只负责保证字节转换正确，Web UI 还需要独立保证高频增量事件的状态累积正确。前端状态管理的处理方式见第 20 课。
 
 #### 3. 编写最简 Agent 主循环 (Agent Loop)
 

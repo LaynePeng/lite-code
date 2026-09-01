@@ -263,6 +263,8 @@ class SystemPromptBuilder:
 
 > **与第 3 课的关系**：这里采用**任务级静态 System Prompt + 工具按需获取动态状态**。`git_status` 等工具返回的信息比预埋快照新鲜，同时稳定的 System 前缀能够保持缓存命中（详见第 3 课「设计决策」与第 4 课「稳定前缀」）。
 
+> **最终版本的追加段**：真实 `litecode/core/system_prompt.py` 的骨架之上还拼接了三段——开头的「强制交付要求」（第 22 课会讲它的来历）与末尾的「项目指令」（`AGENTS.md`/`CLAUDE.md`）、「可用技能索引」。追加段都放在**末尾**（或位于稳定骨架之前但内容任务内恒定），保证任务内 System Prompt 仍然逐字节不变，缓存前缀不受影响（设计细节见第 10 课）。
+
 #### 4. AgentLoop 主循环代码 (`litecode/core/agent_loop.py`)
 
 将所有防御机制和工具分发集成在 FSM 中：
@@ -270,7 +272,7 @@ class SystemPromptBuilder:
 ```python
 class AgentLoop:
     def __init__(self, kernel, adapter, registry, session_store=None,
-                 context_manager=None, max_steps=25, tool_timeout=120,
+                 context_manager=None, max_steps=100, tool_timeout=120,
                  token_budget=48000, pricing=None, context_window=None):
         self.kernel = kernel
         self.adapter = adapter          # LLM 适配器（多供应商）
@@ -307,6 +309,7 @@ class AgentLoop:
             "turns": 0, "blocked": 0,
             "cache_hit_tokens": 0, "cache_miss_tokens": 0,
         }
+        empty_reply_retries = 0        # 空响应连续计数（D3 用）
 
         for step in range(self.max_steps):
             if self._check_abort():
@@ -360,6 +363,19 @@ class AgentLoop:
 
             await self._emit_context_stats(stats)   # 推送「上下文情况」面板
 
+            # D3. 空响应检测：既无内容也无工具调用 → 注入提示重试，连续 3 次则终止
+            if not content and not tool_calls:
+                empty_reply_retries += 1
+                if empty_reply_retries <= 2:
+                    messages.append(Message(
+                        role="user",
+                        content="模型返回了空响应。请继续当前任务，并明确给出下一步工具调用或最终结果。",
+                    ))
+                    continue
+                self.state.status = AgentStatus.FAILED_MAX_TURNS
+                return "[LLM Error]: 模型连续返回空响应，任务已终止。"
+            empty_reply_retries = 0
+
             # E. Assistant 消息入链
             messages.append(Message(role="assistant",
                 content=content or None, tool_calls=tool_calls or None))
@@ -403,7 +419,8 @@ class AgentLoop:
             # H. 每轮批量执行完成后落盘
             if store_snapshot: self._save_session()
 
-        return "[Loop Terminated]: 超出最大步骤限制。"
+        self.state.status = AgentStatus.FAILED_MAX_TURNS
+        return "[Loop Terminated]: 超出最大步骤限制仍未得出最终结论。"
 
     def _effective_cap(self) -> int:
         """上下文有效上限 = max(预算下限, 90% × 模型窗口)（第3课）。
@@ -448,9 +465,11 @@ class AgentLoop:
         })
 ```
 
+**空响应自愈（D3）与 max_steps=100**：真实使用中发现，模型（尤其长任务后期）偶尔返回**既无 content 也无 tool_calls 的空响应**——它恰好落入"无工具调用即收敛"的夹缝，任务会安静地"正常结束"，用户只看到工具跑完却没有结论。对策是显式识别 + 有限重试：注入一条 user 消息把模型"摇醒"（上下文里出现失败说明，模型有信息自我纠正），连续 3 次仍为空则以 `FAILED_MAX_TURNS` 终止并写入明确错误。`max_steps` 默认也从 25 提高到 100——25 步对"读目录树 + 逐个读文件 + 逐个修改 + 跑测试"的真实多文件任务远远不够（配置迁移的坑见第 22 课）。这两个值的取值逻辑是同一个思想：**上限是保险丝，不是目标；宁可偶尔熔断，不可中途断电**。
+
 #### 5. 子 Agent 编排 (`litecode/orchestration/sub_agent.py`)
 
-对应第 13 课的子 Agent 编排，在 lite-code 中真实实现：创建独立 Kernel 和 AgentLoop，工具集按角色裁剪（explorer/read-only 不赋予写文件权限）：
+对应第 14 课的子 Agent 编排，在 lite-code 中真实实现：创建独立 Kernel 和 AgentLoop，工具集按角色裁剪（explorer/read-only 不赋予写文件权限）：
 
 ```python
 class SubAgentRunner:
@@ -466,7 +485,7 @@ class SubAgentRunner:
             context_manager=ContextManager(max_allowed_tokens=24000),
             max_steps=max_steps,
             context_window=self.app.llm_registry.get_context_window(self.app.llm_registry.active),
-            # 四级解析：手动覆盖 → models.dev → 内置表 → 128K（详见第 16 课 §5）
+            # 四级解析：手动覆盖 → models.dev → 内置表 → 128K（详见第 17 课 §5）
         )
         summary, _ = await loop.run_task(
             prompt=f"请完成以下子任务：\n{task_description}\n完成后只输出结论。",
@@ -488,10 +507,10 @@ class SubAgentRunner:
 1. 掌握了完整的 **Think-Act-Observe 状态机** 控制逻辑；
 2. 集成了第 2 课所有防御：**JSON 自愈**、**死循环 Hash 检测**、**输出截断**（截断结果落盘，上下文只放句柄），并新增**工具调用原子对修复**（恢复历史后 + 每次调用 LLM 前各跑一遍，残缺/无主/空 id 链一律不出站）；
 3. 集成了第 3 课所有增强：**Token 预算估算**、**策略 B 两阶段滑动裁剪**（保护 system 与 tool 原子对、保留最近 K 轮、`max(预算下限, 90% × 模型窗口)` 有效上限）、**LLM 摘要化压缩**（opencode 风格：旧轮次摘要替换、最近轮次原样保留，前缀只失效一次）、**静态 System Prompt**（任务内构建一次，稳定前缀）；
-4. 实现了 **beforeTool 安全管道**（SecurityPlugin 的接入点，插件本体在第 18 课实现）；
+4. 实现了 **beforeTool 安全管道**（SecurityPlugin 的接入点，插件本体在第 19 课实现）；
 5. 实现了 **估算兜底 + 真实 usage 回填**（第 4 课）：由适配器统一各供应商的缓存字段为 `prompt_cache_hit_tokens`，并对 Anthropic 与 OpenAI 兼容接口使用不同的 miss 口径；无缓存字段时标记为不可观测；
 6. 实现了 **上下文可观测性**：`context:stats` 事件把压缩次数、压缩节省 Token、命中率、窗口占用比例推给「上下文情况」面板；
 7. 主循环回收后自动**会话落盘**，防止中途异常崩溃丢状态；
 8. 子 Agent 编排**真实化**：上下文隔离、只读工具裁剪、Token 归集。
 
-下一次我们将开启 **第18课：安全沙箱与高危拦截实战 (`lite-code` 实战第四篇)** —— 给 `lite-code` 加入动态黑白名单、三级风险控制、Web 审批卡与提权确认机制！
+下一次我们将开启 **第19课：安全沙箱与高危拦截实战 (`lite-code` 实战第四篇)** —— 给 `lite-code` 加入动态黑白名单、三级风险控制、Web 审批卡与提权确认机制！

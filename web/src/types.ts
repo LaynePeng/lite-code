@@ -68,7 +68,7 @@ export interface Stats {
 
 export interface ServerStatus {
   version: string;
-  workspace: string;
+  workspace: string | null;
   model: string;
   base_url: string;
   api_key_configured: boolean;
@@ -174,6 +174,14 @@ export interface LiteCodeBridge {
   platform: string;
   version: string;
   openProject: () => Promise<{ ok: boolean; url?: string; workspace?: string; error?: string }>;
+  openProjectNewWindow: () => Promise<{ ok: boolean; url?: string; workspace?: string; error?: string }>;
+  terminalStart: (cols?: number, rows?: number) => Promise<{ ok: boolean; error?: string }>;
+  terminalInput: (data: string) => void;
+  terminalResize: (cols: number, rows: number) => void;
+  terminalStop: () => void;
+  onTerminalData: (listener: (data: string) => void) => () => void;
+  onTerminalExit: (listener: (code: number) => void) => () => void;
+  onShowAbout: (listener: () => void) => () => void;
 }
 
 declare global {
@@ -223,6 +231,7 @@ export interface TabItem {
   title: string;
   // chat tab
   sessionId?: string;
+  modelOverride?: SessionModel | null;
   // file tab
   filePath?: string;
   fileLanguage?: string;

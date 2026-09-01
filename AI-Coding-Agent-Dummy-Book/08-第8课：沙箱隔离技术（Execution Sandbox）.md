@@ -87,7 +87,7 @@ class LocalProcessSandbox:
 
 ```python
 # sandbox/docker_sandbox.py
-import asyncio, os, path, uuid
+import asyncio, os, shlex, uuid
 
 class DockerSandbox:
     """基于 Docker CLI 的容器沙箱，支持内存/CPU/网络限制。"""

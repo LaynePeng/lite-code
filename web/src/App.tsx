@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
+import AboutModal from "./components/AboutModal";
 import ChatView from "./components/ChatView";
 import Composer from "./components/Composer";
 import FileViewer from "./components/FileViewer";
@@ -8,7 +9,8 @@ import SettingsModal from "./components/SettingsModal";
 import Sidebar from "./components/Sidebar";
 import TabBar from "./components/TabBar";
 import ToolPanel from "./components/ToolPanel";
-import type { AgentInfo, AppConfig, ContextStats, ChatSessionState, LLMConfig, Msg, ServerStatus, SessionInfo, SessionModel, Stats, TabItem, ToolCardInfo, WorkItem } from "./types";
+import { useResizable } from "./hooks/useResizable";
+import type { AgentInfo, AppConfig, ContextStats, ChatSessionState, LLMConfig, LLMProviderMeta, Msg, ServerStatus, SessionInfo, SessionModel, Stats, TabItem, ToolCardInfo, WorkItem } from "./types";
 
 interface PendingApproval {
   id: string;
@@ -53,7 +55,9 @@ export default function App() {
   const [status, setStatus] = useState<ServerStatus | null>(null);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [llmConfig, setLlmConfig] = useState<LLMConfig | null>(null);
+  const [providerMeta, setProviderMeta] = useState<LLMProviderMeta[]>([]);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<"sessions" | "files" | "stats">("sessions");
   const [loading, setLoading] = useState(true);
@@ -63,6 +67,20 @@ export default function App() {
   const [currentAgent, setCurrentAgent] = useState<string>("build");
   const [success, setSuccess] = useState<string | null>(null);
   const [treeRevision, setTreeRevision] = useState(0);
+  const [draftModels, setDraftModels] = useState<Record<string, SessionModel | null>>({});
+
+  // 布局边界拖拽：侧边栏 / 右侧工具面板宽度（双击分隔条重置，localStorage 持久化）
+  const sidebarResize = useResizable({
+    axis: "col", initial: 264, min: 200,
+    max: () => Math.min(520, Math.floor(window.innerWidth * 0.45)),
+    storageKey: "litecode.sidebarWidth",
+  });
+  const toolPanelResize = useResizable({
+    axis: "col", initial: 280, min: 220,
+    max: () => Math.min(600, Math.floor(window.innerWidth * 0.45)),
+    invert: true, // 分隔条在面板左侧，向左拖 = 增大
+    storageKey: "litecode.toolPanelWidth",
+  });
 
   const eventSourcesRef = useRef<Map<string, EventSource>>(new Map());
   const taskIdsRef = useRef<Map<string, string>>(new Map());
@@ -76,6 +94,13 @@ export default function App() {
 
   useEffect(() => { chatStatesRef.current = chatStates; }, [chatStates]);
   useEffect(() => { tabsRef.current = tabs; }, [tabs]);
+
+  // 应用菜单「关于」→ 打开设计版关于弹窗（仅桌面模式有 preload 桥）
+  useEffect(() => {
+    const bridge = window.liteCode;
+    if (!bridge?.onShowAbout) return;
+    return bridge.onShowAbout(() => setShowAbout(true));
+  }, []);
 
   const pushLog = useCallback((msg: string) => {
     const line = `${new Date().toLocaleTimeString()} ${msg}`;
@@ -120,7 +145,7 @@ export default function App() {
   const refreshSessions = useCallback(async (ws?: string) => {
     const requestId = ++sessionsRequestRef.current;
     try {
-      const next = await api.sessions(ws ?? status?.workspace);
+      const next = await api.sessions(ws ?? status?.workspace ?? undefined);
       // 多个任务结束/切换项目时请求可能乱序返回，旧响应不能覆盖新列表。
       if (requestId === sessionsRequestRef.current) setSessions(next);
     } catch {
@@ -130,12 +155,13 @@ export default function App() {
 
   const refreshAll = useCallback(async () => {
     try {
-      const [st, cfg, ag, llm] = await Promise.all([api.status(), api.config(), api.agents(), api.llmConfig()]);
+      const [st, cfg, ag, llm, providers] = await Promise.all([api.status(), api.config(), api.agents(), api.llmConfig(), api.llmProviders()]);
       setStatus(st);
       setConfig(cfg);
       setAgents(ag);
       setLlmConfig(llm);
-      await refreshSessions(st.workspace); // 用刚取到的 workspace，避免 setState 异步时序
+      setProviderMeta(providers);
+      await refreshSessions(st.workspace ?? undefined); // 用刚取到的 workspace，避免 setState 异步时序
     } catch (e) {
       setErrorPublic((e as Error).message);
     } finally {
@@ -148,7 +174,11 @@ export default function App() {
   }
 
   const setSessionModel = useCallback(async (model: SessionModel | null) => {
-    if (!activeSessionId || currentChat.running) return;
+    if (!activeSessionId) {
+      if (activeTabId) setDraftModels((prev) => ({ ...prev, [activeTabId]: model }));
+      return;
+    }
+    if (currentChat.running) return;
     try {
       const result = await api.setSessionModel(activeSessionId, model);
       patchChat(activeSessionId, {
@@ -158,7 +188,7 @@ export default function App() {
     } catch (e) {
       patchActiveChat({ error: (e as Error).message });
     }
-  }, [activeSessionId, currentChat.running, patchActiveChat, patchChat]);
+  }, [activeSessionId, activeTabId, currentChat.running, patchActiveChat, patchChat]);
 
   useEffect(() => {
     void refreshAll();
@@ -328,6 +358,26 @@ export default function App() {
     }
     setShowPicker(true);
   }, [patchActiveChat]);
+
+  const openProjectNewWindow = useCallback(async () => {
+    if (!window.liteCode) {
+      window.alert("新窗口打开项目仅支持桌面应用。");
+      return;
+    }
+    const result = await window.liteCode.openProjectNewWindow();
+    if (!result.ok && result.error !== "cancelled") {
+      patchActiveChat({ error: result.error ?? "无法打开新项目窗口" });
+    }
+  }, [patchActiveChat]);
+
+  const requestNewChat = useCallback(() => {
+    if (status?.workspace) {
+      newChatTab();
+      return;
+    }
+    window.alert("请先打开项目后再新建对话。");
+    void openProject();
+  }, [newChatTab, openProject, status?.workspace]);
 
   const selectProject = useCallback(
     async (path: string) => {
@@ -543,7 +593,15 @@ export default function App() {
 
   const send = useCallback(
     async (prompt: string) => {
+      if (!status?.workspace) {
+        window.alert("请先打开项目后再开始对话。");
+        void openProject();
+        return;
+      }
       let sid = activeTabId ? tabsRef.current.find((t) => t.id === activeTabId)?.sessionId : null;
+      const selectedModel = activeSessionId
+        ? currentChat.modelOverride ?? null
+        : (activeTabId ? draftModels[activeTabId] ?? null : null);
       let createdSession = false;
       if (!sid) {
         // 当前 tab 尚无 session（newChatTab 的占位），首次发送时创建并绑定到该 tab
@@ -552,8 +610,11 @@ export default function App() {
         createdSession = true;
         patchChat(session_id, { ...EMPTY_CHAT, messages: [] });
         setTabs((prev) => prev.map((t) =>
-          t.id === activeTabId ? { ...t, sessionId: session_id } : t
+          t.id === activeTabId ? { ...t, sessionId: session_id, modelOverride: selectedModel } : t
         ));
+        if (selectedModel) {
+          await api.setSessionModel(session_id, selectedModel);
+        }
       }
       const base = getChat(sid);
       patchChat(sid, {
@@ -612,7 +673,7 @@ export default function App() {
         pushLog(`✗ 提交失败: ${(e as Error).message}`);
       }
     },
-    [activeTabId, getChat, patchChat, refreshSessions, cancelStreamFlush, handleSSEEvent, pushLog, currentAgent]
+    [activeTabId, activeSessionId, currentChat.modelOverride, draftModels, getChat, patchChat, refreshSessions, cancelStreamFlush, handleSSEEvent, pushLog, currentAgent, openProject, status?.workspace]
   );
 
   const stop = useCallback(async () => {
@@ -687,22 +748,38 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <div
+      className="app"
+      style={
+        {
+          "--sidebar-w": `${sidebarResize.size}px`,
+          "--tool-w": `${toolPanelResize.size}px`,
+        } as React.CSSProperties
+      }
+    >
       <div className="drag-region" />
       <Sidebar
         sessions={sessions}
         activeSessionId={activeSessionId}
-        workspace={status?.workspace ?? "…"}
+        workspace={status?.workspace ?? "未打开项目"}
         stats={sidebarStats}
         tab={sidebarTab}
         treeRevision={treeRevision}
         onTabChange={setSidebarTab}
         onSelectSession={(id) => void selectSession(id)}
-        onNewSession={newChatTab}
+        onNewSession={requestNewChat}
         onDeleteSession={(id) => void deleteSession(id)}
         onOpenProject={() => void openProject()}
+        onOpenProjectNewWindow={() => void openProjectNewWindow()}
         onOpenSettings={() => setShowSettings(true)}
+        onOpenAbout={() => setShowAbout(true)}
         onFileOpen={(p) => void openFileTab(p)}
+      />
+      <div
+        className="resizer col"
+        title="拖拽调整侧边栏宽度（双击重置）"
+        onPointerDown={sidebarResize.startDrag}
+        onDoubleClick={sidebarResize.reset}
       />
       <main className="main">
         <TabBar
@@ -736,7 +813,8 @@ export default function App() {
               onSend={(p) => void send(p)}
               onStop={stop}
               llmConfig={llmConfig}
-              sessionModel={currentChat.modelOverride ?? null}
+              providerMeta={providerMeta}
+              sessionModel={activeSessionId ? currentChat.modelOverride ?? null : (draftModels[activeTabId] ?? null)}
               onSessionModelChange={(model) => void setSessionModel(model)}
             />
             <button className="debug-toggle" onClick={() => setShowDebug(!showDebug)} title="调试日志">
@@ -775,11 +853,27 @@ export default function App() {
           </div>
         )}
       </main>
-      {activeTab?.kind === "chat" && <ToolPanel contextStats={currentChat.contextStats} />}
+      {activeTab?.kind === "chat" && (
+        <>
+          <div
+            className="resizer col"
+            title="拖拽调整面板宽度（双击重置）"
+            onPointerDown={toolPanelResize.startDrag}
+            onDoubleClick={toolPanelResize.reset}
+          />
+          <ToolPanel contextStats={currentChat.contextStats} workspace={status?.workspace ?? null} />
+        </>
+      )}
       {showSettings && (
         <SettingsModal
           onClose={() => setShowSettings(false)}
           onSaved={() => { void refreshAll(); }}
+        />
+      )}
+      {showAbout && (
+        <AboutModal
+          onClose={() => setShowAbout(false)}
+          serverVersion={status?.version ?? null}
         />
       )}
       {showPicker && (

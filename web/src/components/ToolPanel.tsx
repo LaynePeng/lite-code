@@ -1,4 +1,6 @@
 import type { ContextStats, ContextTaskStats } from "../types";
+import { useResizable } from "../hooks/useResizable";
+import TerminalPanel from "./TerminalPanel";
 
 // ---------------------------------------------------------------- 上下文情况面板
 
@@ -72,12 +74,30 @@ function ContextPanel({ stats }: { stats: ContextStats | null }) {
 
 // ---------------------------------------------------------------- 主组件
 
-export default function ToolPanel({ contextStats }: { contextStats: ContextStats | null }) {
+export default function ToolPanel({ contextStats, workspace }: { contextStats: ContextStats | null; workspace: string | null }) {
+  // 终端高度可拖拽调整（双击分隔条重置，localStorage 持久化）
+  const terminalResize = useResizable({
+    axis: "row", initial: 300, min: 160,
+    max: () => Math.max(200, window.innerHeight - 220 - 180),
+    invert: true, // 分隔条在终端上方，向上拖 = 增大
+    storageKey: "litecode.terminalHeight",
+  });
+
   return (
     <aside className="tool-panel">
       <div className="tool-panel-header">上下文情况</div>
-      <div className="tool-panel-body">
+      <div className="tool-panel-body tool-panel-context">
         <ContextPanel stats={contextStats} />
+      </div>
+      <div
+        className="resizer row"
+        title="拖拽调整终端高度（双击重置）"
+        onPointerDown={terminalResize.startDrag}
+        onDoubleClick={terminalResize.reset}
+      />
+      <div className="tool-panel-header terminal-header">终端</div>
+      <div className="tool-panel-terminal" style={{ height: terminalResize.size }}>
+        <TerminalPanel workspace={workspace} />
       </div>
     </aside>
   );

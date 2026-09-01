@@ -4,6 +4,7 @@ import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { DiffPre, DiffStats, isFileDiff } from "./FileDiff";
+import AppIcon from "./AppIcon";
 import type { Msg, ToolCardInfo, WorkItem } from "../types";
 
 // ---------------------------------------------------------------- 渲染助手
@@ -44,7 +45,7 @@ function Markdown({ text }: { text: string }) {
 // ---------------------------------------------------------------- 工具卡片
 
 function ToolCard({ card }: { card: ToolCardInfo }) {
-  const important = isFileDiff(card.result ?? "") || card.status === "error" || card.status === "cancelled";
+  const important = card.name === "execute_command" || card.name.startsWith("mcp_") || isFileDiff(card.result ?? "") || card.status === "error" || card.status === "cancelled";
   // 只有 diff / 异常默认展开；普通调用保持为紧凑的一行
   const [open, setOpen] = useState(() => important);
 
@@ -107,7 +108,7 @@ function WorkItems({ items, streaming = false }: { items: WorkItem[]; streaming?
         if (item.type === "text") {
           return (
             <div className="msg-row assistant timeline-text" key={item.id}>
-              <div className="assistant-avatar">⚡</div>
+              <div className="assistant-avatar"><AppIcon size={26} /></div>
               <div className="bubble assistant-bubble">
                 <Markdown text={item.content} />
                 {streaming && item.id === items[items.length - 1]?.id && <span className="cursor"><span /></span>}
@@ -117,7 +118,7 @@ function WorkItems({ items, streaming = false }: { items: WorkItem[]; streaming?
         }
         if (item.type === "activity") {
           const important = item.tools.filter((tool) =>
-            isFileDiff(tool.result ?? "") || tool.status === "error" || tool.status === "cancelled"
+            tool.name === "execute_command" || tool.name.startsWith("mcp_") || isFileDiff(tool.result ?? "") || tool.status === "error" || tool.status === "cancelled"
           );
           const compact = item.tools.filter((tool) => !important.includes(tool));
           return (
@@ -147,7 +148,7 @@ function MessageBubble({ message }: { message: Msg }) {
   }
   return (
     <div className="msg-row assistant">
-      <div className="assistant-avatar">⚡</div>
+      <div className="assistant-avatar"><AppIcon size={26} /></div>
       <div className="bubble assistant-bubble">
         {message.content && <Markdown text={message.content} />}
       </div>
@@ -281,7 +282,7 @@ export default function ChatView({
       <div className="chat-scroll" ref={scrollRef}>
         {turns.length === 0 && !streaming ? (
           <div className="empty-state">
-            <div className="empty-logo">⚡</div>
+            <div className="empty-logo"><AppIcon size={76} /></div>
             <h2>lite-code</h2>
             <p>手写内核的 Code 开发 Agent，已就绪。</p>
             <div className="empty-hints">
@@ -302,7 +303,7 @@ export default function ChatView({
                 )}
                 {t.assistant && t.assistant.content && (
                   <div className="msg-row assistant">
-                    <div className="assistant-avatar">⚡</div>
+                    <div className="assistant-avatar"><AppIcon size={26} /></div>
                     <div className="bubble assistant-bubble">
                       <Markdown text={t.assistant.content} />
                     </div>

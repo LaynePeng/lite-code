@@ -1,4 +1,4 @@
-在模块二与前面的课程中，我们为 Harness 编写了 AST 分析、沙箱运行、代码 Patch 和 MCP 扩展等一系列强大的底层能力。
+在模块二中，我们为 Harness 编写了 AST 分析、沙箱运行、代码 Patch、项目指令/Skills 和 MCP 扩展等一系列强大的底层能力。
 
 然而，随着系统功能不断增加，如果继续把所有逻辑硬编码在主循环 `run_agent()` 里，代码很快就会变得不可维护。
 
@@ -82,7 +82,7 @@ from typing import Any, Dict, Optional
 class HarnessKernel:
     def __init__(self, session_id: str = "default"):
         self.ctx = Context(session_id=session_id)
-        self.ctx.events = TypedEventBus()          # 事件管道（第12课）
+        self.ctx.events = TypedEventBus()          # 事件管道（第13课）
         self.plugins: Dict[str, Plugin] = {}
 
     def use(self, plugin: Plugin) -> "HarnessKernel":
@@ -189,7 +189,7 @@ trajectory = ctx.get_service("trajectory")
 print("Recorded steps count:", len(trajectory["get_history"]()))
 ```
 
-> 💡 **实战落地**：本课架构图里的「Tools Plugin」在最终项目 `lite-code` 中真实实现了——`litecode/tools/plugin.py` 定义 `ToolPlugin` 基类（install 时把自己的 `ToolDefinition` 注册进内核的 `tools` 服务），文件/搜索/AST/编辑/Shell/Git/审查/Web 抓取/子 Agent 共 9 个工具插件全部挂载到内核；`AgentApp.build_registry` 通过一个引导内核把插件组装成按 Agent 裁剪后的 `ToolRegistry`（详见第 16 课装配层）。
+> 💡 **实战落地**：本课架构图里的「Tools Plugin」在最终项目 `lite-code` 中真实实现了——`litecode/tools/plugin.py` 定义 `ToolPlugin` 基类（install 时把自己的 `ToolDefinition` 注册进内核的 `tools` 服务），文件/搜索/AST/编辑/Shell/Skills/Git/审查/Web 抓取/子 Agent 共 10 个工具插件全部挂载到内核；`AgentApp.build_registry` 通过一个引导内核把插件组装成按 Agent 裁剪后的 `ToolRegistry`（详见第 17 课装配层）。
 
 ### 本课小结
 
@@ -199,4 +199,4 @@ print("Recorded steps count:", len(trajectory["get_history"]()))
 2. 实现了基于 **Cordis 依赖注入思想** 的 Context 与 Service 机制；
 3. 设计了基于 **Append-only Trajectory 的时间解耦方案**，为调试、测试重放与断点续做打下基础。
 
-下一次我们将进入 **第12课：依赖注入与插件生命周期管理** —— 深入探讨 Interceptor 拦截器管道（中间件模式），学习如何通过插件在 Tool 调用前后实现无感修改 Prompt 和安全审查拦截！
+下一次我们将进入 **第13课：依赖注入与插件生命周期管理** —— 深入探讨 Interceptor 拦截器管道（中间件模式），学习如何通过插件在 Tool 调用前后实现无感修改 Prompt 和安全审查拦截！

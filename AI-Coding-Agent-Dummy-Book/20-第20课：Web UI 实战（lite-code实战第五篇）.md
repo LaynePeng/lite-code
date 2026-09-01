@@ -1,13 +1,14 @@
 在前面的课程中，我们从架构设计、核心 Kernel、插件体系、AgentLoop 状态机到沙箱防护，一步步完成了 `lite-code` 框架的底层构建。
 
-本课作为手写实战的**收官之作**，我们将为 `lite-code` 赋予成熟的生产级外壳：
+本课开始手写实战的**外壳篇**，我们先为 `lite-code` 构建完整的 Web UI：
 
 1. **FastAPI 服务层**：REST API + SSE 流式推送，连接前后端；
 2. **React 现代化 Web UI**：流式 Markdown、工具调用卡片、审批弹窗、会话/文件树/成本面板；
-3. **Electron 桌面外壳**：自动拉起 Python Core、窗口管理、按窗口打开项目；
+3. **上下文可观测性**：窗口占用、缓存命中率、压缩统计实时面板；
 4. **多 LLM 配置界面**：DeepSeek / OpenAI / Anthropic / 通义千问等多供应商切换；
-5. **三种运行形态**：本地桌面应用 / 远程 Core / 纯浏览器访问；
-6. **一键打包发布**：PyInstaller 后端 + electron-builder 出 .app/.dmg。
+5. **Web 侧稳定性加固**：请求超时、卡死检测、断连重连、渲染兜底。
+
+Electron 桌面外壳与打包发布留到下一课。
 
 #### 1. 架构总览
 
@@ -33,6 +34,8 @@
 1. **本地桌面**：`npm start` 或 `npm run dev`，Electron 为每个本地项目窗口自动 spawn 独立 Python Core
 2. **远程 Core**：`~/.lite-code/client.json` 配置 `coreUrl`，窗口直连远程服务器
 3. **纯浏览器**：`python -m litecode serve` 后访问 `http://127.0.0.1:8787`
+
+本课的所有内容（FastAPI + React）在三种形态下完全复用——**Web UI 不感知自己跑在浏览器还是 Electron 里**，桌面能力（终端、多窗口）通过 preload 桥按需注入，这是下一课的主题。
 
 #### 2. FastAPI 服务层 (`litecode/server/app.py`)
 
@@ -80,6 +83,16 @@ async def fs_read(path: str, request: Request = None):
     diff_text = _git_diff(app.workspace, path)               # git diff HEAD -- <path>
     return {"path": path, "content": content, "language": language,
             "lines": len(content.split("\n")), "size": len(content), "diff": diff_text}
+```
+
+**"先打开项目"是一等状态**：桌面应用启动时可以没有项目，`AgentApp.workspace` 允许为 `None`（不再静默把应用 cwd 当工作区）。所有依赖工作区的接口（会话、任务、文件树、文件读取）统一走 `_require_workspace()`——未打开项目时返回 409，前端引导用户先打开项目。这避免了"Agent 在错误目录里执行任务"这类难以察觉的事故：
+
+```python
+# server/app.py（核心）
+def _require_workspace() -> str:
+    if not app.workspace:
+        raise HTTPException(status_code=409, detail="请先打开项目后再创建会话或执行任务")
+    return app.workspace
 ```
 
 **SSE 流式推送**：每个任务创建独立的 `asyncio.Queue`，AgentLoop 运行时通过 `TypedEventBus` 广播事件（`llm:stream`、`tool:before_execute`、`approval:request` 等），`TaskHandle` 订阅事件并推送到队列，SSE 端点从队列消费：
@@ -182,7 +195,7 @@ def start(self, session_id, prompt, agent_id=None):
     ...
 ```
 
-这样「第二轮」的上下文 = 第一轮完整历史 + 新问题，system + tools 前缀保持不变——多轮对话间的缓存命中也能延续（第 4 课稳定前缀 + 第 17 课静态 System Prompt）。
+这样「第二轮」的上下文 = 第一轮完整历史 + 新问题，system + tools 前缀保持不变——多轮对话间的缓存命中也能延续（第 4 课稳定前缀 + 第 18 课静态 System Prompt）。
 
 #### 3. React 前端（Web UI）
 
@@ -281,6 +294,24 @@ function buildTurns(messages) {
 
 **后端新端点**：配套新增 `/api/agents` 返回 Agent 列表、`/api/workspace` 运行时切换工作区、`/api/fs/list` 浏览任意目录。
 
+**MCP 工具**：最终项目通过 `litecode/mcp/` 提供 stdio MCP Client（第 11 课详细讲解实现）。配置位于 `~/.lite-code/config.json` 的 `mcp_servers` 段：
+
+```json
+{
+  "mcp_servers": {
+    "sqlite": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-sqlite", "./data.db"],
+      "enabled": true
+    }
+  }
+}
+```
+
+Core 启动时完成 MCP 初始化握手并调用 `tools/list`，外部工具以 `mcp_<server>_<tool>` 名称加入 ToolRegistry；调用时通过 `tools/call` 转发。MCP 工具与内置工具共用 Agent 的工具裁剪、安全审查、超时和事件流，不绕过现有安全边界。Core 关闭时终止 MCP Server 子进程。
+
+**项目指令文件与 Skills**：最终项目按第 10 课的设计实现了完整机制——Core 启动任务时读取 workspace 根目录的 `AGENTS.md` / `Claude.md` / `CLAUDE.md` 注入 System Prompt；Skills 索引（名称 + 描述）常驻 System Prompt，`load_skill` 工具按需加载 `SKILL.md` 全文。两者都拼接在 System Prompt 末尾，保持缓存前缀稳定。
+
 **工具结果的 Diff 展示**：编辑工具（第 9 课）成功回执现在是 `[Patch Success]: 已更新 <path> (+N -M)` 摘要 + Unified Diff 正文。前端用 `UnifiedDiff` 组件做 opencode 风格的**行级 diff 渲染**——在一个文件视图里同时显示插入（绿底）和删除（红底）的行，带新旧行号、hunk 分隔条：
 
 ```tsx
@@ -318,7 +349,7 @@ export default function UnifiedDiff({ diff }: { diff: string }) {
 
 #### 3.6 上下文可观测性：`context:stats` 数据链路
 
-「上下文情况」面板的数据不是前端瞎猜的，而是 AgentLoop 每轮把真实统计通过事件总线推出来的（见第 17 课的 `_emit_context_stats`）。完整链路：
+「上下文情况」面板的数据不是前端瞎猜的，而是 AgentLoop 每轮把真实统计通过事件总线推出来的（见第 18 课的 `_emit_context_stats`）。完整链路：
 
 ```
 AgentLoop._emit_context_stats()
@@ -331,7 +362,7 @@ SSE /api/tasks/{id}/events  →  data: {"type":"context:stats", ...}
 前端 ToolPanel 接收 → 更新「上下文情况」面板
 ```
 
-后端侧（第 17 课已实现）每轮推送：模型名、上下文窗口大小、本轮 `prompt_tokens`、累计 `cache_hit_tokens / cache_miss_tokens / cache_hit_rate`、压缩次数、压缩节省 Token、窗口占用比例 `usage_ratio`。`TaskHandle` 在转发前还会把任务内统计累加进会话级累计（`session` 段），因此面板同时展示"本次调用"与"会话累计"两个视角。
+后端侧（第 18 课已实现）每轮推送：模型名、上下文窗口大小、本轮 `prompt_tokens`、累计 `cache_hit_tokens / cache_miss_tokens / cache_hit_rate`、压缩次数、压缩节省 Token、窗口占用比例 `usage_ratio`。`TaskHandle` 在转发前还会把任务内统计累加进会话级累计（`session` 段），因此面板同时展示"本次调用"与"会话累计"两个视角。
 
 前端 `App.tsx` 的 SSE 处理只需加一个 case：
 
@@ -406,9 +437,9 @@ const patchChat = (sessionId: string, patch: Partial<ChatSessionState>) => {
 };
 ```
 
-**窗口、项目与 Tab 的边界**：项目不是 Tab 的替代概念。一个窗口是工作台，内部可同时包含多个会话 Tab 和文件 Tab。桌面本地模式使用一个本地 Core；“打开项目”通过当前 Core 热切换 workspace，不创建新的 Core。模型配置、安全配置和会话存储与 workspace 分离，因此切换项目或重启 Core 都不会丢失配置。
+**窗口、项目与 Tab 的边界**：项目不是 Tab 的替代概念。一个窗口是工作台，内部可同时包含多个会话 Tab 和文件 Tab。当前窗口的“打开项目”通过当前 Core 热切换 workspace，不创建新的 Core；“新窗口打开项目”才会创建新的窗口和 Core。所有本地 Core 读取同一份 `~/.lite-code` 模型、安全和 Agent 配置。
 
-**workspace 切换约束**：`AgentApp.workspace` 和工具实例依赖当前工作目录，因此切换项目时必须先确认没有运行中的任务。没有任务时，当前 Core 更新 workspace，前端清空当前工作副本并重新请求新项目的历史会话；有任务时接口返回冲突，避免任务在执行过程中改变文件根目录。
+**workspace 切换约束**：`AgentApp.workspace` 和工具实例依赖当前工作目录，因此当前窗口切换项目时必须先确认没有运行中的任务。没有任务时，当前 Core 更新 workspace，前端清空当前工作副本并重新请求新项目的历史会话；有任务时接口返回冲突，避免任务在执行过程中改变文件根目录。新窗口拥有自己的 Core 和任务流，但复用同一份用户配置。
 
 **TabBar 组件**：水平 Tab 栏，左侧显示 Tab 列表（图标 + 标题），每个 Tab 可关闭（✕），至少保留一个 Tab。点击 Tab 只切换 `activeTabId`，不关闭其他会话的 SSE 连接；每个会话的任务 ID、流式缓冲和事件连接独立保存。
 
@@ -470,104 +501,11 @@ return <div className="modal-overlay">
 </div>;
 ```
 
-**上下文长度手动覆盖**：每个供应商可手填 `context_window`，留空则自动解析（`LLMRegistry.get_context_window` 四级优先级：① 手动覆盖 → ② models.dev → ③ 内置表 → ④ 128K 默认，见第 16 课 §5）。另有全局配置 `context_full_turns`（默认 2）控制策略 B 裁剪时保留的最近完整轮数——即第 3 课的 `keep_recent_full_turns`，在 `.lite-code/config.json` 的根级配置即可调。
+**上下文长度手动覆盖**：每个供应商可手填 `context_window`，留空则自动解析（`LLMRegistry.get_context_window` 四级优先级：① 手动覆盖 → ② models.dev → ③ 内置表 → ④ 128K 默认，见第 17 课 §5）。另有全局配置 `context_full_turns`（默认 2）控制策略 B 裁剪时保留的最近完整轮数——即第 3 课的 `keep_recent_full_turns`，在 `.lite-code/config.json` 的根级配置即可调。
 
-#### 5. Electron 桌面外壳 (`electron/main.js`)
+#### 5. Web 侧稳定性加固
 
-Electron 主进程负责三种形态的启动管理：
-
-```javascript
-// 启动逻辑
-if (process.env.LITECODE_DEV_URL) {
-  // 形态1：开发模式（Vite + Python Core 由 concurrently 管理）
-  createWindow(process.env.LITECODE_DEV_URL);
-} else if (config.coreUrl) {
-  // 形态2：远程 Core
-  injectRemoteToken(config.token);
-  createWindow(config.coreUrl);
-} else {
-  // 形态3：本地桌面 —— 每个窗口绑定独立 Python Core
-  await openLocalWorkspace(defaultWorkspace);
-}
-```
-
-**关键特性**：
-- `titleBarStyle: "hiddenInset"` 无边框窗口 + 红绿灯避开侧边栏
-- `sandbox: true` + `contextIsolation: true` + `preload.js` 最小化安全桥
-- `dialog.showOpenDialog` + **当前 Core 热切换**：选择目录后调用后端 `POST /api/workspace`，任务运行时拒绝切换；成功后重载当前窗口前端
-- 60s 后端启动超时兜底；每个窗口关闭时 SIGTERM 回收它自己的 Core，应用退出时回收所有剩余 Core
-- 远程模式支持 Bearer Token 注入（`session.webRequest.onBeforeSendHeaders`）
-
-**窗口配置**：
-```javascript
-new BrowserWindow({
-  width: 1280, height: 820, minWidth: 960, minHeight: 640,
-  backgroundColor: "#0d1117",
-  titleBarStyle: "hiddenInset",
-  trafficLightPosition: { x: 18, y: 18 },
-  webPreferences: { contextIsolation: true, sandbox: true, ... }
-})
-```
-
-#### 6. 稳定性加固
-
-桌面应用在真实环境中会遇到各种异常：后端启动慢、LLM 超时、网络断连、渲染进程崩溃。`lite-code` 针对这些场景做了系统性加固。
-
-**Electron 启动加载页**（`electron/loading.html`）
-
-PyInstaller 后端需要加载 Python 运行时、依赖和应用配置；Windows 上还可能受到实时杀毒扫描影响。如果等后端就绪再创建窗口，用户会看到一片空白。解决：窗口**立即创建**，显示内置加载页，后端就绪后自动跳转主界面。
-
-```html
-<!-- electron/loading.html（核心结构） -->
-<body>
-  <div class="logo">⚡</div>
-  <div class="title">lite-code</div>
-  <div class="spinner"></div>
-  <div class="progress"><div class="progress-fill" id="fill"></div></div>
-  <div class="status" id="status">正在启动内核…</div>
-  <div class="error" id="errorBox">后端启动失败<button onclick="location.reload()">重试</button></div>
-  <script>
-    // 步骤动画，每 4s 推进一格
-    const steps = ["正在启动内核…", "加载安全策略…", "准备代码工具…", "连接模型服务…", "即将就绪…"];
-    setInterval(() => {
-      step = Math.min(step + 1, steps.length - 1);
-      document.getElementById("status").textContent = steps[step];
-      document.getElementById("fill").style.width = (step / (steps.length - 1)) * 100 + "%";
-    }, 4000);
-  </script>
-</body>
-```
-
-主进程启动逻辑改为先创建窗口再 await 后端：
-
-```javascript
-// 立即创建窗口 + 加载页（即使后端未就绪）
-const loadingUrl = `file://${path.join(__dirname, "loading.html")}`;
-createWindow(loadingUrl);
-
-const { url } = await spawnLocalCore();             // 后端可能耗时 30s
-mainWindow.loadURL(url);                            // 就绪后跳转主界面
-```
-
-**渲染进程崩溃自动恢复**（`electron/main.js`）
-
-Electron 渲染进程可能因各种原因崩溃（白屏）。监听 `render-process-gone` 事件，1s 后自动 reload；页面加载失败时最多重试 3 次：
-
-```javascript
-mainWindow.webContents.on("render-process-gone", (event, details) => {
-  setTimeout(() => {
-    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.reload();
-  }, 1000);
-});
-
-let failCount = 0;
-mainWindow.webContents.on("did-fail-load", (event, code, desc) => {
-  if (++failCount <= 3) {
-    setTimeout(() => mainWindow?.reload(), 2000);
-  }
-});
-mainWindow.webContents.on("did-finish-load", () => { failCount = 0; });
-```
+真实网络环境下，前端会遇到各种异常：后端无响应、LLM 超时、网络断连、渲染崩溃。Web UI 针对这些场景做了系统性加固。
 
 **React ErrorBoundary**（`web/src/components/ErrorBoundary.tsx`）
 
@@ -669,100 +607,14 @@ async def _stream():
             tasks.cleanup(task_id)
 ```
 
-#### 7. 一键打包与 Windows 加速 (`npm run package`)
+### 本课小结
 
-```bash
-npm run build:web                    # 构建 React 前端 → web/dist/
-node scripts/package-backend.mjs     # PyInstaller --onedir，默认复用分析缓存
-node scripts/package.mjs             # macOS 完整打包：图标 → 后端 → .app → DMG
-```
+在本课中，我们为 `lite-code` 构建了完整的 Web 外壳：
 
-**PyInstaller 使用 `--onedir`**：产出目录结构（`release/backend/lite-code-backend/lite-code-backend + _internal/`），启动时不需要解压。常规构建不传 `--clean`，复用 `release/_build` 的分析缓存；需要完全重建时显式传 `--clean`：
+1. **FastAPI 服务层**：REST + SSE 双通道、路径越界防护、"先打开项目"的显式状态、SSE 背压与终止事件优先级；
+2. **React Web UI**：ref 缓冲区解决高频流式渲染、有序工作项时间线、真实目录树 + git 状态徽标、多 Tab 工作台；
+3. **上下文可观测性**：`context:stats` 从 AgentLoop 到面板的完整数据链路，让 Token 治理可排查；
+4. **多 LLM 配置**：七类供应商 + 自定义实例、会话级模型覆盖、编辑态保护；
+5. **稳定性加固**：请求超时、卡死检测、ErrorBoundary、SSE 自动重连。
 
-```javascript
-// electron/main.js — 查找 onedir 后端
-function resolvePython() {
-  if (app.isPackaged) {
-    const dir = path.join(process.resourcesPath, "litecode-bin", "lite-code-backend");
-    const bundled = path.join(dir, process.platform === "win32" ? "lite-code-backend.exe" : "lite-code-backend");
-    if (fs.existsSync(bundled)) return bundled;
-  }
-  ...
-}
-```
-
-**Windows 增量打包**：`scripts/build-windows.ps1` 会对 `pyproject.toml` 计算 SHA-256 指纹。依赖清单未变化时跳过 pip 安装；首次安装或依赖变化时使用标准隔离构建，避免全新 runner 缺少构建工具导致原生包安装失败。根目录和 `web/` 存在 lockfile 时使用 `npm ci`，依赖目录不存在才安装。默认复用 PyInstaller 缓存，发布构建才加 `-Clean`：
-
-```powershell
-# build-windows.ps1 用法
-.\scripts\build-windows.ps1             # 增量构建，默认复用缓存
-.\scripts\build-windows.ps1 -Clean      # 发布构建，清理 PyInstaller 分析缓存
-```
-
-**macOS 打包脚本 `package.mjs` 带进度显示**：每步打印耗时 (`(x.xs)`)，让用户知道在哪一步——icon/后端/electron-builder/hdiutil：
-
-```text
-[package] Step 0/4: Generate app icon
-[1245] icon... (0.3s)
-[package] Step 1/4: Package backend binary
-[1723] PyInstaller --onedir... (35.2s)
-[package] Step 2/4: electron-builder --dir produces .app
-[5312] electron-builder... (2.5s)
-[package] Step 3/4: Wrap DMG with hdiutil
-[7641] prepare... (0.2s)
-[7893] hdiutil create... (18.1s)
-[package] Done -> release/lite-code-0.9.5-arm64.dmg
-```
-
-**产物**（以 macOS 为例，实际版本号来自 `package.json`）：
-```
-release/
-├── lite-code-0.9.5-arm64.dmg          (安装包)
-└── mac-arm64/lite-code.app             (解包目录，可直接运行)
-```
-
-关键工程点：
-- **后端进包**：`extraResources` 把 `release/backend/lite-code-backend` 复制到 `resources/litecode-bin/lite-code-backend`，Electron 主进程通过 `resolvePython()` 使用内置二进制；
-- **图标**：`scripts/app-icon.svg` 直接配置为 `win.icon`，electron-builder 自动栅格化为 ICO；
-- **加载页**：`--onedir` 直接携带依赖目录，启动时无需解压，配合 loading.html 明确展示后端就绪进度。
-
-**配置目录**：Core 的默认配置目录为 `~/.lite-code`，其中保存模型、API Key、安全规则、模型元数据和会话历史。`--config-dir` 可用于测试或显式隔离配置；正常桌面启动始终使用用户目录。
-
-**开发模式**：`npm run dev`（concurrently 编排 Python Core + Vite + Electron，一行命令三步启动）
-
-#### 8. 全课程总结与回顾
-
-恭喜你！到这里我们已经完成了全套 **19 课** 的 Code Agent 深度课程，并手写出了完整的 `lite-code` 框架。
-
-```text
-+-----------------------------------------------------------------------+
-|                     lite-code 全景架构                                  |
-+-----------------------------------------------------------------------+
-|  [模块一] ReAct 与循环 (第1-5课)                                       |
-|  - LLM 流式 Tool Calling 解析 | JSON 自愈 / 死循环检测 | 输出截断      |
-|  - Token 预算与策略B滑动裁剪 | 静态 System Prompt（稳定前缀） | Prompt 缓存 |
-|  - Token 节省策略（多层预算 / 带外存储 / 缓存铁律）                     |
-+-----------------------------------------------------------------------+
-|  [模块二] Code Agent 增强能力 (第6-10课)                               |
-|  - Ripgrep 代码感知 | Tree-sitter AST 分析 | 沙箱隔离                 |
-|  - Search-Replace / Unified Diff | MCP 外部工具生态接入               |
-+-----------------------------------------------------------------------+
-|  [模块三] 核心架构 (第11-14课)                                         |
-|  - Cordis 微内核与时空解耦 | 洋葱模型中间件 / 生命周期钩子            |
-|  - 子 Agent 编排 | Build/Plan 与用户自定义 Agent                       |
-+-----------------------------------------------------------------------+
-|  [模块四] 手写实战 lite-code (第15-19课)                               |
-|  - Python Core | 多 LLM 供应商 | 全套工具集 | AgentLoop 主循环        |
-|  - 动态黑白名单 | Web 审批 | 上下文可观测性 | React UI | Electron 打包 |
-+-----------------------------------------------------------------------+
-```
-
-至此，你不仅掌握了 Agent Harness 框架的完整理论体系，还手握一个**可独立扩展、架构清晰、可直接运行的桌面应用**。你可以基于 `lite-code` 扩展更多专属插件（如 Git 自动化、代码审查、数据库查询、MCP 工具等），打造属于你自己的专用 AI 开发助手！
-
-**启动方式**：
-```bash
-npm run dev      # 开发模式：Python Core(8787) + Vite(5173) + Electron 窗口
-npm start        # 生产模式：构建前端 → 自动拉起 Python Core → 窗口
-npm run package  # macOS：PyInstaller 后端 + electron-builder + DMG
-# Windows：.\scripts\build-windows.ps1（生成 NSIS 安装包）
-```
+至此 `lite-code` 已经可以通过 `python -m litecode serve` 在浏览器中使用。下一课我们将开启 **第21课：Electron 桌面应用** —— 用 Electron 包裹 Web UI，实现多窗口项目工作区、真实终端和一键打包发布！

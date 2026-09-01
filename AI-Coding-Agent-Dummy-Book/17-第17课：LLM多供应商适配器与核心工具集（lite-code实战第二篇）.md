@@ -3,7 +3,7 @@
 本课我们将手写两个关键模块并将其装载入 Kernel：
 
 1. **LLM 多供应商适配器**：支持 DeepSeek、OpenAI、Anthropic Claude 等，纯手写 httpx SSE 流式解析 + tool_calls 增量拼接；
-2. **核心工具集**：文件系统、代码搜索、AST 分析、精确编辑、受限 Shell、Git 自动化、代码审查。
+2. **核心工具集**：文件系统、代码搜索、AST 分析、精确编辑、受限 Shell、Git 自动化、代码审查、Web 抓取与 Skills 技能加载。
 
 #### 1. LLM 多供应商架构设计
 
@@ -244,7 +244,7 @@ class ModelMetaService:
 
 注册表对外提供 **四级解析**（`llm/registry.py`），优先级从高到低：
 
-1. **手动覆盖**：用户在设置面板手填的 `context_window`（第 19 课会实现这个输入框）；
+1. **手动覆盖**：用户在设置面板手填的 `context_window`（第 20 课会实现这个输入框）；
 2. **models.dev 缓存**：按模型 ID 精确匹配的远程元数据；
 3. **内置静态表**：`PROVIDER_META` 中维护的 per-model 常备数据；
 4. **默认兜底**：128K。
@@ -254,7 +254,7 @@ def get_context_window(self, provider_id, model=None) -> int:
     # ① 手动覆盖 → ② models.dev → ③ 内置表 → ④ 128K 默认
 ```
 
-同步时机放在 FastAPI 的启动生命周期里（第 19 课装配后端时接入），异步执行、失败静默降级：
+同步时机放在 FastAPI 的启动生命周期里（第 20 课装配后端时接入），异步执行、失败静默降级：
 
 ```python
 # server/app.py — FastAPI lifespan
@@ -332,7 +332,7 @@ class ASTAnalyzer:
         ...
 ```
 
-**精确编辑工具**（`tools/editor.py`）：Search-and-Replace 模糊退避 + Unified Diff 锚点偏移。成功回执使用 `difflib.unified_diff` 生成 `[Patch Success]: 已更新 <path> (+N -M)` 增删统计并附上 diff 正文（超 4000 字符截断）——既让 Agent 自检刚做的修改，也为第 19 课 Web UI 的"文件修改卡片"准备好渲染数据：
+**精确编辑工具**（`tools/editor.py`）：Search-and-Replace 模糊退避 + Unified Diff 锚点偏移。成功回执使用 `difflib.unified_diff` 生成 `[Patch Success]: 已更新 <path> (+N -M)` 增删统计并附上 diff 正文（超 4000 字符截断）——既让 Agent 自检刚做的修改，也为第 20 课 Web UI 的"文件修改卡片"准备好渲染数据：
 
 ```python
 class BlockReplacer:
@@ -383,12 +383,14 @@ class WebFetchTools:
     # 输出上限：2MB 读取上限 + maxChars 截断，防止爆上下文
 ```
 
+**Skills 工具**（`tools/skills.py`）：即第 10 课设计的 `load_skill`——发现项目级/用户级 `skills/*/SKILL.md`，索引注入 System Prompt，全文按需加载。这里只需把它封装成 `SkillsPlugin` 挂进插件列表（`SkillsPlugin(self.workspace)`），无需任何额外接线。
+
 #### 7. 装配层 (`litecode/app.py`)
 
-`AgentApp` 负责把内核、LLM 注册表、工具集、安全组件装配在一起。工具集采用第 11 课的 **Cordis 插件模式**：内核只持有 `tools` 服务（`ToolRegistry`）与裁剪策略服务（`tool_filter`），具体工具全部由 `tools/plugin.py` 的 `ToolPlugin` 插件在 install 时注册：
+`AgentApp` 负责把内核、LLM 注册表、工具集、安全组件装配在一起。工具集采用第 12 课的 **Cordis 插件模式**：内核只持有 `tools` 服务（`ToolRegistry`）与裁剪策略服务（`tool_filter`），具体工具全部由 `tools/plugin.py` 的 `ToolPlugin` 插件在 install 时注册：
 
 ```python
-# litecode/tools/plugin.py（第 11 课「空间解耦」落地）
+# litecode/tools/plugin.py（第 12 课「空间解耦」落地）
 class ToolPlugin(Plugin):
     def install(self, kernel):
         registry = kernel.get_service("tools")       # 依赖注入：取内核服务
@@ -405,14 +407,14 @@ class AgentApp:
         self.session_store = SessionStore(...)
         self.guard = SecurityGuard()
         self.approval_gate = ApprovalGate()
-        self.sub_agent_runner = SubAgentRunner(self)  # 第13课，延迟绑定
+        self.sub_agent_runner = SubAgentRunner(self)  # 第14课，延迟绑定
 
-    def tool_plugins(self):   # 9 个工具插件：文件/搜索/AST/编辑/Shell/Git/审查/Web/子 Agent
+    def tool_plugins(self):   # 10 个工具插件：文件/搜索/AST/编辑/Shell/Skills/Git/审查/Web/子 Agent
         return [FileSystemPlugin(self.workspace), CodebasePlugin(self.workspace),
                 ASTPlugin(self.workspace), EditorPlugin(self.workspace),
-                ShellPlugin(self.workspace), GitPlugin(self.workspace),
-                ReviewPlugin(self.workspace), WebFetchPlugin(cache_dir=...),
-                SubAgentPlugin(self)]
+                ShellPlugin(self.workspace), SkillsPlugin(self.workspace),
+                GitPlugin(self.workspace), ReviewPlugin(self.workspace),
+                WebFetchPlugin(cache_dir=...), SubAgentPlugin(self)]
 
     def build_registry(self, allowed=None, exclude=None, permissions=None) -> ToolRegistry:
         # 引导内核组装：tools 服务 + tool_filter 服务 + 全部工具插件
@@ -432,7 +434,7 @@ class AgentApp:
 1. 实现了**纯手写 httpx SSE 流式解析器**，支持 OpenAI 兼容接口与 Anthropic 两种协议，并从流式事件中提取真实 usage（`prompt_cache_hit_tokens`），供第 4 课的缓存命中率度量使用；
 2. 设计了**多供应商注册表**，预置供应商并支持任意数量的 `custom_*` OpenAI 兼容实例，提供环境变量兜底、配置热加载、测试连接；
 3. 接入 **models.dev 模型元数据服务**：启动同步 + 7 天磁盘缓存 + 内置表兜底，`get_context_window` 四级解析上下文窗口；
-4. 编写了**19 个核心工具**，覆盖文件读写、代码搜索、AST 分析、精确编辑、Shell 执行、Git 操作、代码审查、Web 抓取（webfetch / webfetch_batch，带磁盘缓存与批量并发）；
+4. 编写了**20 个内置工具**，覆盖文件读写、代码搜索、AST 分析、精确编辑、Shell 执行、Git 操作、代码审查、Web 抓取和技能加载；MCP 工具由配置动态增加；
 5. 通过 `AgentApp` 装配层将所有模块组合在一起。
 
-下一次我们将开启 **第17课：AgentLoop 主循环 (`lite-code` 实战第三篇)** —— 实现驱动整个 ReAct 循环的核心状态机，并把第 2-5 课的所有增强机制（JSON 自愈、死循环检测、Token 预算、静态 System Prompt、缓存感知截断）全部集成！
+下一次我们将开启 **第18课：AgentLoop 主循环 (`lite-code` 实战第三篇)** —— 实现驱动整个 ReAct 循环的核心状态机，并把第 2-5 课的所有增强机制（JSON 自愈、死循环检测、Token 预算、静态 System Prompt、缓存感知截断）全部集成！

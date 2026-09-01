@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { AgentInfo, LLMConfig, SessionModel } from "../types";
+import type { AgentInfo, LLMConfig, LLMProviderMeta, SessionModel } from "../types";
 
 export default function Composer({
   disabled,
@@ -10,6 +10,7 @@ export default function Composer({
   onSend,
   onStop,
   llmConfig,
+  providerMeta,
   sessionModel,
   onSessionModelChange,
 }: {
@@ -21,6 +22,7 @@ export default function Composer({
   onSend: (prompt: string) => void;
   onStop: () => void;
   llmConfig: LLMConfig | null;
+  providerMeta?: LLMProviderMeta[];
   sessionModel: SessionModel | null;
   onSessionModelChange: (model: SessionModel | null) => void;
 }) {
@@ -70,10 +72,13 @@ export default function Composer({
             title="只影响当前会话，正在运行的任务不会切换"
           >
             <option value="__default__">系统默认</option>
-            {llmConfig && Object.entries(llmConfig.providers).map(([pid, provider]) =>
+            {(providerMeta ?? (llmConfig ? Object.entries(llmConfig.providers).map(([id, provider]) => ({
+              id, name: provider.name || id, models: provider.models, has_key: provider.has_key,
+              kind: "openai" as const, default_base_url: "", model: provider.model,
+            })) : [])).map((provider) =>
               provider.has_key && (provider.models ?? []).map((model) => (
-                <option key={`${pid}:${model}`} value={`${pid}\n${model}`}>
-                  {provider.name || pid} / {model}
+                <option key={`${provider.id}:${model}`} value={`${provider.id}\n${model}`}>
+                  {provider.name || provider.id} / {model}
                 </option>
               ))
             )}
@@ -92,7 +97,7 @@ export default function Composer({
             }
           }}
           placeholder={running ? "任务进行中…" : `给 lite-code 下达任务…（当前 Agent: ${currentAgent}，Tab 切换）`}
-          rows={1}
+          rows={3}
           disabled={disabled || running}
         />
         {running ? (

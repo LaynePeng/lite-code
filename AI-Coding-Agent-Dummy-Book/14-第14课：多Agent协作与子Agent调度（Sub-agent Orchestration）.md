@@ -143,10 +143,10 @@ async def spawn_sub_agent_handler(app, args: dict) -> str:
 async def main():
     runner = SubAgentRunner(parent_app)
 
-    # 监听父内核归集事件
-    total_parent_tokens = 0
+    # 监听父内核归集事件（闭包内不能对 int 重新赋值，用列表收集）
+    token_log: List[int] = []
     parent_kernel.events.on("subagent:completed",
-                           lambda d: total_parent_tokens.update(+d["tokens_used"]))
+                            lambda d: token_log.append(d["tokens_used"]))
 
     print("=== Demonstrating Parallel Sub-Agents ===")
 
@@ -172,4 +172,4 @@ async def main():
 
 至此，**模块三：核心架构** 的前半部分（微内核与子 Agent 编排）已全部完结！
 
-下一步我们将开启 **第14课：Agent 类型与自定义机制（Build/Plan 与用户扩展）** —— 参考 OpenCode，为 Harness 内置 Build/Plan 两种默认 Agent，并开放用户自定义 Agent 的配置通道！
+下一步我们将开启 **第15课：Agent 类型与自定义机制（Build/Plan 与用户扩展）** —— 参考 OpenCode，为 Harness 内置 Build/Plan 两种默认 Agent，并开放用户自定义 Agent 的配置通道！

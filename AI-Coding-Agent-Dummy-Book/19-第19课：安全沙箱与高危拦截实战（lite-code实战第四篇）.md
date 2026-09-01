@@ -259,6 +259,18 @@ class SecurityPlugin(Plugin):
                         data["reason"] = "[User Rejected]: 操作被操作员明确拒绝。"
                         return await next(data)
 
+            # C. MCP 工具：外部进程提供，行为不可预知 → 默认全部审批
+            if tool_name.startswith("mcp_"):
+                approved = await self._request_approval(
+                    kernel,
+                    f"调用 MCP 工具 {tool_name}",
+                    "MCP 工具由外部进程提供，可能访问文件、网络或其他本地资源。",
+                )
+                if not approved:
+                    data["cancel"] = True
+                    data["reason"] = "[User Rejected]: MCP 工具调用已被拒绝。"
+                    return await next(data)
+
             return await next(data)
 
         kernel.register_service("security_guard", self.guard)
@@ -296,7 +308,10 @@ else:
 运行链路验证：
 - 高危 `rm -rf /` → `HIGH` 直接拒绝（LLM 通常也会自我拒绝）；
 - 中危 `rm temp.txt` → `MEDIUM` 弹出审批卡 → 用户点"允许"才执行，点"拒绝"则返回取消消息给 Agent；
-- 白名单命令（`git status`、`pytest`）→ `SAFE` 直接放行。
+- 白名单命令（`git status`、`pytest`）→ `SAFE` 直接放行；
+- MCP 工具 `mcp_sqlite_query` → 无论参数是什么，一律弹出审批卡。
+
+**为什么 MCP 工具要"一刀切"走审批？** 内置工具的行为是我们审计过的代码——`read_file` 的路径检查、`execute_command` 的黑白名单都可控；而 MCP Server 是**任意外部进程**（第 11 课），它的 `query` 工具完全可能在背后读写文件系统、发起网络请求。我们无法为未知工具编写规则，只能按**最坏假设**处理：不可审计的能力必须经过人。注意这恰恰是洋葱模型的优雅之处——MCP 工具在 AgentLoop 与注册表层与内置工具完全同权，但在安全层被单独识别并降权，**接入零成本，调用有门槛**。
 
 ### 本课小结
 
@@ -306,6 +321,7 @@ else:
 2. 实现了基于正则与敏感词的 **`SecurityGuard` 规则引擎**，阻断路径穿越与恶性指令；
 3. **动态黑白名单**：规则可从 `.lite-code/config.json` 热加载，无需改代码；
 4. 实现了 **`ApprovalGate` (Human-in-the-Loop)** Web 化机制，关键操作让用户保持控制权（`asyncio.Future` 挂起 + SSE 审批卡）；
-5. 将安全机制封装为 **`SecurityPlugin`**，展示了 `beforeTool` 洋葱机制在防护层的优雅应用。
+5. 将安全机制封装为 **`SecurityPlugin`**，展示了 `beforeTool` 洋葱机制在防护层的优雅应用；
+6. **MCP 工具默认审批**：外部进程提供的能力按最坏假设处理，不可审计的调用必须经过人。
 
-下一次我们将开启 **第19课：Web UI + Electron 桌面应用与打包 (`lite-code` 实战终章)** —— 为 `lite-code` 打造带流式 Markdown、工具卡片、审批卡的现代化 Web UI，套上 Electron 桌面外壳，并支持多 LLM 配置与一键打包发布！
+下一次我们将开启 **第20课：Web UI 实战 (`lite-code` 实战第五篇)** —— 为 `lite-code` 构建FastAPI 服务层与带流式 Markdown、工具卡片、审批卡的现代化 React Web UI！

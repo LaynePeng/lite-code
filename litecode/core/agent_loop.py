@@ -35,7 +35,7 @@ class AgentLoop:
         registry,
         session_store: Optional[SessionStore] = None,
         context_manager: Optional[ContextManager] = None,
-        max_steps: int = 25,
+        max_steps: int = 100,
         tool_timeout: float = 120.0,
         llm_timeout: float = 180.0,
         token_budget: int = 48000,
@@ -119,6 +119,7 @@ class AgentLoop:
         await self.kernel.events.emit("task:start", {"session_id": self.kernel.session_id})
 
         current_step = 0
+        empty_reply_retries = 0
         try:
             while current_step < self.max_steps:
                 current_step += 1
@@ -188,6 +189,21 @@ class AgentLoop:
 
                 await self._emit_context_stats(stats)
 
+                if not content and not tool_calls:
+                    empty_reply_retries += 1
+                    if empty_reply_retries <= 2:
+                        messages.append(Message(
+                            role="user",
+                            content="模型返回了空响应。请继续当前任务，并明确给出下一步工具调用或最终结果。",
+                        ))
+                        continue
+                    self.state.status = AgentStatus.FAILED_MAX_TURNS
+                    return await self._finish(
+                        "[LLM Error]: 模型连续返回空响应，任务已终止。",
+                        messages, stats, store_snapshot,
+                    )
+                empty_reply_retries = 0
+
                 # E. Assistant 消息入链
                 assistant_message = Message(
                     role="assistant",
@@ -223,6 +239,7 @@ class AgentLoop:
 
                 await self.kernel.events.emit("stats:update", self._stats_payload(stats))
 
+            self.state.status = AgentStatus.FAILED_MAX_TURNS
             return await self._finish(
                 "[Loop Terminated]: 超出最大步骤限制仍未得出最终结论。",
                 messages, stats, store_snapshot,

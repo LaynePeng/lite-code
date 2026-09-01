@@ -96,10 +96,76 @@ button {
   padding-top: 38px;
 }
 
+/* ============================== 布局分隔条 ============================== */
+
+.resizer {
+  position: relative;
+  flex-shrink: 0;
+  z-index: 30;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+/* 横向边界（左右宽度）：细竖条 */
+.resizer.col {
+  width: 5px;
+  cursor: col-resize;
+  align-self: stretch;
+  height: 100vh;
+}
+
+/* 纵向边界（上下高度）：细横条 */
+.resizer.row {
+  height: 5px;
+  cursor: row-resize;
+  width: 100%;
+}
+
+/* 命中区视觉：拖拽中显示主题色细线 */
+.resizer.col::after,
+.resizer.row::after {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.resizer.col::after {
+  left: 2px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--accent, #7aa2f7);
+}
+
+.resizer.row::after {
+  top: 2px;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: var(--accent, #7aa2f7);
+}
+
+.resizer:hover::after,
+.resizer.dragging::after {
+  opacity: 1;
+}
+
+.resizer.dragging {
+  background: rgba(122, 162, 247, 0.08);
+}
+
+/* 拖拽期间：禁用文本选择，全局锁定对应方向的 cursor */
+body.resizing-col,
+body.resizing-col * { cursor: col-resize !important; user-select: none !important; }
+body.resizing-row,
+body.resizing-row * { cursor: row-resize !important; user-select: none !important; }
+
 /* ============================== 侧边栏 ============================== */
 
 .sidebar {
-  width: 264px;
+  width: var(--sidebar-w, 264px);
   flex-shrink: 0;
   background: var(--bg-1);
   border-right: 1px solid var(--border);
@@ -115,15 +181,14 @@ button {
   padding: 44px 18px 12px;
 }
 
+/* 应用图标：SVG 自带圆角渐变底（与 app-icon.svg 同源），容器只负责尺寸 */
 .brand-logo {
   width: 30px;
   height: 30px;
   display: grid;
   place-items: center;
-  background: var(--grad);
-  border-radius: 9px;
-  font-size: 16px;
   box-shadow: 0 2px 12px rgba(79, 140, 255, 0.35);
+  border-radius: 9px;
 }
 
 .brand-name {
@@ -495,6 +560,21 @@ button {
   color: var(--text-2);
 }
 
+/* 版本行可点击打开「关于」 */
+.footer-version-btn {
+  width: 100%;
+  padding: 4px 6px;
+  margin-top: 2px;
+  border-radius: 6px;
+  text-align: center;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.footer-version-btn:hover {
+  background: var(--bg-2);
+  color: var(--text-1);
+}
+
 /* ============================== 设置面板 ============================== */
 
 .settings-panel {
@@ -625,15 +705,13 @@ button {
 }
 
 .assistant-avatar {
-  width: 30px;
-  height: 30px;
+  width: 26px;
+  height: 26px;
   flex-shrink: 0;
   display: grid;
   place-items: center;
-  font-size: 14px;
-  background: var(--grad);
-  border-radius: 9px;
   box-shadow: 0 2px 10px rgba(139, 92, 246, 0.3);
+  border-radius: 8px;
   margin-top: 2px;
 }
 
@@ -1414,10 +1492,7 @@ button {
   height: 76px;
   display: grid;
   place-items: center;
-  font-size: 40px;
-  background: var(--grad);
-  border-radius: 22px;
-  box-shadow: 0 8px 40px rgba(79, 140, 255, 0.35);
+  filter: drop-shadow(0 8px 40px rgba(79, 140, 255, 0.35));
   margin-bottom: 10px;
   animation: float 3.5s ease-in-out infinite;
 }
@@ -1574,6 +1649,152 @@ button {
 .modal-body {
   padding: 18px 22px 24px;
   overflow-y: auto;
+}
+
+/* ─────────────────────────────────── 关于弹窗 */
+.about-modal {
+  width: 400px;
+}
+
+.about-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 26px 28px 22px;
+  text-align: center;
+}
+
+/* 图标：微投影 + 轻微上浮动效 */
+.about-logo {
+  margin-bottom: 2px;
+  filter: drop-shadow(0 10px 26px rgba(79, 140, 255, 0.38));
+  animation: about-logo-in 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+
+@keyframes about-logo-in {
+  from { transform: scale(0.82) translateY(6px); opacity: 0; }
+  to { transform: scale(1) translateY(0); opacity: 1; }
+}
+
+.about-name {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--text-0);
+  letter-spacing: 0.4px;
+}
+
+/* 版本徽标：主版本 pill + Core 副版本 */
+.about-version-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  background: rgba(79, 140, 255, 0.12);
+  border: 1px solid rgba(79, 140, 255, 0.35);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+.about-version-pill .about-core {
+  font-weight: 400;
+  color: var(--text-2);
+  font-size: 11px;
+}
+
+.about-desc {
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--text-1);
+  margin: 4px 0 2px;
+}
+
+/* 图标链接网格：2×2 */
+.about-links {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+  margin: 6px 0 2px;
+}
+
+.about-links a {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-1);
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-2);
+  text-decoration: none;
+  transition: border-color 0.12s ease, color 0.12s ease, background 0.12s ease;
+}
+
+.about-links a:hover {
+  border-color: var(--accent);
+  color: var(--text-0);
+  background: rgba(79, 140, 255, 0.10);
+}
+
+.about-links a svg { flex-shrink: 0; }
+
+/* 主操作按钮：渐变 / 次按钮：描边 */
+.about-actions {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  margin-top: 6px;
+}
+
+.about-actions a {
+  flex: 1;
+  text-align: center;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 9px 14px;
+  border-radius: 10px;
+  text-decoration: none;
+  transition: filter 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+
+.about-btn-primary {
+  background: var(--grad);
+  color: #fff;
+  box-shadow: 0 4px 16px rgba(79, 140, 255, 0.30);
+}
+
+.about-btn-primary:hover { filter: brightness(1.1); }
+
+.about-btn-ghost {
+  border: 1px solid var(--border);
+  color: var(--text-1);
+  background: transparent;
+}
+
+.about-btn-ghost:hover {
+  border-color: var(--accent);
+  color: var(--text-0);
+  background: rgba(79, 140, 255, 0.08);
+}
+
+.about-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 10px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+  font-size: 11px;
+  color: var(--text-2);
+  width: 100%;
+  letter-spacing: 0.2px;
 }
 
 .settings-section {
@@ -2093,7 +2314,7 @@ button {
 
 /* ─────────────────────────────────── 右侧工具面板 */
 .tool-panel {
-  width: 280px;
+  width: var(--tool-w, 280px);
   flex-shrink: 0;
   background: var(--bg-1);
   border-left: 1px solid var(--border);
@@ -2259,6 +2480,16 @@ button {
   flex-direction: column;
   gap: 2px;
 }
+
+.tool-panel-context { flex: 1 1 auto; min-height: 180px; overflow: auto; }
+.terminal-header { border-top: 1px solid var(--border); flex-shrink: 0; }
+/* 终端高度由内联 style（拖拽 hook）控制；上下文面板 flex:1 自动占剩余 */
+.tool-panel-terminal { flex: 0 0 auto; min-height: 160px; overflow: hidden; background: #0d1117; }
+.terminal-wrap, .terminal-host { width: 100%; height: 100%; }
+.terminal-wrap { position: relative; padding: 6px; box-sizing: border-box; }
+.terminal-error { position: absolute; z-index: 2; left: 8px; right: 8px; top: 8px; color: #f87171; background: #2b1115; padding: 6px; }
+.terminal-empty { color: var(--text-muted); padding: 16px; font-size: 12px; }
+.terminal-host .xterm { height: 100%; }
 
 .tool-panel-empty {
   padding: 32px 12px;

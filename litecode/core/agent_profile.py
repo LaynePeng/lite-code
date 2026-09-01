@@ -17,6 +17,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from .system_prompt import FINAL_REPORT_REQUIREMENT
+
 logger = logging.getLogger("litecode.agent")
 
 # 工具权限取值
@@ -173,7 +175,9 @@ PLAN_PROMPT = """你是一个「规划型」AI 软件工程师（Plan Agent）�
 2. 输出一份清晰、可执行、分步骤的实现计划（含涉及文件、改动点、验证方式）；
 3. 除非用户明确要求，否则不要动手改代码。
 
-可用工具受限为只读（读文件、搜索、git 状态查看等）。"""
+可用工具受限为只读（读文件、搜索、git 状态查看等）。
+
+""" + "\n\n" + FINAL_REPORT_REQUIREMENT
 
 
 def default_build_agent() -> AgentProfile:
@@ -197,6 +201,7 @@ def default_plan_agent() -> AgentProfile:
             "get_file_outline", "read_focused_symbol",
             "git_status", "git_diff", "git_log", "git_branch", "review_code",
             "webfetch", "webfetch_batch",
+            "load_skill",
         ],
         # 权限兜底：即使被授予写工具也强制 deny
         permissions={"write_file": PERM_DENY, "apply_search_replace": PERM_DENY,

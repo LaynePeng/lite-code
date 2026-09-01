@@ -14,6 +14,7 @@ from .core.session_store import SessionStore
 from .core.types import Plugin
 from .llm.base import BaseLLMAdapter
 from .llm.registry import LLMRegistry
+from .mcp import MCPManager
 from .security.approval import ApprovalGate
 from .security.guard import SecurityGuard
 from .security.plugin import SecurityPlugin
@@ -25,6 +26,7 @@ from .tools.plugin import (
     GitPlugin,
     ReviewPlugin,
     ShellPlugin,
+    SkillsPlugin,
     SubAgentPlugin,
     TOOL_FILTER_SERVICE,
     TOOLS_SERVICE,
@@ -35,13 +37,14 @@ from .tools.registry import ToolRegistry
 logger = logging.getLogger("litecode.app")
 
 DEFAULT_CONFIG: Dict[str, Any] = {
-    "max_steps": 25,
+    "max_steps": 100,
     "token_budget": 48000,
     "tool_timeout": 120,
     "llm_timeout": 180,
     "auto_approve": False,
     "approval_timeout": 600,
     "context_full_turns": 2,
+    "mcp_servers": {},
     "pricing": {"input_per_mtok": 1.6, "output_per_mtok": 4.8},
 }
 
@@ -51,7 +54,7 @@ TOOL_NAMES = [
     "apply_search_replace", "apply_unified_diff",
     "execute_command", "git_status", "git_diff", "git_log",
     "git_commit", "git_branch", "review_code", "spawn_sub_agent",
-    "webfetch", "webfetch_batch",
+        "webfetch", "webfetch_batch", "load_skill",
 ]
 
 
@@ -64,8 +67,11 @@ class AgentApp:
         base_url: Optional[str] = None,
         model: Optional[str] = None,
     ) -> None:
-        self.workspace = os.path.abspath(workspace or os.getcwd())
-        os.makedirs(self.workspace, exist_ok=True)
+        # Desktop application starts without a project. Keep this as an explicit
+        # state instead of silently treating the application's cwd as a workspace.
+        self.workspace = os.path.abspath(workspace) if workspace else None
+        if self.workspace:
+            os.makedirs(self.workspace, exist_ok=True)
 
         self.config_dir = os.path.abspath(os.path.expanduser(config_dir or "~/.lite-code"))
         self.config_path = os.path.join(self.config_dir, "config.json")
@@ -80,6 +86,7 @@ class AgentApp:
         self.agent_registry = AgentRegistry()
         self._context_session_stats: Dict[str, Dict[str, Any]] = {}
         self._load_config()
+        self.mcp_manager = MCPManager(self.config.get("mcp_servers") or {})
         self.approval_gate = ApprovalGate(
             timeout_seconds=self.config.get("approval_timeout", 600)
         )
@@ -117,6 +124,8 @@ class AgentApp:
                 with open(self.config_path, "r", encoding="utf-8") as f:
                     loaded = json.load(f)
                 self.config.update({k: v for k, v in loaded.items() if v is not None})
+                if self.config.get("max_steps") == 25:
+                    self.config["max_steps"] = 100
                 security_cfg = loaded.get("security")
                 if isinstance(security_cfg, dict):
                     self.guard.apply_config(security_cfg)
@@ -273,6 +282,7 @@ class AgentApp:
             ReviewPlugin(self.workspace),
             WebFetchPlugin(cache_dir=os.path.join(self.config_dir, "webfetch_cache")),
             SubAgentPlugin(self),
+            SkillsPlugin(self.workspace),
         ]
 
     @staticmethod
@@ -311,6 +321,7 @@ class AgentApp:
         kernel.register_service(TOOL_FILTER_SERVICE, self._tool_filter(allowed, exclude, permissions))
         for plugin in self.tool_plugins():
             kernel.use(plugin)
+        self.mcp_manager.register_tools(registry, allowed=allowed, exclude=exclude)
         return registry
 
     # ------------------------------------------------------------ 内核
@@ -353,11 +364,12 @@ class AgentApp:
     def create_agent_registry(self, agent_id: str) -> ToolRegistry:
         """按 Agent 配置裁剪工具集（参考 OpenCode：plan 只读、build 全量）。"""
         profile = self.get_agent(agent_id)
-        return self.build_registry(
+        registry = self.build_registry(
             allowed=profile.tools,
             exclude=["spawn_sub_agent"] if agent_id == "plan" else None,
             permissions=profile.permissions,
         )
+        return registry
 
     def create_loop(self, kernel: Kernel, registry: ToolRegistry, agent_id: Optional[str] = None,
                     model_override: Optional[Dict[str, str]] = None) -> AgentLoop:
@@ -389,7 +401,7 @@ class AgentApp:
             registry=registry,
             session_store=self.session_store,
             context_manager=context_manager,
-            max_steps=int(self.config.get("max_steps", 25)),
+            max_steps=int(self.config.get("max_steps", 100)),
             tool_timeout=float(self.config.get("tool_timeout", 120)),
             llm_timeout=float(self.config.get("llm_timeout", 180)),
             token_budget=token_budget,
@@ -402,4 +414,5 @@ class AgentApp:
         return loop
 
     async def close(self) -> None:
+        await self.mcp_manager.close()
         await self.close_adapter()

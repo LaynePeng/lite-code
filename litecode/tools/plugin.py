@@ -20,6 +20,7 @@ from .git import GitTools
 from .registry import ToolRegistry
 from .review import ReviewTools
 from .shell import ShellTools
+from .skills import SkillsTools
 from .web import WebFetchTools
 
 logger = logging.getLogger("litecode.tools")
@@ -111,6 +112,19 @@ class ShellPlugin(ToolPlugin):
 
     def __init__(self, workspace: str) -> None:
         self._tools = ShellTools(workspace)
+
+    def get_tools(self) -> List[ToolDefinition]:
+        return self._tools.get_tools()
+
+    async def execute(self, name: str, args: Dict[str, Any]) -> str:
+        return await self._tools.execute(name, args)
+
+
+class SkillsPlugin(ToolPlugin):
+    name = "skills-plugin"
+
+    def __init__(self, workspace: str) -> None:
+        self._tools = SkillsTools(workspace)
 
     def get_tools(self) -> List[ToolDefinition]:
         return self._tools.get_tools()
