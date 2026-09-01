@@ -162,6 +162,116 @@ body.resizing-col * { cursor: col-resize !important; user-select: none !importan
 body.resizing-row,
 body.resizing-row * { cursor: row-resize !important; user-select: none !important; }
 
+/* ============================== 设置弹窗 Tab ============================== */
+
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg-0);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 16px;
+}
+
+.settings-tab {
+  flex: 1;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  background: transparent;
+  border-radius: 7px;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+
+.settings-tab:hover { color: var(--text-1); }
+
+.settings-tab.active {
+  color: var(--text-0);
+  background: var(--bg-3);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+/* ============================== 右侧面板 Tab ============================== */
+
+.panel-tabs {
+  display: flex;
+  flex-shrink: 0;
+  /* 顶部 38px 是无边框窗口拖拽区，Tab 下移避开 */
+  padding: 40px 10px 0;
+  gap: 2px;
+}
+
+.panel-tab {
+  flex: 1;
+  padding: 7px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--text-2);
+  background: transparent;
+  border-bottom: 2px solid transparent;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+
+.panel-tab:hover { color: var(--text-1); }
+
+.panel-tab.active {
+  color: var(--text-0);
+  border-bottom-color: var(--accent);
+}
+
+/* MCP 状态列表（右面板 MCP Tab） */
+.mcp-status-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mcp-status-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-2);
+}
+
+.mcp-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.mcp-dot.on {
+  background: var(--green);
+  box-shadow: 0 0 6px rgba(63, 185, 80, 0.6);
+}
+
+.mcp-dot.off { background: var(--text-2); }
+
+.mcp-status-main { min-width: 0; }
+
+.mcp-status-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-0);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-status-meta {
+  font-size: 11px;
+  color: var(--text-2);
+  margin-top: 1px;
+}
+
 /* ============================== 侧边栏 ============================== */
 
 .sidebar {
@@ -573,6 +683,106 @@ body.resizing-row * { cursor: row-resize !important; user-select: none !importan
 .footer-version-btn:hover {
   background: var(--bg-2);
   color: var(--text-1);
+}
+
+/* ============================== MCP 配置区块 ============================== */
+
+.mcp-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.mcp-section-head h3 { margin-bottom: 0; }
+
+.mcp-hint {
+  font-size: 12px;
+  color: var(--text-2);
+  margin: 0 0 10px;
+  line-height: 1.6;
+}
+
+.mcp-hint code {
+  background: var(--bg-3);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.mcp-server-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  margin-bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: var(--bg-0);
+}
+
+.mcp-server-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mcp-server-row .form-input { flex: 1; }
+
+.mcp-name {
+  max-width: 160px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+}
+
+.mcp-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-1);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.mcp-badge {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.mcp-badge.ok {
+  color: var(--green);
+  background: rgba(63, 185, 80, 0.12);
+  border: 1px solid rgba(63, 185, 80, 0.35);
+}
+
+.mcp-badge.err {
+  color: var(--red);
+  background: rgba(248, 81, 73, 0.12);
+  border: 1px solid rgba(248, 81, 73, 0.35);
+}
+
+.mcp-remove { padding: 4px 10px; font-size: 12px; }
+
+.mcp-error-detail {
+  font-size: 11px;
+  color: var(--red);
+  background: rgba(248, 81, 73, 0.08);
+  border-radius: 6px;
+  padding: 6px 8px;
+  word-break: break-all;
+}
+
+.mcp-empty {
+  font-size: 12px;
+  color: var(--text-2);
+  padding: 14px 0;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  margin-bottom: 10px;
 }
 
 /* ============================== 设置面板 ============================== */

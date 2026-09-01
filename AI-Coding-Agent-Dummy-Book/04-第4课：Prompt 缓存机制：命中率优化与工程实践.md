@@ -3,8 +3,9 @@
 本课内容：
 1. 什么是 Prompt 缓存？为什么它能带来 **90% 的输入 Token 成本削减**？
 2. 主流供应商（Anthropic、DeepSeek、OpenAI）的缓存机制对比；
-3. 缓存命中的关键：**稳定前缀（Stable Prefix）**；
-4. 如何在我们的 Harness 中接入缓存，并设计缓存友好的代码结构。
+3. 缓存命中的关键：**稳定前缀（Stable Prefix）** 与共享段前置的 **Prompt 分段布局**；
+4. 如何在我们的 Harness 中接入缓存，并设计缓存友好的代码结构；
+5. **辅助调用的前缀对齐**——压缩/摘要等辅助 LLM 调用如何复用主对话缓存（deepseek-harness 模式）。
 
 #### 1. 为什么需要 Prompt 缓存？
 
@@ -64,6 +65,14 @@ class PayloadBuilder:
 ```
 
 **注意**：缓存断点（Cache Breakpoint）标注在**稳定前缀的最后一个元素**上，告诉供应商"从这里开始后面的内容不缓存"。
+
+**进阶：System Prompt 内部的分段布局**。当不同 Agent 共享一套 Prompt 骨架、只在部分段落不同时（Build/Plan 双 Agent），段的排列顺序决定缓存损失的范围——**共享段放前面，分歧段放后面**：
+
+```text
+[强制交付要求(共享)] → [Agent 角色段(分歧!)] → [环境信息(共享)] → [工具清单(分歧)] → [规则/指令(共享)]
+```
+
+Plan 切到 Build 时，缓存从"角色段"开始失效——但两个 Agent 的**工具清单本来就不同**，工具区之后的历史反正全部 miss；把分歧段尽量前置（紧跟最后的硬共享头），反而不是新增损失。反过来，如果把 Agent 身份塞到 Prompt 末尾或消息流里，表面上"前缀更稳"，实际上工具区已经分歧、后面全 miss，Agent 身份还会在历史里产生重复注入。**缓存友好的本质不是"一切都不变"，而是"把不变的部分排在前面，让分歧点尽可能晚、尽可能只出现一次"**（双 Agent 的完整实现见第 15 课）。
 
 #### 4. 在 Harness 中接入缓存
 
@@ -185,11 +194,53 @@ if usage:
 
 > **重要**：估算与真实值**不要混进同一个计数器**做预算判断——`TokenCounter` 是给「裁剪时机」用的（便宜、快速、前置），usage 是给「统计展示」用的（准确、事后）。两者职责分离，在实战篇的 AgentLoop 中，我们会看到这个 D2 阶段如何落地。
 
+#### 8. 辅助调用的前缀对齐（最容易被忽视的缓存杀手）
+
+除了主对话循环，Harness 里还有一类**辅助 LLM 调用**：上下文压缩摘要、会话标题生成、子 Agent 派生……它们同样要吃输入 Token，而且很容易成为缓存盲区。
+
+**❌ 常见错误做法**：为辅助任务精心写一个全新的专用 Prompt——
+
+```python
+# 压缩历史时，另起炉灶调用 LLM
+system = "你是会话压缩器。将用户提供的对话历史压缩为……"
+content, _, _ = await adapter.chat_stream(
+    [Message(role="system", content=system),
+     Message(role="user", content=f"请压缩以下对话历史：\n\n{text}")],
+    [], None,
+)
+```
+
+问题在于：那个"全新前缀"意味着**整段被压缩的历史（可能几万 token）全部按未命中计费**。省上下文的压缩调用，本身的成本可能比省下来的还贵——这是典型的"用缓存价格的高成本，买 token 数量的节省"。
+
+**✅ 前缀对齐（Prefix Alignment）**：辅助调用**逐字复用**主对话的 system + tools + 前导消息作为请求前缀，把辅助指令作为**最后一条 user 消息追加**——
+
+```python
+# 复用主对话的 system + head，指令追加在尾部
+system = next((m for m in head if m.role == "system"), None)
+body = [m for m in head if m.role != "system"]
+content, _, _ = await adapter.chat_stream(
+    ([system] if system else []) + body
+    + [Message(role="user", content="请将以上全部对话历史压缩为……")],
+    self.registry.get_tools(),   # 工具 schema 也逐字复用
+    None,
+)
+```
+
+这样辅助调用成为**上次真实请求的真前缀**：system、tools、历史消息在服务端 KV 缓存里全部命中，只有尾部那条压缩指令是新增输入。原本"几万 token 全额计费"变成"几十 token 计费 + 命中部分 10% 计费"。
+
+这个模式来自 DeepSeek 官方 Harness（deepseek-harness）的压缩器实现，其源码注释把动机说得非常直白：
+
+> *Keeping the conversation's own system prompt, tools, and message prefix in front of it makes the auxiliary call a genuine prefix of the last routed request, so the provider's KV cache is reused instead of invalidated.*
+> （把对话自身的 system、tools 和消息前缀放在辅助指令前面，使辅助调用成为上一次请求的真前缀——供应商的 KV 缓存被复用，而不是失效。）
+
+**通用原则**：Harness 里**每一次** LLM 调用（主循环、压缩、标题、子 Agent）都要问一句——"这个请求的前缀，是否是某个已发送请求的逐字节延续？"如果不是，考虑能不能改成"复用已有前缀 + 追加指令"的形状。lite-code 的完整实现（含防误发工具调用的回退）见第 18 课。
+
 #### 本课小结
 
 1. 理解了 **Prompt 缓存**的原理与收益——最多可节省 **90% 的输入 Token 费用**；
-2. 掌握了 **缓存断点（Cache Breakpoint）** 的标注方法，以及**稳定前缀**的设计原则；
+2. 掌握了 **缓存断点（Cache Breakpoint）** 的标注方法、**稳定前缀**的设计原则，以及共享段前置的 **Prompt 分段布局**；
 3. 在 Anthropic 和 OpenAI 兼容适配器中实际接入了缓存标注；
-4. 学会了**缓存感知的 Token 预算管理**，以及**缓存友好**的代码设计约束。
+4. 学会了**缓存感知的 Token 预算管理**，以及**缓存友好**的代码设计约束；
+5. 掌握了**辅助调用的前缀对齐**——复用主对话前缀 + 追加指令，避免辅助任务的全新前缀把缓存全部打穿。
 
 下一课学习**Token 节省策略**——从 OpenSquilla 的 13 层 Token 节省机制中提炼最适合本 Harness 的模式，并在不破坏缓存的前提下实现多级压缩。

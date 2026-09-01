@@ -165,6 +165,16 @@ class AgentApp:
         with open(self.config_path, "w", encoding="utf-8") as f:
             json.dump(self.config, f, ensure_ascii=False, indent=2)
 
+    def mcp_status(self) -> Dict[str, Any]:
+        return self.mcp_manager.status()
+
+    async def update_mcp_servers(self, servers: Dict[str, Any]) -> Dict[str, Any]:
+        """更新 MCP Server 配置：落盘 + 热重连。"""
+        self.config["mcp_servers"] = servers
+        with open(self.config_path, "w", encoding="utf-8") as f:
+            json.dump(self.config, f, ensure_ascii=False, indent=2)
+        return await self.mcp_manager.reload(servers)
+
     # ------------------------------------------------------------ LLM
 
     def _persist_config(self) -> None:

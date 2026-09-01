@@ -26,7 +26,7 @@ class MCPClient:
         await self.request("initialize", {
             "protocolVersion": "2025-03-26",
             "capabilities": {},
-            "clientInfo": {"name": "lite-code", "version": "0.10.0"},
+            "clientInfo": {"name": "lite-code", "version": "0.11.0"},
         })
         await self.notify("notifications/initialized", {})
 

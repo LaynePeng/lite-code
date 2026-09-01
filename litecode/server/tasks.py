@@ -78,7 +78,17 @@ class TaskHandle:
         self._subscribe_events()
         self.running = True
         try:
-            system_prompt = SystemPromptBuilder.build(self.app.workspace, self.registry.get_tools())
+            # Agent 专属角色提示（Plan 的规划人格 / 自定义 Agent）注入 System Prompt；
+            # build 无专属提示时输出与通用版逐字节一致，缓存前缀不受影响
+            agent_prompt = None
+            try:
+                profile = self.app.get_agent(self.agent_id)
+                agent_prompt = profile.system_prompt
+            except KeyError:
+                pass
+            system_prompt = SystemPromptBuilder.build(
+                self.app.workspace, self.registry.get_tools(), agent_prompt=agent_prompt
+            )
             await self.loop.run_task(prompt, system_prompt=system_prompt, store_snapshot=True)
         except asyncio.CancelledError:
             self._forward_event({"type": "task:error",

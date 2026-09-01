@@ -62,7 +62,7 @@ async def test_status_and_sessions(live_client):
     c, app, _ = live_client
     r = await c.get("/api/status")
     assert r.status_code == 200
-    assert r.json()["version"] == "0.10.0"
+    assert r.json()["version"] == __import__("litecode").__version__  # 与包版本一致即可
 
     r = await c.post("/api/sessions", json={"name": "会话A"})
     assert r.status_code == 200

@@ -3,7 +3,7 @@ import AppIcon from "./AppIcon";
 
 const GITHUB_URL = "https://github.com/LaynePeng/lite-code";
 const TUTORIAL_URL = "https://laynepeng.gitbook.io/ai-code-agent-shou-ba-shou";
-const APP_VERSION = "0.10.0";
+const APP_VERSION = "0.11.0";
 
 function GitHubIcon() {
   return (

@@ -1,6 +1,6 @@
 # lite-code
 
-一个手写内核的 Code Agent 桌面应用（当前版本 **v0.10.0**）：Python 内核 + React UI + Electron 外壳，从 LLM 流式解析、上下文压缩到沙箱审批全部纯手写，不依赖 LangChain 等高层框架。
+一个手写内核的 Code Agent 桌面应用（当前版本 **v0.11.0**）：Python 内核 + React UI + Electron 外壳，从 LLM 流式解析、上下文压缩到沙箱审批全部纯手写，不依赖 LangChain 等高层框架。
 
 📖 配套教程：[《AI Code Agent 手把手》](https://laynepeng.gitbook.io/ai-code-agent-shou-ba-shou)——22 课从零搭建本项目的完整教程（本仓库 `AI-Coding-Agent-Dummy-Book/` 目录）。
 
@@ -73,15 +73,15 @@ npm start      # 生产模式：构建前端 → 自动拉起 Core → 窗口
 
 仓库已配置 `.github/workflows/release.yml`，无需本地环境即可产出 macOS DMG 与 Windows NSIS 安装包：
 
-1. 推送 `v*` 标签（如 `v0.10.0`）自动触发：构建双平台安装包 → 创建 GitHub Release
+1. 推送 `v*` 标签（如 `v0.11.0`）自动触发：构建双平台安装包 → 创建 GitHub Release
 2. 构建产物也可在 **Actions** 运行详情页 **Artifacts** 下载：`macos-arm64` / `windows-x64`
 
 安装包从 [Releases](https://github.com/LaynePeng/lite-code/releases) 下载：
 
-| 平台 | 文件（v0.10.0） |
+| 平台 | 文件（v0.11.0） |
 | --- | --- |
-| macOS (Apple Silicon) | `lite-code-0.10.0-arm64.dmg` |
-| Windows | `lite-code Setup 0.10.0.exe` |
+| macOS (Apple Silicon) | `lite-code-0.11.0-arm64.dmg` |
+| Windows | `lite-code Setup 0.11.0.exe` |
 
 ## 教程
 

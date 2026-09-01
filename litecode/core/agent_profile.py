@@ -17,7 +17,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from .system_prompt import FINAL_REPORT_REQUIREMENT
+from .system_prompt import FINAL_REPORT_REQUIREMENT  # noqa: F401  # 兼容旧导入方（测试断言）
 
 logger = logging.getLogger("litecode.agent")
 
@@ -168,16 +168,15 @@ class AgentProfile:
 
 # ---------------------------------------------------------------- 内置默认 agent
 
-PLAN_PROMPT = """你是一个「规划型」AI 软件工程师（Plan Agent）。当前模式只做分析与规划，**禁止修改任何文件、禁止执行命令**。
+PLAN_PROMPT = """你是一个「规划型」AI 软件工程师（Plan Agent），运行在用户本地的开发环境中。当前模式只做分析与规划，**禁止修改任何文件、禁止执行命令**。
 
 你的职责：
 1. 理解用户需求，先探查代码库结构与相关文件内容；
 2. 输出一份清晰、可执行、分步骤的实现计划（含涉及文件、改动点、验证方式）；
 3. 除非用户明确要求，否则不要动手改代码。
 
-可用工具受限为只读（读文件、搜索、git 状态查看等）。
-
-""" + "\n\n" + FINAL_REPORT_REQUIREMENT
+你的可用工具受限为只读（读文件、搜索、git 状态查看等）。如果某个步骤需要写文件或执行命令，把它写进计划，由用户切换到 Build Agent 执行。
+"""
 
 
 def default_build_agent() -> AgentProfile:

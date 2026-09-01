@@ -209,6 +209,22 @@ print(app.get_agent("plan").tools)      # 只读工具
 print(len(app.create_agent_registry("build").get_tools()))  # 20 个内置工具（MCP 工具另按配置动态增加）
 ```
 
+**关键集成：角色提示必须进入 System Prompt**。只裁剪工具是不够的——模型不知道自己在"规划模式"，仍会按通用习惯尝试调用不存在的写工具、失败后四处摸索。`TaskManager` 在构建 System Prompt 时把 `profile.system_prompt` 注入：
+
+```python
+# server/tasks.py（核心）
+agent_prompt = None
+try:
+    agent_prompt = self.app.get_agent(self.agent_id).system_prompt
+except KeyError:
+    pass
+system_prompt = SystemPromptBuilder.build(
+    self.app.workspace, self.registry.get_tools(), agent_prompt=agent_prompt
+)
+```
+
+`SystemPromptBuilder.build` 用 `agent_prompt` 替换通用角色行。注入位置的缓存分析（共享段前置、分歧点布局）已在第 4 课 §3 的「Prompt 分段布局」中推导过，这里只给结论：角色段放在共享的交付要求之后；build Agent 无专属提示时输出与通用版逐字节一致（存量会话缓存零影响）；Agent 切换时工具清单本来就分歧，角色段前置不产生额外损失。**身份属于语义上的"系统级"信息，放 System Prompt 里，不要为了缓存把它塞进消息流**。
+
 #### 7. 与子 Agent 编排打通
 
 第 14 课的 `SubAgentRunner` 现在也接入 AgentRegistry：用户自定义的 `subagent` 也能被 `spawn_sub_agent` 直接派生。

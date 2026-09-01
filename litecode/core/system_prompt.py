@@ -8,7 +8,7 @@ from __future__ import annotations
 import platform
 import subprocess
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from .types import ToolDefinition
 
@@ -68,7 +68,14 @@ class SystemPromptBuilder:
         return "\n\n".join(sections)
 
     @classmethod
-    def build(cls, cwd: str, tools: List[ToolDefinition]) -> str:
+    def build(cls, cwd: str, tools: List[ToolDefinition], agent_prompt: Optional[str] = None) -> str:
+        """构建任务级静态 System Prompt。
+
+        agent_prompt：Agent 专属角色提示（如 Plan 的规划型人格）。注入位置在
+        共享的「强制交付要求」之后、环境信息之前——两个 Agent 仍共享最前面的
+        交付要求段；agent_prompt 为 None 时（build）输出与旧版逐字节一致，
+        已有会话的 Prompt 缓存前缀不受影响。
+        """
         os_name = f"{platform.system()} {platform.release()} ({platform.machine()})"
         tools_summary = "\n".join(f"- **{t.name}**: {t.description}" for t in tools)
         project_instructions = cls._project_instructions(cwd)
@@ -89,8 +96,12 @@ class SystemPromptBuilder:
             "需要专项流程时，使用 `load_skill` 按名称加载完整 SKILL.md；不要猜测技能内容。\n"
             f"{skill_index}"
         )
+        # Agent 角色段：专属提示优先（Plan/自定义 Agent），否则通用角色行
+        role_section = agent_prompt.strip() if agent_prompt and agent_prompt.strip() else (
+            "你是一个专业的 AI 软件工程师 Code Agent，运行在用户本地的开发环境中。"
+        )
 
-        return FINAL_REPORT_REQUIREMENT + "\n\n" + f"""你是一个专业的 AI 软件工程师 Code Agent，运行在用户本地的开发环境中。
+        return FINAL_REPORT_REQUIREMENT + "\n\n" + f"""{role_section}
 
 ### 环境信息 (Environment Context)
 - **操作系统**: {os_name}
@@ -103,8 +114,8 @@ class SystemPromptBuilder:
 1. 修改代码前，先用工具探查代码库结构与相关文件内容，不要盲目猜测；
 2. 修改文件使用 apply_search_replace / apply_unified_diff 等精确编辑工具，
    避免整文件重写；编辑前先 read_file 获取精确上下文；
-3. 执行命令优先使用 execute_command；命令失败时分析错误输出并换一种策略，
-   不要连续用完全相同参数重试同一个失败的工具；
+3. 需要执行命令时使用 execute_command；命令失败时分析错误输出并换一种策略，
+   不要连续用完全相同参数重试同一个失败的工具；你的工具清单之外的能力一律不要尝试；
 4. 涉及删除、强制推送、sudo 提权等操作时，系统会要求用户确认；
 5. 用简洁的 Markdown 回复用户；中文优先；
 6. 涉及多个独立模块、需要广泛搜索或可并行调研时，优先使用 spawn_sub_agent 的 explorer 角色；

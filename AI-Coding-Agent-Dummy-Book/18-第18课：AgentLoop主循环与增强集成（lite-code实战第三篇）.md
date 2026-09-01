@@ -441,6 +441,24 @@ class AgentLoop:
         摘要失败回退策略 B 两阶段裁剪。
         """
 
+    async def _summarize_history(self, head):
+        """前缀对齐的摘要调用（原理见第 4 课 §8「辅助调用的前缀对齐」）。"""
+
+        system = next((m for m in head if m.role == "system"), None)
+        body = [m for m in head if m.role != "system"]
+        instruction = (
+            "请将以上全部对话历史压缩为一段精炼的中文摘要……"
+            "直接输出摘要正文，不要任何前缀，不要调用任何工具。"
+        )
+        messages = ([system] if system else []) + body + [
+            Message(role="user", content=instruction),
+        ]
+        content, _, _ = await self.adapter.chat_stream(
+            messages, self.registry.get_tools(), None,  # 工具 schema 也逐字复用
+        )
+        return (content or "").strip() or None
+        # 空正文（模型误发工具调用）→ 返回 None → 上层回退策略 B 裁剪
+
     async def _emit_context_stats(self, stats: Dict[str, Any]) -> None:
         """推送「上下文情况」统计：缓存命中率 / 压缩次数 / 窗口占用比例。"""
         hit = stats.get("cache_hit_tokens", 0)
@@ -506,7 +524,7 @@ class SubAgentRunner:
 
 1. 掌握了完整的 **Think-Act-Observe 状态机** 控制逻辑；
 2. 集成了第 2 课所有防御：**JSON 自愈**、**死循环 Hash 检测**、**输出截断**（截断结果落盘，上下文只放句柄），并新增**工具调用原子对修复**（恢复历史后 + 每次调用 LLM 前各跑一遍，残缺/无主/空 id 链一律不出站）；
-3. 集成了第 3 课所有增强：**Token 预算估算**、**策略 B 两阶段滑动裁剪**（保护 system 与 tool 原子对、保留最近 K 轮、`max(预算下限, 90% × 模型窗口)` 有效上限）、**LLM 摘要化压缩**（opencode 风格：旧轮次摘要替换、最近轮次原样保留，前缀只失效一次）、**静态 System Prompt**（任务内构建一次，稳定前缀）；
+3. 集成了第 3 课所有增强：**Token 预算估算**、**策略 B 两阶段滑动裁剪**（保护 system 与 tool 原子对、保留最近 K 轮、`max(预算下限, 90% × 模型窗口)` 有效上限）、**LLM 摘要化压缩**（opencode 风格：旧轮次摘要替换、最近轮次原样保留，前缀只失效一次；摘要调用本身按第 4 课 §8 的前缀对齐发出，缓存不被打穿）、**静态 System Prompt**（任务内构建一次，稳定前缀）；
 4. 实现了 **beforeTool 安全管道**（SecurityPlugin 的接入点，插件本体在第 19 课实现）；
 5. 实现了 **估算兜底 + 真实 usage 回填**（第 4 课）：由适配器统一各供应商的缓存字段为 `prompt_cache_hit_tokens`，并对 Anthropic 与 OpenAI 兼容接口使用不同的 miss 口径；无缓存字段时标记为不可观测；
 6. 实现了 **上下文可观测性**：`context:stats` 事件把压缩次数、压缩节省 Token、命中率、窗口占用比例推给「上下文情况」面板；

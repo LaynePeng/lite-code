@@ -1,4 +1,5 @@
-import type { ContextStats, ContextTaskStats } from "../types";
+import { useState } from "react";
+import type { ContextStats, ContextTaskStats, MCPServerStatus } from "../types";
 import { useResizable } from "../hooks/useResizable";
 import TerminalPanel from "./TerminalPanel";
 
@@ -72,9 +73,37 @@ function ContextPanel({ stats }: { stats: ContextStats | null }) {
   );
 }
 
+// ---------------------------------------------------------------- MCP 状态面板
+
+function McpPanel({ servers }: { servers: MCPServerStatus[] }) {
+  if (!servers || servers.length === 0) {
+    return <div className="tool-panel-empty">暂未配置 MCP</div>;
+  }
+  return (
+    <div className="mcp-status-list">
+      {servers.map((s) => (
+        <div className="mcp-status-item" key={s.name} title={s.error || s.tools.join(", ")}>
+          <span className={`mcp-dot ${s.connected ? "on" : "off"}`} />
+          <div className="mcp-status-main">
+            <div className="mcp-status-name">{s.name}</div>
+            <div className="mcp-status-meta">
+              {s.connected
+                ? `${s.tools.length} 个工具`
+                : s.enabled
+                  ? (s.error ? "连接失败" : "未连接")
+                  : "已禁用"}
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- 主组件
 
-export default function ToolPanel({ contextStats, workspace }: { contextStats: ContextStats | null; workspace: string | null }) {
+export default function ToolPanel({ contextStats, workspace, mcpServers }: { contextStats: ContextStats | null; workspace: string | null; mcpServers: MCPServerStatus[] }) {
+  const [panelTab, setPanelTab] = useState<"context" | "mcp">("context");
   // 终端高度可拖拽调整（双击分隔条重置，localStorage 持久化）
   const terminalResize = useResizable({
     axis: "row", initial: 300, min: 160,
@@ -85,9 +114,24 @@ export default function ToolPanel({ contextStats, workspace }: { contextStats: C
 
   return (
     <aside className="tool-panel">
-      <div className="tool-panel-header">上下文情况</div>
+      <div className="panel-tabs">
+        <button
+          className={`panel-tab ${panelTab === "context" ? "active" : ""}`}
+          onClick={() => setPanelTab("context")}
+        >
+          上下文
+        </button>
+        <button
+          className={`panel-tab ${panelTab === "mcp" ? "active" : ""}`}
+          onClick={() => setPanelTab("mcp")}
+        >
+          MCP
+        </button>
+      </div>
       <div className="tool-panel-body tool-panel-context">
-        <ContextPanel stats={contextStats} />
+        {panelTab === "context"
+          ? <ContextPanel stats={contextStats} />
+          : <McpPanel servers={mcpServers} />}
       </div>
       <div
         className="resizer row"

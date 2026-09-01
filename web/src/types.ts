@@ -253,3 +253,26 @@ export interface ChatSessionState {
   modelOverride?: SessionModel | null;
   effectiveModel?: SessionModel;
 }
+
+// ---------------------------------------------------------------- MCP 配置
+
+export interface MCPServerConfig {
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  enabled?: boolean;
+}
+
+export interface MCPServerStatus {
+  name: string;
+  command: string;
+  args: string[];
+  enabled: boolean;
+  connected: boolean;
+  error?: string | null;
+  tools: string[];
+}
+
+export interface MCPStatus {
+  servers: MCPServerStatus[];
+}

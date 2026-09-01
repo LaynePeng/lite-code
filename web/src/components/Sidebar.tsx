@@ -279,10 +279,10 @@ export default function Sidebar({
 
       <div className="sidebar-footer">
         <button className="btn-open-settings" onClick={onOpenSettings}>
-          ⚙️ LLM 设置
+          ⚙️ 设置
         </button>
         <button className="footer-version footer-version-btn" onClick={onOpenAbout} title="关于 lite-code">
-          lite-code v0.10.0 · 手写 Agent Harness
+          lite-code v0.11.0 · 手写 Agent Harness
         </button>
       </div>
     </aside>

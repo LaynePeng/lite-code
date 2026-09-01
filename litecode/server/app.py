@@ -20,7 +20,7 @@ from .tasks import TaskManager
 
 logger = logging.getLogger("litecode.server")
 
-VERSION = "0.10.0"
+VERSION = "0.11.0"
 
 
 # ---------------------------------------------------------------- 请求模型
@@ -49,6 +49,10 @@ class SessionCreateRequest(BaseModel):
 
 class SecurityUpdateRequest(BaseModel):
     rules: Dict[str, Any]
+
+
+class MCPServersUpdateRequest(BaseModel):
+    servers: Dict[str, Any]
 
 
 class ConfigUpdateRequest(BaseModel):
@@ -226,6 +230,22 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
         _check_auth(request)
         app.update_security_rules(payload.rules)
         return {"ok": True}
+
+    # ------------------------------------------------------------ MCP Server 配置
+
+    @fast_app.get("/api/mcp")
+    async def mcp_status(request: Request):
+        _check_auth(request)
+        return app.mcp_status()
+
+    @fast_app.post("/api/mcp")
+    async def update_mcp(payload: MCPServersUpdateRequest, request: Request):
+        _check_auth(request)
+        # 任务运行时工具集不可热变（运行中任务的 registry 已装配完成）
+        if tasks.active_count() > 0:
+            raise HTTPException(status_code=409, detail="当前有任务运行，请等待任务结束后再更新 MCP 配置")
+        status = await app.update_mcp_servers(payload.servers)
+        return {"ok": True, **status}
 
     # ------------------------------------------------------------ 会话管理
 

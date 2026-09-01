@@ -294,7 +294,7 @@ function buildTurns(messages) {
 
 **后端新端点**：配套新增 `/api/agents` 返回 Agent 列表、`/api/workspace` 运行时切换工作区、`/api/fs/list` 浏览任意目录。
 
-**MCP 工具**：最终项目通过 `litecode/mcp/` 提供 stdio MCP Client（第 11 课详细讲解实现）。配置位于 `~/.lite-code/config.json` 的 `mcp_servers` 段：
+**MCP 工具**：最终项目通过 `litecode/mcp/` 提供 stdio MCP Client（第 11 课详细讲解实现）。配置持久化在 `~/.lite-code/config.json` 的 `mcp_servers` 段，也可以直接在**设置弹窗的 MCP 区块**可视化编辑（无需手改 JSON）：
 
 ```json
 {
@@ -307,6 +307,8 @@ function buildTurns(messages) {
   }
 }
 ```
+
+MCP 设置界面提供：服务器卡片（名称/命令/参数/启用开关/删除）、连接状态徽标（已连接 · N 工具 / 连接失败 + 错误详情）。保存调用 `POST /api/mcp`：落盘配置 → 断开全部连接 → 按新配置重连（任务运行中返回 409，避免运行中任务的工具集热变）。新工具从**下一个任务**开始生效——每个任务的 ToolRegistry 在装配时从 `MCPManager` 快照注册。
 
 Core 启动时完成 MCP 初始化握手并调用 `tools/list`，外部工具以 `mcp_<server>_<tool>` 名称加入 ToolRegistry；调用时通过 `tools/call` 转发。MCP 工具与内置工具共用 Agent 的工具裁剪、安全审查、超时和事件流，不绕过现有安全边界。Core 关闭时终止 MCP Server 子进程。
 

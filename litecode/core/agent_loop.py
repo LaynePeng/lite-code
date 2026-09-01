@@ -345,23 +345,37 @@ class AgentLoop:
         return compacted
 
     async def _summarize_history(self, head: List[Message]) -> Optional[str]:
+        """前缀对齐的摘要调用（deepseek-harness 模式）。
+
+        逐字复用主对话的 system + tools + head 消息作为请求前缀，把压缩指令
+        作为最后一条 user 消息追加——辅助调用成为上次请求的真前缀，KV cache
+        被复用而不是失效。旧实现（独立"压缩器"system + 拼接文本）的前缀全新，
+        数万 token 的历史全部按未命中计费。
+        """
         try:
-            text = "\n\n".join(f"[{m.role}] {m.content or ''}" for m in head)
-            if len(text) > 80_000:
-                text = text[:80_000] + "\n...[截断]"
-            system = (
-                "你是会话压缩器。将用户提供的对话历史压缩为一段精炼的中文摘要："
+            system = next((m for m in head if m.role == "system"), None)
+            body = [m for m in head if m.role != "system"]
+            if not body:
+                return None
+            # 超长保护：head 是已发送过的缓存内容，逐字转发通常更便宜；
+            # 但极端长会话仍需截断，避免单次请求超限
+            total_chars = sum(len(m.content or "") for m in body)
+            if total_chars > 200_000:
+                return None
+            instruction = (
+                "请将以上全部对话历史压缩为一段精炼的中文摘要，作为后续工作的背景说明：\n"
                 "保留已完成的决策与结论、修改过的文件清单、关键发现与未完成的任务，"
-                "丢弃过程性细节。直接输出摘要正文，不要任何前缀。"
+                "丢弃过程性细节。直接输出摘要正文，不要任何前缀，不要调用任何工具。"
             )
+            messages = ([system] if system else []) + body + [
+                Message(role="user", content=instruction),
+            ]
             content, _, _ = await self.adapter.chat_stream(
-                [
-                    Message(role="system", content=system),
-                    Message(role="user", content=f"请压缩以下对话历史：\n\n{text}"),
-                ],
-                [],
+                messages,
+                self.registry.get_tools(),   # 工具 schema 也逐字复用（前缀对齐）
                 None,
             )
+            # 模型若误发工具调用则无正文 → 回退裁剪策略
             return (content or "").strip() or None
         except Exception:
             logger.exception("[AgentLoop] 历史摘要失败，回退旧裁剪策略")

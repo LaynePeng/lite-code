@@ -10,7 +10,7 @@ import Sidebar from "./components/Sidebar";
 import TabBar from "./components/TabBar";
 import ToolPanel from "./components/ToolPanel";
 import { useResizable } from "./hooks/useResizable";
-import type { AgentInfo, AppConfig, ContextStats, ChatSessionState, LLMConfig, LLMProviderMeta, Msg, ServerStatus, SessionInfo, SessionModel, Stats, TabItem, ToolCardInfo, WorkItem } from "./types";
+import type { AgentInfo, AppConfig, ContextStats, ChatSessionState, LLMConfig, LLMProviderMeta, MCPServerStatus, Msg, ServerStatus, SessionInfo, SessionModel, Stats, TabItem, ToolCardInfo, WorkItem } from "./types";
 
 interface PendingApproval {
   id: string;
@@ -68,6 +68,7 @@ export default function App() {
   const [success, setSuccess] = useState<string | null>(null);
   const [treeRevision, setTreeRevision] = useState(0);
   const [draftModels, setDraftModels] = useState<Record<string, SessionModel | null>>({});
+  const [mcpServers, setMcpServers] = useState<MCPServerStatus[]>([]);
 
   // 布局边界拖拽：侧边栏 / 右侧工具面板宽度（双击分隔条重置，localStorage 持久化）
   const sidebarResize = useResizable({
@@ -155,12 +156,13 @@ export default function App() {
 
   const refreshAll = useCallback(async () => {
     try {
-      const [st, cfg, ag, llm, providers] = await Promise.all([api.status(), api.config(), api.agents(), api.llmConfig(), api.llmProviders()]);
+      const [st, cfg, ag, llm, providers, mcp] = await Promise.all([api.status(), api.config(), api.agents(), api.llmConfig(), api.llmProviders(), api.mcpStatus()]);
       setStatus(st);
       setConfig(cfg);
       setAgents(ag);
       setLlmConfig(llm);
       setProviderMeta(providers);
+      setMcpServers(mcp.servers || []);
       await refreshSessions(st.workspace ?? undefined); // 用刚取到的 workspace，避免 setState 异步时序
     } catch (e) {
       setErrorPublic((e as Error).message);
@@ -861,7 +863,7 @@ export default function App() {
             onPointerDown={toolPanelResize.startDrag}
             onDoubleClick={toolPanelResize.reset}
           />
-          <ToolPanel contextStats={currentChat.contextStats} workspace={status?.workspace ?? null} />
+          <ToolPanel contextStats={currentChat.contextStats} workspace={status?.workspace ?? null} mcpServers={mcpServers} />
         </>
       )}
       {showSettings && (

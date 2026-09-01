@@ -1,4 +1,4 @@
-import type { AgentInfo, AppConfig, FileDiffResponse, FileReadResponse, LLMConfig, LLMProviderMeta, ServerStatus, SessionInfo, ToolDef, TreeResponse } from "./types";
+import type { AgentInfo, AppConfig, FileDiffResponse, FileReadResponse, LLMConfig, LLMProviderMeta, MCPServerConfig, MCPStatus, MCPServerStatus, ServerStatus, SessionInfo, ToolDef, TreeResponse } from "./types";
 
 const TIMEOUT = 15000;
 
@@ -64,6 +64,11 @@ export const api = {
       method: "POST", body: JSON.stringify({ path }),
     }),
   security: () => req<Record<string, unknown>>("/api/security"),
+  mcpStatus: () => req<MCPStatus>("/api/mcp"),
+  updateMcpServers: (servers: Record<string, MCPServerConfig>) =>
+    req<{ ok: boolean; servers: MCPServerStatus[] }>("/api/mcp", {
+      method: "POST", body: JSON.stringify({ servers }),
+    }),
 
   chat: (sessionId: string, prompt: string, agentId?: string) => {
     const body: Record<string, unknown> = { session_id: sessionId, prompt };
