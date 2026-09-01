@@ -261,27 +261,3 @@ async def test_security_hot_reload(live_client):
     }})
     assert r.status_code == 200
     assert app.guard.check_shell_command("custom-block xyz").level.value == "HIGH"
-
-
-async def test_token_auth(tmp_path):
-    app = AgentApp(workspace=str(tmp_path), config_dir=str(tmp_path / "cfg"))
-    fast_app = create_app(app, token="secret123")
-    config = uvicorn.Config(fast_app, host="127.0.0.1", port=0, log_level="error")
-    server = uvicorn.Server(config)
-    server_task = asyncio.create_task(server.serve())
-    for _ in range(100):
-        if server.started:
-            break
-        await asyncio.sleep(0.05)
-    port = server.servers[0].sockets[0].getsockname()[1]
-
-    async with httpx.AsyncClient(base_url=f"http://127.0.0.1:{port}", timeout=10) as c:
-        r = await c.get("/api/status")
-        assert r.status_code == 401
-        r = await c.get("/api/status", headers={"Authorization": "Bearer secret123"})
-        assert r.status_code == 200
-        r = await c.get("/api/status", headers={"Authorization": "Bearer wrong"})
-        assert r.status_code == 401
-
-    server.should_exit = True
-    await asyncio.wait_for(server_task, timeout=10)

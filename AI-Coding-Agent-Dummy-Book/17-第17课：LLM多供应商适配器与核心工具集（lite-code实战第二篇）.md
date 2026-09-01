@@ -249,7 +249,8 @@ CACHE_TTL_SECONDS = 7 * 24 * 3600     # 磁盘缓存 7 天
 
 class ModelMetaService:
     def refresh(self) -> bool:
-        # 拉取 models.dev 全量数据 → 拍平为 model_id → entry 索引 → 落盘缓存
+        # TTL 挡板：磁盘缓存不足 7 天 → 直接加载缓存返回，不发网络请求
+        # 过期/缺失才拉取 models.dev → 拍平为 model_id → entry 索引 → 落盘
         # 网络失败静默返回 False（离线可用）
 
     def get_context_window(self, model_id) -> Optional[int]:
@@ -268,15 +269,19 @@ def get_context_window(self, provider_id, model=None) -> int:
     # ① 手动覆盖 → ② models.dev → ③ 内置表 → ④ 128K 默认
 ```
 
-同步时机放在 FastAPI 的启动生命周期里（第 20 课装配后端时接入），异步执行、失败静默降级：
+同步时机放在 FastAPI 的启动生命周期里（第 20 课装配后端时接入）——**后台异步、绝不阻塞启动**：
 
 ```python
 # server/app.py — FastAPI lifespan
 @asynccontextmanager
 async def _lifespan(_app):
-    await asyncio.to_thread(app.refresh_model_meta)   # 失败静默降级到内置表
+    # 启动零网络等待：刷新丢进后台线程，查询侧走缓存/内置表
+    _refresh_task = asyncio.create_task(asyncio.to_thread(app.refresh_model_meta))
     yield
+    _refresh_task.cancel()   # 应用关闭时回收
 ```
+
+**为什么启动不能等网络**：早期版本在 lifespan 里 `await to_thread(refresh)`——每次启动都同步拉取 models.dev（4.4MB），网络慢时桌面应用启动被拖住十几秒，测试也随机超时。修复确立两条铁律：**① TTL 挡板放在刷新入口**——缓存不足 7 天时 `refresh()` 只是读盘，网络零开销（TTL 只放读路径、刷新路径不检查，等于没有 TTL）；**② 刷新永远在后台**——`create_task` 丢后台就返回，刷新结果落盘后自然生效，用户操作零感知。查询路径（`get_context_window`）则完全不触发网络，永远从缓存/内置表读。
 
 #### 6. 工具注册表与核心工具集
 

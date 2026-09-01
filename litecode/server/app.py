@@ -115,15 +115,22 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
 
     @asynccontextmanager
     async def _lifespan(_fast_app: FastAPI):
-        # models.dev 元数据同步（失败静默降级到内置静态表）
+        # models.dev 元数据同步：启动零网络等待，进入系统后在后台线程刷新。
+        # 缓存未过期（7 天）时后台任务也只是读盘；查询侧永远走缓存/内置表，
+        # 刷新结果落盘后自然生效——任何时刻都不阻塞启动与用户操作。
         import asyncio as _asyncio
 
-        try:
-            await _asyncio.to_thread(app.refresh_model_meta)
-        except Exception:
-            pass
+        def _bg_refresh():
+            try:
+                app.refresh_model_meta()
+            except Exception:
+                pass
+
+        _refresh_task = _asyncio.create_task(_asyncio.to_thread(_bg_refresh))
         await app.mcp_manager.start()
         yield
+        # 应用关闭时回收后台任务（to_thread 的线程无法强杀，仅标记取消）
+        _refresh_task.cancel()
 
     fast_app = FastAPI(title="lite-code", version=VERSION, lifespan=_lifespan)
     auth = TokenAuth(token)

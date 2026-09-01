@@ -48,7 +48,25 @@ class ModelMetaService:
     # ------------------------------------------------------------ 加载/刷新
 
     def refresh(self) -> bool:
-        """拉取 models.dev 全量数据并落盘缓存。失败返回 False（静默降级）。"""
+        """刷新 models.dev 元数据（缓存未过期时纯本地读盘，不发网络请求）。
+
+        TTL 挡板：磁盘缓存存在且 mtime 距今不足 CACHE_TTL_SECONDS → 直接加载
+        缓存并返回，网络零开销；过期或缺失才真正拉取（失败静默降级内置表）。
+        """
+        if self.cache_path and os.path.exists(self.cache_path):
+            try:
+                fresh = time.time() - os.path.getmtime(self.cache_path) <= CACHE_TTL_SECONDS
+            except OSError:
+                fresh = False
+            if fresh:
+                cached = self._load_cache()
+                if cached:
+                    self._index = cached
+                    return True
+        return self._fetch_and_store()
+
+    def _fetch_and_store(self) -> bool:
+        """真正拉取 models.dev 全量数据并落盘缓存。失败返回 False。"""
         try:
             import httpx
 
