@@ -262,7 +262,7 @@ UI 采用以下交互约定：
 │ 思考过程 ▸             │  │ 命中率 87%           │
 │ [⚡ file_tree] 结果…   │  │ 压缩 2 次/节省…      │
 │ [⚡ git_status] 结果…  │  │ 工具调用 6 次        │
-│ [⚡ read_file] 结果…   │  │ 预估成本 ¥0.0123     │
+│ [⚡ read_file] 结果…   │  │ 预估成本 $0.0123     │
 │ ⚡ 分析完成。          │  │ ── 会话累计 ──        │
 │ 以下是完整报告…         │  │ …                   │
 └───────────────────────┘  └─────────────────────┘
@@ -366,7 +366,7 @@ SSE /api/tasks/{id}/events  →  data: {"type":"context:stats", ...}
 前端 ToolPanel 接收 → 更新「上下文情况」面板
 ```
 
-后端侧（第 18 课已实现）每轮推送：模型名、上下文窗口大小、本轮 `prompt_tokens`、累计 `cache_hit_tokens / cache_miss_tokens / cache_hit_rate`、压缩次数、压缩节省 Token、窗口占用比例 `usage_ratio`。`TaskHandle` 在转发前还会把任务内统计累加进会话级累计（`session` 段），因此面板同时展示"本次调用"与"会话累计"两个视角。
+后端侧（第 18 课已实现）每轮推送：模型名、上下文窗口大小、本轮 `prompt_tokens`、累计 `cache_hit_tokens / cache_miss_tokens / cache_hit_rate`、压缩次数、压缩节省 Token、窗口占用比例 `usage_ratio`，以及任务内的**工具调用次数、安全拦截次数、缓存感知的预估成本**（定价来自 models.dev per-model 数据，见第 4 课 §5 与第 17 课）。`TaskHandle` 在转发前还会把任务内统计**按差分口径**合并进会话级累计（`session` 段）——task 段是任务内累计全量、每轮重发，直接累加会重复入账，必须减去上次快照；任务结束时快照清零，下个任务从 0 重新起算。因此面板同时展示"本次调用"与"会话累计"两个视角，两段各有工具调用、安全拦截与预估成本。
 
 前端 `App.tsx` 的 SSE 处理只需加一个 case：
 
@@ -378,7 +378,7 @@ case "context:stats":     // 上下文情况面板（ToolPanel）
 `ToolPanel.tsx` 的「上下文情况」面板渲染（关键指标 + 进度条）：
 
 ```tsx
-// 上下文情况面板（关键部分，位于右侧面板）
+// 上下文情况面板（关键部分，位于右侧面板「上下文」Tab）
 const ratio = stats?.task?.usage_ratio ?? 0;
 const danger = ratio >= 0.9;   // 达到模型窗口 90%，自动压缩已触发
 <div className="ctx-panel">
@@ -393,6 +393,13 @@ const danger = ratio >= 0.9;   // 达到模型窗口 90%，自动压缩已触发
     <b>{stats?.task?.prompt_tokens?.toLocaleString() ?? 0}</b></div>
   <div className="ctx-row"><span>压缩次数 / 节省</span>
     <b>{stats?.task?.compression_count ?? 0} 次 / {(stats?.task?.compressed_tokens ?? 0).toLocaleString()}</b></div>
+  {/* 统计并入了本面板：两段（本次/会话累计）各有以下三行 */}
+  <div className="ctx-row"><span>工具调用</span>
+    <b>{stats?.task?.tool_calls ?? 0} 次</b></div>
+  <div className="ctx-row"><span>安全拦截</span>
+    <b>{stats?.task?.blocked ?? 0} 次</b></div>
+  <div className="ctx-row"><span>预估成本</span>
+    <b>{stats?.task?.cost_estimate != null ? `$${stats.task.cost_estimate.toFixed(4)}` : "—"}</b></div>
 </div>
 ```
 

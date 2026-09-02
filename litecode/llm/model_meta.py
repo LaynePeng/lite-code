@@ -121,3 +121,34 @@ class ModelMetaService:
                 if isinstance(context, int) and context > 0:
                     return context
         return None
+
+    def get_pricing(self, model_id: str, provider_id: str = "") -> Optional[Dict[str, float]]:
+        """按模型查定价（每百万 token 美元）：{input, output, cache_read}。
+
+        models.dev 索引键为 "provider/model"（如 "deepseek/deepseek-v4-flash"），
+        而本地配置的模型名通常是裸名——按 全名 → provider/model → 裸名 三级匹配。
+        无数据（自定义实例/未知模型）返回 None，调用方回退静态配置价。
+        """
+        index = self._load_cache()
+        if not index or not model_id:
+            return None
+        candidates = [model_id]
+        if provider_id and "/" not in model_id:
+            candidates.append(f"{provider_id}/{model_id}")
+        for key in candidates:
+            entry = index.get(key)
+            if not isinstance(entry, dict):
+                continue
+            cost = entry.get("cost")
+            if not isinstance(cost, dict):
+                continue
+            pricing = {}
+            for src, dst in (("input", "input_per_mtok"),
+                             ("output", "output_per_mtok"),
+                             ("cache_read", "cache_hit_per_mtok")):
+                v = cost.get(src)
+                if isinstance(v, (int, float)) and v >= 0:
+                    pricing[dst] = float(v)
+            if "input_per_mtok" in pricing and "output_per_mtok" in pricing:
+                return pricing
+        return None

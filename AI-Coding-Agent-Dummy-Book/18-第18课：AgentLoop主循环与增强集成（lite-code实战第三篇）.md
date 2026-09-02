@@ -460,12 +460,14 @@ class AgentLoop:
         # 空正文（模型误发工具调用）→ 返回 None → 上层回退策略 B 裁剪
 
     async def _emit_context_stats(self, stats: Dict[str, Any]) -> None:
-        """推送「上下文情况」统计：缓存命中率 / 压缩次数 / 窗口占用比例。"""
+        """推送「上下文情况」统计：缓存命中率 / 压缩次数 / 窗口占用比例 / 工具与成本。"""
         hit = stats.get("cache_hit_tokens", 0)
         miss = stats.get("cache_miss_tokens", 0)
         hit_rate = round(hit / (hit + miss), 4) if (hit + miss) > 0 else None
         prompt_tokens = (self._last_usage or {}).get("prompt_tokens") or stats.get("input_tokens", 0)
         usage_ratio = round(prompt_tokens / self.context_window, 4) if self.context_window else None
+        # 成本：缓存感知分段计价（原理见第 4 课 §5，价格来自 models.dev per-model）
+        cost = self._estimate_cost(stats)
         await self.kernel.events.emit("context:stats", {
             "model": getattr(self.adapter, "model", None) or "",
             "context_window": self.context_window,
@@ -479,11 +481,30 @@ class AgentLoop:
                 "compressed_tokens": self._compressed_tokens,
                 "usage_ratio": usage_ratio,
                 "last_prompt_tokens": prompt_tokens,
+                "tool_calls": stats.get("tool_calls", 0),
+                "blocked": stats.get("blocked", 0),
+                "cost_estimate": round(cost, 4),
             },
         })
 ```
 
+**会话累计的差分口径（第 20 课 TaskHandle 消费侧的坑）**：`context:stats` 每轮推送的 task 段是**任务内累计全量**（stats 字典跨轮持续 `+=`），消费方若直接累加进会话累计，多轮任务会把同一笔账重复入账——第 N 轮累计的是 N 倍全量。正确做法是**差分**：`增量 = 本次全量 − 上次快照`，任务结束时清零快照。这类"推送全量、消费方求累计"的管道都要过一遍这个检查。
+
 **空响应自愈（D3）与 max_steps=100**：真实使用中发现，模型（尤其长任务后期）偶尔返回**既无 content 也无 tool_calls 的空响应**——它恰好落入"无工具调用即收敛"的夹缝，任务会安静地"正常结束"，用户只看到工具跑完却没有结论。对策是显式识别 + 有限重试：注入一条 user 消息把模型"摇醒"（上下文里出现失败说明，模型有信息自我纠正），连续 3 次仍为空则以 `FAILED_MAX_TURNS` 终止并写入明确错误。`max_steps` 默认也从 25 提高到 100——25 步对"读目录树 + 逐个读文件 + 逐个修改 + 跑测试"的真实多文件任务远远不够（配置迁移的坑见第 22 课）。这两个值的取值逻辑是同一个思想：**上限是保险丝，不是目标；宁可偶尔熔断，不可中途断电**。
+
+**成本估算的定价解析（装配层）**：第 4 课 §5 推导了分段计价公式，价格的解析在 `create_loop` 装配时完成——按当前 adapter 的模型从 models.dev 取 per-model 三价（`get_model_pricing`，见第 17 课），覆盖 config 静态价；模型切换后下一个任务的 loop 自然拿到新价格：
+
+```python
+# app.py create_loop（核心）
+pricing = dict(self.config.get("pricing") or DEFAULT_CONFIG["pricing"])   # 回退价
+model_pricing = self.llm_registry.get_model_pricing(
+    getattr(adapter, "provider_id", None) or self.llm_registry.active,
+    getattr(adapter, "model", None),
+)
+if model_pricing:
+    pricing.update(model_pricing)   # per-model 真实价优先
+loop = AgentLoop(..., pricing=pricing, ...)
+```
 
 #### 5. 子 Agent 编排 (`litecode/orchestration/sub_agent.py`)
 

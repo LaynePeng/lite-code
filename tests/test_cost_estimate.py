@@ -1,10 +1,19 @@
-"""成本估算定价测试：缓存命中/未命中分段计价（第 4 课 §5 的真实验证）。"""
+"""成本估算定价测试：per-model 定价（models.dev）+ 缓存命中/未命中分段计价。"""
+import json
+
 from litecode.core.agent_loop import AgentLoop
 from litecode.core.kernel import Kernel
+from litecode.llm.model_meta import ModelMetaService
 
 
 def _loop(pricing):
     return AgentLoop(Kernel("cost-test"), adapter=None, registry=None, pricing=pricing)
+
+
+def _meta_service(tmp_path, models):
+    cache = tmp_path / "models.dev.json"
+    cache.write_text(json.dumps(models), encoding="utf-8")
+    return ModelMetaService(str(cache))
 
 
 def test_cost_charges_cache_hit_at_discount():
@@ -37,3 +46,41 @@ def test_zero_pricing_is_zero():
     loop = _loop({"input_per_mtok": 0, "output_per_mtok": 0, "cache_hit_per_mtok": 0})
     stats = {"cache_hit_tokens": 100, "cache_miss_tokens": 100, "output_tokens": 100}
     assert loop._estimate_cost(stats) == 0.0
+
+
+def test_models_dev_pricing_per_model(tmp_path):
+    """定价来自 models.dev 的 per-model 真实数据（三级 ID 匹配）。"""
+    svc = _meta_service(tmp_path, {
+        "deepseek/deepseek-v4-flash": {"limit": {"context": 128000},
+                                        "cost": {"input": 0.14, "output": 0.28, "cache_read": 0.028}},
+        "openai/gpt-4o": {"limit": {"context": 128000},
+                          "cost": {"input": 2.5, "output": 10, "cache_read": 1.25}},
+        "weird/model-no-cost": {"limit": {"context": 32000}},
+    })
+    # 全名匹配
+    assert svc.get_pricing("deepseek/deepseek-v4-flash") == {
+        "input_per_mtok": 0.14, "output_per_mtok": 0.28, "cache_hit_per_mtok": 0.028}
+    # 裸模型名 + provider 拼接匹配
+    assert svc.get_pricing("gpt-4o", provider_id="openai")["input_per_mtok"] == 2.5
+    # 无 cost 数据 / 未知模型 → None（调用方回退静态价）
+    assert svc.get_pricing("weird/model-no-cost") is None
+    assert svc.get_pricing("unknown-model") is None
+    assert svc.get_pricing("") is None
+
+
+def test_per_model_pricing_changes_cost(tmp_path):
+    """同一份 usage，deepseek-flash 与 gpt-4o 的模型价算出不同成本。"""
+    svc = _meta_service(tmp_path, {
+        "deepseek/deepseek-v4-flash": {"cost": {"input": 0.14, "output": 0.28, "cache_read": 0.028}},
+        "openai/gpt-4o": {"cost": {"input": 2.5, "output": 10, "cache_read": 1.25}},
+    })
+    stats = {"cache_hit_tokens": 800_000, "cache_miss_tokens": 200_000, "output_tokens": 50_000}
+    costs = {}
+    for model_id in ("deepseek/deepseek-v4-flash", "openai/gpt-4o"):
+        loop = _loop(svc.get_pricing(model_id))
+        costs[model_id] = loop._estimate_cost(stats)
+    # flash: 0.2*0.14 + 0.8*0.028 + 0.05*0.28 = 0.0644
+    assert abs(costs["deepseek/deepseek-v4-flash"] - 0.0644) < 1e-9
+    # gpt-4o: 0.2*2.5 + 0.8*1.25 + 0.05*10 = 2.0
+    assert abs(costs["openai/gpt-4o"] - 2.0) < 1e-9
+    # 两个模型成本差 31 倍——静态全局价不可能同时对

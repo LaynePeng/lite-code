@@ -132,7 +132,9 @@ def _estimate_cost(self, stats) -> float:
             + stats.get("output_tokens", 0) / 1e6 * output_price)
 ```
 
-两个要点：**① hit/miss 直接来自 usage 的真实拆分**（口径差异见第 17 课——OpenAI 兼容的 `prompt_tokens` 已含命中需做减法，Anthropic 的 `input_tokens` 不含 `cache_read` 天然就是 miss），miss + hit 即真实总输入，直接分段计价即可；**② 无 usage 的估算轮次**（首次调用前的 TokenCounter 兜底）没有命中数据，回退按 input 全价——宁可略高估也不低估。`cache_hit_per_mtok` 可在 config 的 pricing 段覆盖，缺省取 input 的 10%。
+两个要点：**① hit/miss 直接来自 usage 的真实拆分**（口径差异见第 17 课——OpenAI 兼容的 `prompt_tokens` 已含命中需做减法，Anthropic 的 `input_tokens` 不含 `cache_read` 天然就是 miss），miss + hit 即真实总输入，直接分段计价即可；**② 无 usage 的估算轮次**（首次调用前的 TokenCounter 兜底）没有命中数据，回退按 input 全价——宁可略高估也不低估。
+
+**价格本身从哪来**：静态配置一份全局价是错的——不同模型价格差几十倍（DeepSeek flash 输入 $0.14/M vs GPT-4o $2.5/M），且缓存折扣各家不同（Anthropic 0.1x、OpenAI 0.5x、DeepSeek flash 命中 $0.028）。正确做法是**从 models.dev 取 per-model 定价**（它的元数据里每个模型自带 `cost: {input, output, cache_read}`，见第 17 课元数据服务），按当前任务实际使用的模型解析；该模型无数据（自定义实例）时才回退 config 静态价，`cache_hit_per_mtok` 缺省按 input 的 10% 折算。
 
 **重要**：调整 Token 预算策略时，**不能破坏缓存断点**。例如：
 - 裁剪历史消息时，只能裁剪**缓存断点之后**的消息；

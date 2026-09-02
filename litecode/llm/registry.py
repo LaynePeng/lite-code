@@ -284,6 +284,12 @@ class LLMRegistry:
             return default
         return 128_000
 
+    def get_model_pricing(self, provider_id: str = "", model: Optional[str] = None) -> Optional[Dict[str, float]]:
+        """解析模型定价（每 M token）：models.dev per-model 数据，无数据返回 None。"""
+        if self.meta_service is None or not model:
+            return None
+        return self.meta_service.get_pricing(model, provider_id=provider_id or self.active)
+
     def refresh_models_dev(self) -> bool:
         """同步 models.dev 元数据（失败静默降级到内置表）。"""
         if self.meta_service is None:

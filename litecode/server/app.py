@@ -263,10 +263,11 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
         snapshots = app.session_store.list()
         result = []
         for s in snapshots:
-            # 按 workspace 过滤：session 的 metadata.workspace 与当前 workspace 匹配
+            # 严格按 workspace 过滤：会话列表只显示当前项目的会话。
+            # 点击会话不会切换项目（工具/文件树仍停在当前工作区），
+            # 因此无 workspace 绑定的旧会话不显示——显示语义错位的内容比隐藏更糟。
             s_ws = (s.get("metadata") or {}).get("workspace", "")
-            # 旧版本 session 没有 workspace 元数据：保留可见，避免升级后历史消失。
-            if workspace and s_ws and os.path.abspath(s_ws) != os.path.abspath(workspace):
+            if not s_ws or (workspace and os.path.abspath(s_ws) != os.path.abspath(workspace)):
                 continue
             messages = s.get("messages", [])
             if not any(m.get("role") == "user" for m in messages):

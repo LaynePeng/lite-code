@@ -274,6 +274,8 @@ def get_context_window(self, provider_id, model=None) -> int:
     # ① 手动覆盖 → ② models.dev → ③ 内置表 → ④ 128K 默认
 ```
 
+**models.dev 数据不止上下文窗口**：每个模型的条目还带 `cost: {input, output, cache_read}`（每百万 token 美元）。`get_model_pricing` 按当前任务的模型取这三价，交给第 4 课 §5 的分段计价——**成本估算的价格必须 per-model**，静态全局价对任何具体模型都是错的（DeepSeek flash 输入 $0.14/M 与 GPT-4o $2.5/M 差 18 倍，缓存折扣也各家不同）。模型 ID 匹配用三级回退：全名（`deepseek/deepseek-v4-flash`）→ `provider/model` 拼接 → 裸模型名；无数据（自定义实例）返回 None，调用方回退 config 静态价。
+
 同步时机放在 FastAPI 的启动生命周期里（第 20 课装配后端时接入）——**后台异步、绝不阻塞启动**：
 
 ```python
@@ -457,7 +459,7 @@ class AgentApp:
 
 1. 实现了**纯手写 httpx SSE 流式解析器**，支持 OpenAI 兼容接口与 Anthropic 两种协议，并从流式事件中提取真实 usage（`prompt_cache_hit_tokens`），供第 4 课的缓存命中率度量使用；
 2. 设计了**多供应商注册表**，预置供应商并支持任意数量的 `custom_*` OpenAI 兼容实例，提供环境变量兜底、配置热加载、测试连接；
-3. 接入 **models.dev 模型元数据服务**：启动同步 + 7 天磁盘缓存 + 内置表兜底，`get_context_window` 四级解析上下文窗口；
+3. 接入 **models.dev 模型元数据服务**：启动同步 + 7 天磁盘缓存 + 内置表兜底，`get_context_window` 四级解析上下文窗口、`get_model_pricing` 取 per-model 定价（含缓存命中价）；
 4. 编写了**20 个内置工具**，覆盖文件读写、代码搜索、AST 分析、精确编辑、Shell 执行、Git 操作、代码审查、Web 抓取和技能加载；MCP 工具由配置动态增加；
 5. 通过 `AgentApp` 装配层将所有模块组合在一起。
 

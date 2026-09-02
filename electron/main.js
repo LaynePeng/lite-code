@@ -83,7 +83,8 @@ function createWindow(url) {
     },
   });
 
-  // 立即显示窗口 + 内置加载页，避免等待后端就绪时空白
+  // 立即显示窗口 + 内置加载页，避免等待后端就绪时空白；默认最大化打开
+  window.maximize();
   window.once("ready-to-show", () => window.show());
   window.loadURL(url);
   window.webContents.setWindowOpenHandler(({ url: target }) => {

@@ -45,8 +45,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "approval_timeout": 600,
     "context_full_turns": 2,
     "mcp_servers": {},
-    # 缓存命中单价（每 M token）；缺省按 input 的 10% 折算（Anthropic 0.1x 惯例）
-    "pricing": {"input_per_mtok": 1.6, "output_per_mtok": 4.8, "cache_hit_per_mtok": 0.16},
+    # 定价（每 M token，美元）：仅作 models.dev 无该模型数据时的回退；
+    # cache_hit 缺省按 input 的 10% 折算（Anthropic 0.1x 惯例），真实价格优先取 models.dev
+    "pricing": {"input_per_mtok": 1.6, "output_per_mtok": 4.8},
 }
 
 TOOL_NAMES = [
@@ -442,6 +443,15 @@ class AgentApp:
             getattr(adapter, "provider_id", None) or self.llm_registry.active,
             getattr(adapter, "model", None),
         )
+        # 定价：models.dev per-model（input/output/cache_read 每百万 token）
+        # 优先；无该模型数据时回退 config 静态价（pricing 段可配置）
+        pricing = dict(self.config.get("pricing") or DEFAULT_CONFIG["pricing"])
+        model_pricing = self.llm_registry.get_model_pricing(
+            getattr(adapter, "provider_id", None) or self.llm_registry.active,
+            getattr(adapter, "model", None),
+        )
+        if model_pricing:
+            pricing.update(model_pricing)
         loop = AgentLoop(
             kernel=kernel,
             adapter=adapter,
@@ -452,7 +462,7 @@ class AgentApp:
             tool_timeout=float(self.config.get("tool_timeout", 120)),
             llm_timeout=float(self.config.get("llm_timeout", 180)),
             token_budget=token_budget,
-            pricing=self.config.get("pricing", DEFAULT_CONFIG["pricing"]),
+            pricing=pricing,
             auto_approve=bool(self.config.get("auto_approve", False)),
             context_window=context_window,
         )

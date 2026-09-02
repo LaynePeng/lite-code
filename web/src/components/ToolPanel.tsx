@@ -63,7 +63,7 @@ function ContextPanel({ stats }: { stats: ContextStats | null }) {
       <ContextBlock label="累计节省 tokens" value={fmt(task.compressed_tokens)} />
       <ContextBlock label="工具调用" value={`${task.tool_calls ?? 0} 次`} />
       <ContextBlock label="安全拦截" value={`${task.blocked ?? 0} 次`} />
-      <ContextBlock label="预估成本" value={task.cost_estimate != null ? `¥${task.cost_estimate.toFixed(4)}` : "—"} />
+      <ContextBlock label="预估成本" value={task.cost_estimate != null ? `$${task.cost_estimate.toFixed(4)}` : "—"} />
 
       <div className="ctx-section-label">会话累计</div>
       <ContextBlock label="Prompt tokens" value={fmt(session.prompt_tokens)} />
@@ -72,7 +72,7 @@ function ContextPanel({ stats }: { stats: ContextStats | null }) {
       <ContextBlock label="压缩次数 / 节省" value={`${session.compression_count ?? 0} 次 / ${fmt(session.compressed_tokens)}`} />
       <ContextBlock label="工具调用" value={`${session.tool_calls ?? 0} 次`} />
       <ContextBlock label="安全拦截" value={`${session.blocked ?? 0} 次`} />
-      <ContextBlock label="预估成本" value={session.cost_estimate != null ? `¥${session.cost_estimate.toFixed(4)}` : "—"} />
+      <ContextBlock label="预估成本" value={session.cost_estimate != null ? `$${session.cost_estimate.toFixed(4)}` : "—"} />
     </div>
   );
 }

@@ -6,6 +6,8 @@
 import asyncio
 import json
 import os
+import uuid
+from pathlib import Path
 
 import httpx
 import pytest
@@ -74,6 +76,37 @@ async def test_status_and_sessions(live_client):
     assert r.status_code == 200
     r = await c.get("/api/sessions")
     assert all(s["session_id"] != sid for s in r.json())
+
+
+async def test_sessions_list_strictly_scoped_to_workspace(live_client):
+    """会话列表严格绑定项目：无 workspace 绑定（旧版）与其它项目的会话不显示。"""
+    c, app, _ = live_client
+    ws = app.workspace
+
+    # 1. 正常会话（带首条消息，绑定当前 workspace）→ 显示
+    r = await c.post("/api/sessions", json={})
+    bound = r.json()["session_id"]
+    await c.post("/api/chat", json={"session_id": bound, "prompt": "你好"})
+    r = await c.get("/api/sessions", params={"workspace": ws})
+    ids = [s["session_id"] for s in r.json()]
+    assert bound in ids
+
+    # 2. 其它项目的会话 → 不显示
+    other_ws = str(Path(ws).parent / "other-project")
+    r = await c.post("/api/sessions", json={"workspace": other_ws})
+    other = r.json()["session_id"]
+    await c.post("/api/chat", json={"session_id": other, "prompt": "别处的会话"})
+    r = await c.get("/api/sessions", params={"workspace": ws})
+    ids = [s["session_id"] for s in r.json()]
+    assert other not in ids
+
+    # 3. 旧版无 workspace 元数据的会话 → 不显示（点击无法切到对应项目，显示会造成语义错位）
+    from litecode.core.types import Message
+    legacy = f"session_legacy_{uuid.uuid4().hex[:8]}"
+    app.session_store.save(legacy, [Message(role="user", content="旧版会话")], {})
+    r = await c.get("/api/sessions", params={"workspace": ws})
+    ids = [s["session_id"] for s in r.json()]
+    assert legacy not in ids
 
 
 async def test_rapid_session_creation_does_not_overwrite(live_client):
