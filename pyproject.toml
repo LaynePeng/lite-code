@@ -22,6 +22,7 @@ dependencies = [
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
+    "pytest-timeout>=2.3",
 ]
 package = [
     "pyinstaller>=6.10",
@@ -40,3 +41,6 @@ version = {attr = "litecode.__version__"}
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# 每个测试默认 60s 超时（thread 法可强制中断），防止个别测试挂住拖死整轮测试；
+# pytest-timeout 属于开发依赖，未安装时该参数会导致 pytest 报错，按需 pip install pytest-timeout
+addopts = "--timeout=60 --timeout-method=thread"

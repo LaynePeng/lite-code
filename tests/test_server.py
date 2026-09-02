@@ -25,11 +25,19 @@ async def live_client(tmp_path):
         ("", [tool_call("write_file", '{"filePath":"x.txt","content":"hello"}', cid="c1")]),
         ("完成", []),
     ])
+    # 每个测试的 config_dir 都是独立 tmp_path，models.dev 缓存永远不命中，
+    # lifespan 后台线程会真实发起网络请求（最长 10s）；关闭事件循环时
+    # shutdown_default_executor() 要等这个线程结束，单个测试 teardown 被拖到 5s+。
+    # 测试不依赖在线元数据，直接短路掉。
+    app.refresh_model_meta = lambda: False
     fast_app = create_app(app, token=None)
-    config = uvicorn.Config(fast_app, host="127.0.0.1", port=0, log_level="error")
+    config = uvicorn.Config(
+        fast_app, host="127.0.0.1", port=0, log_level="error",
+        timeout_graceful_shutdown=2,
+    )
     server = uvicorn.Server(config)
     server_task = asyncio.create_task(server.serve())
-    # lifespan 内含 models.dev 网络同步（失败静默降级），启动可能被拖慢到 ~10s
+    # models.dev 同步已在上面短路，lifespan 启动只含 mcp_manager.start()，应当秒起
     for _ in range(400):
         if server.started:
             break

@@ -173,6 +173,7 @@ export type SSEEvent =
   | { type: "message:added"; data: { message: Msg } }
   | { type: "llm:stream"; data: { chunk: string } }
   | { type: "llm:turn_start"; data: { turn: number } }
+  | { type: "llm:retry"; data: { attempt: number; max_retries: number; reason: string; wait: number } }
   | { type: "tool:before_execute"; data: { toolName: string; args: unknown; callId?: string } }
   | { type: "tool:after_execute"; data: { toolName: string; durationMs: number; status: string; result?: string; callId?: string } }
   | { type: "approval:request"; data: { id: string; action: string; reason: string } }

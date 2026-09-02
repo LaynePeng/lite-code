@@ -524,6 +524,10 @@ export default function App() {
           patchChat(sid, { streaming: { ...streamingRefs.current.get(sid)! } });
           break;
         }
+        case "llm:retry": {
+          log(`⏳ LLM 调用失败（${ev.data.reason}），${ev.data.wait}s 后第 ${ev.data.attempt}/${ev.data.max_retries} 次重试`);
+          break;
+        }
         case "tool:before_execute": {
           const card: ToolCardInfo = {
             id: ev.data.callId ?? `t${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -1064,7 +1068,6 @@ export default function App() {
               onApprove={(id, a) => void approve(id, a)}
             />
             <Composer
-              disabled={currentChat.running}
               running={currentChat.running}
               agents={agents}
               currentAgent={currentAgent}

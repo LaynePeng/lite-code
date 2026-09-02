@@ -55,7 +55,19 @@ def merge_headers(defaults: Dict[str, str], custom: Optional[Any]) -> Dict[str, 
 
 
 class LLMError(Exception):
-    pass
+    """LLM 调用异常。
+
+    retryable=True 表示瞬时故障（超时 / 网络中断 / 限流 / 服务端 5xx），
+    AgentLoop 会对这类错误自动退避重试，而不是直接终止任务。
+    """
+
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+
+
+# 瞬时性 HTTP 状态码：请求本身没问题，稍后重发可能成功
+RETRYABLE_STATUS = frozenset({408, 409, 429, 500, 502, 503, 504})
 
 
 class BaseLLMAdapter:

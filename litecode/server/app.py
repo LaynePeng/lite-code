@@ -199,7 +199,7 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
             k: app.config.get(k) for k in (
                 "max_steps", "token_budget", "tool_timeout",
                 "auto_approve", "pricing", "context_full_turns", "llm_timeout",
-                "skill_permissions",
+                "llm_retries", "skill_permissions",
             )
         }
 

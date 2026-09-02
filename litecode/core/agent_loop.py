@@ -53,6 +53,7 @@ class AgentLoop:
         max_steps: int = 100,
         tool_timeout: float = 120.0,
         llm_timeout: float = 180.0,
+        llm_retries: int = 2,
         token_budget: int = 48000,
         pricing: Optional[Dict[str, float]] = None,
         auto_approve: bool = False,
@@ -66,6 +67,8 @@ class AgentLoop:
         self.max_steps = max_steps
         self.tool_timeout = tool_timeout
         self.llm_timeout = llm_timeout
+        # LLM 瞬时故障（超时/网络/限流/5xx）的自动重试次数
+        self.llm_retries = max(0, int(llm_retries))
         self.auto_approve = auto_approve
         self.pricing = pricing or {"input_per_mtok": 2.0, "output_per_mtok": 8.0}
         self.context_window = context_window or 128_000
@@ -186,21 +189,44 @@ class AgentLoop:
                 if not self._last_usage:
                     stats["input_tokens"] += TokenCounter.count_messages_tokens(processed)
 
-                # D. 调用 LLM（流式，内部 emit llm:stream）
-                try:
-                    content, tool_calls, usage = await asyncio.wait_for(
-                        self.adapter.chat_stream(processed, tools, self.kernel.events),
-                        timeout=self.llm_timeout,
+                # D. 调用 LLM（流式，内部 emit llm:stream）。
+                #    瞬时故障（单次超时 / 网络抖动 / 限流 / 5xx）自动指数退避重试，
+                #    避免长思考模型或网络波动直接杀死整个任务；重试过程 emit
+                #    "llm:retry" 事件供 UI 展示。不可重试错误（鉴权/参数等）立即失败。
+                attempt = 0
+                while True:
+                    try:
+                        content, tool_calls, usage = await asyncio.wait_for(
+                            self.adapter.chat_stream(processed, tools, self.kernel.events),
+                            timeout=self.llm_timeout,
+                        )
+                        break
+                    except asyncio.TimeoutError:
+                        last_err: BaseException = TimeoutError(
+                            f"LLM 请求超过 {self.llm_timeout}s（模型可能正在长时间思考或网络拥堵）"
+                        )
+                        retryable = True
+                    except Exception as exc:
+                        last_err = exc
+                        # LLMError 携带 retryable 标记（超时/网络/限流/5xx 为 True）
+                        retryable = bool(getattr(exc, "retryable", False))
+                    if not retryable or attempt >= self.llm_retries:
+                        logger.warning("[AgentLoop] LLM 调用失败: %s", last_err)
+                        messages.append(Message(role="assistant", content=f"[LLM Error]: {last_err}"))
+                        return await self._finish(f"[LLM Error]: {last_err}", messages, stats, store_snapshot)
+                    attempt += 1
+                    wait_s = min(2 ** attempt, 8)
+                    logger.warning(
+                        "[AgentLoop] LLM 调用失败（%s），%ds 后进行第 %d/%d 次重试",
+                        last_err, wait_s, attempt, self.llm_retries,
                     )
-                except asyncio.TimeoutError:
-                    exc = TimeoutError(f"LLM 请求超过 {self.llm_timeout}s，任务已自动终止")
-                    logger.warning("[AgentLoop] %s", exc)
-                    messages.append(Message(role="assistant", content=f"[LLM Error]: {exc}"))
-                    return await self._finish(f"[LLM Error]: {exc}", messages, stats, store_snapshot)
-                except Exception as exc:
-                    logger.exception("[AgentLoop] LLM 调用失败")
-                    messages.append(Message(role="assistant", content=f"[LLM Error]: {exc}"))
-                    return await self._finish(f"[LLM Error]: {exc}", messages, stats, store_snapshot)
+                    await self.kernel.events.emit("llm:retry", {
+                        "attempt": attempt,
+                        "max_retries": self.llm_retries,
+                        "reason": str(last_err)[:200],
+                        "wait": wait_s,
+                    })
+                    await asyncio.sleep(wait_s)
 
                 # D2. 用模型返回的 usage 累加（准确值），无 usage 时回退估算
                 self._last_usage = usage or self._last_usage

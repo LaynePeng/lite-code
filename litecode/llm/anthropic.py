@@ -15,7 +15,14 @@ import httpx
 
 from ..core.events import TypedEventBus
 from ..core.types import Message, ToolCall, ToolDefinition
-from .base import BaseLLMAdapter, LLMError, clean_custom_headers, decode_utf8_incremental, merge_headers
+from .base import (
+    RETRYABLE_STATUS,
+    BaseLLMAdapter,
+    LLMError,
+    clean_custom_headers,
+    decode_utf8_incremental,
+    merge_headers,
+)
 
 logger = logging.getLogger("litecode.llm")
 
@@ -50,7 +57,11 @@ class AnthropicAdapter(BaseLLMAdapter):
 
     def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=httpx.Timeout(self.timeout))
+            # read=None：流式响应中"块间静默"属正常现象（扩展思考可能长时间无输出），
+            # 不能用固定 read timeout 掐断；卡死连接由 AgentLoop 的 llm_timeout + 重试兜底。
+            self._client = httpx.AsyncClient(
+                timeout=httpx.Timeout(self.timeout, read=None)
+            )
         return self._client
 
     async def close(self) -> None:
@@ -160,12 +171,15 @@ class AnthropicAdapter(BaseLLMAdapter):
             ) as response:
                 if response.status_code != 200:
                     body = (await response.aread()).decode("utf-8", errors="replace")[:500]
-                    raise LLMError(f"[Anthropic Error] HTTP {response.status_code}: {body}")
+                    raise LLMError(
+                        f"[Anthropic Error] HTTP {response.status_code}: {body}",
+                        retryable=response.status_code in RETRYABLE_STATUS,
+                    )
                 return await self._parse_sse(response, events)
         except httpx.TimeoutException as exc:
-            raise LLMError(f"[Anthropic Error] 请求超时: {exc}") from exc
+            raise LLMError(f"[Anthropic Error] 请求超时: {exc}", retryable=True) from exc
         except httpx.HTTPError as exc:
-            raise LLMError(f"[Anthropic Error] 网络错误: {exc}") from exc
+            raise LLMError(f"[Anthropic Error] 网络错误: {exc}", retryable=True) from exc
 
     @staticmethod
     def _start_usage(parsed: Dict[str, Any]) -> Optional[Dict[str, int]]:
@@ -276,6 +290,7 @@ class AnthropicAdapter(BaseLLMAdapter):
                 f"{self.base_url}/messages",
                 headers=self._headers(),
                 json=payload,
+                timeout=30.0,
             ) as resp:
                 elapsed = (time.time() - start) * 1000
                 if resp.status_code in (200, 201):

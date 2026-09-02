@@ -3,7 +3,7 @@ import { api } from "../api";
 import type { AgentInfo, CommandInfo, LLMConfig, LLMProviderMeta, SessionModel, SkillInfo } from "../types";
 
 export default function Composer({
-  disabled,
+  disabled = false,
   running,
   agents,
   currentAgent,
@@ -15,7 +15,7 @@ export default function Composer({
   sessionModel,
   onSessionModelChange,
 }: {
-  disabled: boolean;
+  disabled?: boolean;
   running: boolean;
   agents: AgentInfo[];
   currentAgent: string;
