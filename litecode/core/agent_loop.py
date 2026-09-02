@@ -403,16 +403,35 @@ class AgentLoop:
             except Exception:
                 logger.exception("[AgentLoop] 会话落盘失败")
 
+    def _estimate_cost(self, stats: Dict[str, Any]) -> float:
+        """缓存感知的成本估算。
+
+        输入按命中/未命中分开计价：未命中按 input_per_mtok 全价，命中按
+        cache_hit_per_mtok（默认 input 的 10%，对齐 Anthropic 0.1x /
+        DeepSeek 折扣的行业惯例）。stats 里的 hit/miss 已在 D2 阶段按
+        供应商口径拆好（OpenAI 兼容: prompt 已含命中，miss = prompt-hit；
+        Anthropic: input 不含 cache_read，miss 即全量非命中输入），因此
+        miss + hit 就是真实总输入。仅当估算兜底（无 usage）时 hit/miss
+        均为 0，回退按 input_tokens 全价。
+        """
+        hit = int(stats.get("cache_hit_tokens", 0) or 0)
+        miss = int(stats.get("cache_miss_tokens", 0) or 0)
+        if hit + miss <= 0:
+            miss = int(stats.get("input_tokens", 0) or 0)
+        output_t = int(stats.get("output_tokens", 0) or 0)
+        input_price = float(self.pricing.get("input_per_mtok", 0) or 0)
+        cache_price = float(self.pricing.get("cache_hit_per_mtok")
+                            if self.pricing.get("cache_hit_per_mtok") is not None
+                            else input_price * 0.1)
+        output_price = float(self.pricing.get("output_per_mtok", 0) or 0)
+        return (miss / 1_000_000 * input_price
+                + hit / 1_000_000 * cache_price
+                + output_t / 1_000_000 * output_price)
+
     def _stats_payload(self, stats: Dict[str, Any]) -> Dict[str, Any]:
-        input_t = stats["input_tokens"]
-        output_t = stats["output_tokens"]
-        cost = (
-            input_t / 1_000_000 * self.pricing.get("input_per_mtok", 0)
-            + output_t / 1_000_000 * self.pricing.get("output_per_mtok", 0)
-        )
         return {
             **stats,
-            "cost_estimate": round(cost, 4),
+            "cost_estimate": round(self._estimate_cost(stats), 4),
             "status": self.state.status.value,
         }
 
@@ -437,11 +456,8 @@ class AgentLoop:
         prompt_tokens = last_usage.get("prompt_tokens") or stats.get("input_tokens", 0)
         usage_ratio = round(prompt_tokens / self.context_window, 4) if self.context_window else None
         model = getattr(self.adapter, "model", None) or ""
-        # 成本按本次任务输入/输出估算（缓存命中部分的折扣不在此处展开，展示口径即可）
-        cost = (
-            stats.get("input_tokens", 0) / 1_000_000 * self.pricing.get("input_per_mtok", 0)
-            + stats.get("output_tokens", 0) / 1_000_000 * self.pricing.get("output_per_mtok", 0)
-        )
+        # 成本：缓存感知（命中按折扣价，见 _estimate_cost），随任务内累计实时更新
+        cost = self._estimate_cost(stats)
         await self.kernel.events.emit("context:stats", {
             "model": model,
             "context_window": self.context_window,

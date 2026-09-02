@@ -191,10 +191,10 @@ export default function Sidebar({
         </button>
       </div>
 
-      <div className="sidebar-body">
+      {/* 终端 Tab 时 body 隐藏，让 .sidebar-terminal 独占 tabs 与 footer 之间的空间 */}
+      <div className={`sidebar-body ${tab === "terminal" ? "hidden" : ""}`}>
         {tab === "sessions" && (
-          <div className="sessions-list">
-            <button className="btn-new-session" onClick={onNewSession}>
+          <div className="sessions-list">            <button className="btn-new-session" onClick={onNewSession}>
               ＋ 新建会话
             </button>
             <button className="btn-open-session" onClick={onOpenProject} title="选择其他项目目录，切换工作区">
@@ -231,13 +231,13 @@ export default function Sidebar({
         )}
 
         {tab === "files" && <FileTree workspace={workspace} revision={treeRevision} onFileOpen={onFileOpen} />}
-
-        {tab === "terminal" && (
-          <div className="sidebar-terminal">
-            <TerminalPanel workspace={workspace} />
-          </div>
-        )}
       </div>
+
+      {tab === "terminal" && (
+        <div className="sidebar-terminal">
+          <TerminalPanel workspace={workspace} />
+        </div>
+      )}
 
       <div className="sidebar-footer">
         <button className="btn-open-settings" onClick={onOpenSettings}>

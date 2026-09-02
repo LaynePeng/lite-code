@@ -275,7 +275,7 @@ body.resizing-row * { cursor: row-resize !important; user-select: none !importan
 /* ============================== 侧边栏 ============================== */
 
 .sidebar {
-  width: var(--sidebar-w, 264px);
+  width: var(--sidebar-w, 280px);
   flex-shrink: 0;
   background: var(--bg-1);
   border-right: 1px solid var(--border);
@@ -342,6 +342,11 @@ body.resizing-row * { cursor: row-resize !important; user-select: none !importan
   flex: 1;
   overflow-y: auto;
   padding: 12px 10px;
+}
+
+/* 终端 Tab：body 退出布局，终端容器独占剩余高度 */
+.sidebar-body.hidden {
+  display: none;
 }
 
 .btn-new-session {
@@ -624,13 +629,15 @@ body.resizing-row * { cursor: row-resize !important; user-select: none !importan
   gap: 6px;
 }
 
-/* 侧边栏「终端」Tab 容器：占满剩余高度 */
+/* 侧边栏终端 Tab 容器：直接挂在 .sidebar flex 列下，
+   占满 tabs 与 footer 之间的全部高度（去掉 body 的 padding 与滚动） */
 .sidebar-terminal {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   background: #0d1117;
+  overflow: hidden;
 }
 
 /* 右面板「工具」Tab */
@@ -2721,6 +2728,12 @@ body.resizing-row * { cursor: row-resize !important; user-select: none !importan
 .terminal-wrap { position: relative; padding: 6px; box-sizing: border-box; }
 .terminal-error { position: absolute; z-index: 2; left: 8px; right: 8px; top: 8px; color: #f87171; background: #2b1115; padding: 6px; }
 .terminal-empty { color: var(--text-muted); padding: 16px; font-size: 12px; }
+/* 侧边栏终端 Tab：空态提示占满整个容器高度（桌面形态由 terminal-host 撑满） */
+.sidebar-terminal > .terminal-empty,
+.sidebar-terminal > .terminal-wrap {
+  flex: 1;
+  min-height: 0;
+}
 .terminal-host .xterm { height: 100%; }
 
 .tool-panel-empty {

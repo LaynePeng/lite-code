@@ -45,7 +45,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "approval_timeout": 600,
     "context_full_turns": 2,
     "mcp_servers": {},
-    "pricing": {"input_per_mtok": 1.6, "output_per_mtok": 4.8},
+    # 缓存命中单价（每 M token）；缺省按 input 的 10% 折算（Anthropic 0.1x 惯例）
+    "pricing": {"input_per_mtok": 1.6, "output_per_mtok": 4.8, "cache_hit_per_mtok": 0.16},
 }
 
 TOOL_NAMES = [

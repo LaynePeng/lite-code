@@ -115,21 +115,24 @@ def _build_payload(self, messages, tools, system, enable_cache=True):
 
 #### 5. 缓存感知的 Token 预算管理
 
-缓存命中后，**实际扣费远少于按 Token 数估算的费用**。我们需要在 Token 预算计算中考虑到这一点：
+缓存命中后，**实际扣费远少于按 Token 数估算的费用**——多数供应商对命中部分只收约 10% 输入价（Anthropic 0.1x、DeepSeek 折扣更深）。成本估算必须按命中/未命中**分段计价**，否则高命中率会话的成本会被高估数倍：
 
 ```python
-# core/token_counter.py
-class TokenCounter:
-    @staticmethod
-    def estimate_cost(input_tokens: int, output_tokens: int,
-                      pricing: dict, cache_hit: bool = False) -> float:
-        input_cost = input_tokens / 1_000_000 * pricing.get("input_per_mtok", 0)
-        if cache_hit:
-            # 缓存命中只收 10% 输入费用
-            input_cost *= 0.1
-        output_cost = output_tokens / 1_000_000 * pricing.get("output_per_mtok", 0)
-        return round(input_cost + output_cost, 4)
+# core/agent_loop.py — _estimate_cost（缓存感知定价）
+def _estimate_cost(self, stats) -> float:
+    hit = stats.get("cache_hit_tokens", 0)      # 命中部分（D2 已按供应商口径拆好）
+    miss = stats.get("cache_miss_tokens", 0)    # 未命中部分
+    if hit + miss <= 0:
+        miss = stats.get("input_tokens", 0)     # 估算兜底（无 usage）按全价
+    input_price = self.pricing.get("input_per_mtok", 0)
+    cache_price = self.pricing.get("cache_hit_per_mtok", input_price * 0.1)
+    output_price = self.pricing.get("output_per_mtok", 0)
+    return (miss / 1e6 * input_price           # 未命中：全价
+            + hit / 1e6 * cache_price          # 命中：约 10% 折扣价
+            + stats.get("output_tokens", 0) / 1e6 * output_price)
 ```
+
+两个要点：**① hit/miss 直接来自 usage 的真实拆分**（口径差异见第 17 课——OpenAI 兼容的 `prompt_tokens` 已含命中需做减法，Anthropic 的 `input_tokens` 不含 `cache_read` 天然就是 miss），miss + hit 即真实总输入，直接分段计价即可；**② 无 usage 的估算轮次**（首次调用前的 TokenCounter 兜底）没有命中数据，回退按 input 全价——宁可略高估也不低估。`cache_hit_per_mtok` 可在 config 的 pricing 段覆盖，缺省取 input 的 10%。
 
 **重要**：调整 Token 预算策略时，**不能破坏缓存断点**。例如：
 - 裁剪历史消息时，只能裁剪**缓存断点之后**的消息；

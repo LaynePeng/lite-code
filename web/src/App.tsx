@@ -59,7 +59,17 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<"sessions" | "files" | "terminal">("sessions");
+  const [sidebarTab, setSidebarTab] = useState<"sessions" | "files" | "terminal">(() => {
+    try {
+      const saved = localStorage.getItem("litecode.sidebarTab");
+      if (saved === "files" || saved === "terminal" || saved === "sessions") return saved;
+    } catch { /* ignore */ }
+    return "sessions";
+  });
+  const changeSidebarTab = useCallback((t: "sessions" | "files" | "terminal") => {
+    setSidebarTab(t);
+    try { localStorage.setItem("litecode.sidebarTab", t); } catch { /* ignore */ }
+  }, []);
   const [loading, setLoading] = useState(true);
   const [showDebug, setShowDebug] = useState(false);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
@@ -73,9 +83,9 @@ export default function App() {
 
   // 布局边界拖拽：侧边栏 / 右侧工具面板宽度（双击分隔条重置，localStorage 持久化）
   const sidebarResize = useResizable({
-    axis: "col", initial: 264, min: 200,
+    axis: "col", initial: 280, min: 200,
     max: () => Math.min(520, Math.floor(window.innerWidth * 0.45)),
-    storageKey: "litecode.sidebarWidth",
+    storageKey: "litecode.sidebarWidth.v2",
   });
   const toolPanelResize = useResizable({
     axis: "col", initial: 280, min: 220,
@@ -362,7 +372,11 @@ export default function App() {
         if (!result.ok && result.error !== "cancelled") {
           patchActiveChat({ error: result.error ?? "无法切换项目" });
         }
-        if (result.ok) window.location.reload();
+        if (result.ok) {
+          // 重载后默认落在「文件」Tab，直接看到新项目目录树
+          try { localStorage.setItem("litecode.sidebarTab", "files"); } catch { /* ignore */ }
+          window.location.reload();
+        }
       } catch (e) {
         patchActiveChat({ error: (e as Error).message });
       }
@@ -398,7 +412,7 @@ export default function App() {
         const res = await api.setWorkspace(path);
         if (res.ok) {
           setStatus((prev) => (prev ? { ...prev, workspace: res.workspace } : prev));
-          setSidebarTab("files");
+          changeSidebarTab("files");
           setSuccess(`已切换到项目: ${res.workspace}`);
           pushLog(`📂 已切换到项目: ${res.workspace}`);
           setTimeout(() => setSuccess(null), 4000);
@@ -414,7 +428,7 @@ export default function App() {
         setErrorPublic((e as Error).message);
       }
     },
-    [pushLog, refreshSessions, closeStream, newChatTab, patchActiveChat]
+    [pushLog, refreshSessions, closeStream, newChatTab, patchActiveChat, changeSidebarTab]
   );
 
   // 首次启动：打开一个占位会话 tab
@@ -775,7 +789,7 @@ export default function App() {
         tab={sidebarTab}
         treeRevision={treeRevision}
         version={status?.version ?? "?"}
-        onTabChange={setSidebarTab}
+        onTabChange={changeSidebarTab}
         onSelectSession={(id) => void selectSession(id)}
         onNewSession={requestNewChat}
         onDeleteSession={(id) => void deleteSession(id)}
