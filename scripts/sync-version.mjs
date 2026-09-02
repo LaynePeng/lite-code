@@ -18,13 +18,19 @@ function readVersion() {
   return m[1];
 }
 
-function updateJsonTopLevelVersion(file, version) {
+function updateJsonVersion(file, version) {
   const full = path.join(root, file);
   if (!fs.existsSync(full)) return false;
   const raw = fs.readFileSync(full, "utf-8");
   const data = JSON.parse(raw);
-  if (data.version === version) return false;
+  let changed = data.version !== version;
   data.version = version;
+  // npm lockfile v3 会在 packages[""] 中重复记录项目自身版本。
+  if (data.packages?.[""] && data.packages[""].version !== version) {
+    data.packages[""].version = version;
+    changed = true;
+  }
+  if (!changed) return false;
   fs.writeFileSync(full, JSON.stringify(data, null, 2) + "\n");
   return true;
 }
@@ -33,7 +39,7 @@ const version = readVersion();
 const targets = ["package.json", "web/package.json", "package-lock.json", "web/package-lock.json"];
 let changed = 0;
 for (const t of targets) {
-  if (updateJsonTopLevelVersion(t, version)) {
+  if (updateJsonVersion(t, version)) {
     console.log(`[sync-version] ${t}: -> ${version}`);
     changed += 1;
   }

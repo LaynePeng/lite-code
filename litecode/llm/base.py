@@ -37,6 +37,23 @@ def clean_custom_headers(raw: Optional[Any]) -> Dict[str, str]:
     return cleaned
 
 
+def merge_headers(defaults: Dict[str, str], custom: Optional[Any]) -> Dict[str, str]:
+    """按 HTTP 规范以大小写不敏感方式合并请求头。
+
+    自定义头覆盖同名默认头，同时避免 ``Authorization`` 与
+    ``authorization`` 这样的逻辑重复键进入请求。
+    """
+    merged: Dict[str, str] = dict(defaults)
+    key_index = {key.lower(): key for key in merged}
+    for key, value in clean_custom_headers(custom).items():
+        old_key = key_index.get(key.lower())
+        if old_key is not None:
+            del merged[old_key]
+        merged[key] = value
+        key_index[key.lower()] = key
+    return merged
+
+
 class LLMError(Exception):
     pass
 

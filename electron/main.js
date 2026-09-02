@@ -16,7 +16,38 @@ const os = require("os");
 const path = require("path");
 
 const CLIENT_CONFIG = path.join(os.homedir(), ".lite-code", "client.json");
+const LOG_DIR = path.join(os.homedir(), ".lite-code", "logs");
+const ELECTRON_LOG_FILE = path.join(LOG_DIR, "electron.log");
+const LOG_MAX_BYTES = 5 * 1024 * 1024;
+const LOG_BACKUP_COUNT = 3;
 
+function rotateLogFile() {
+  try {
+    if (!fs.existsSync(ELECTRON_LOG_FILE) || fs.statSync(ELECTRON_LOG_FILE).size < LOG_MAX_BYTES) return;
+    for (let index = LOG_BACKUP_COUNT - 1; index >= 1; index -= 1) {
+      const source = `${ELECTRON_LOG_FILE}.${index}`;
+      const target = `${ELECTRON_LOG_FILE}.${index + 1}`;
+      if (fs.existsSync(source)) fs.renameSync(source, target);
+    }
+    fs.renameSync(ELECTRON_LOG_FILE, `${ELECTRON_LOG_FILE}.1`);
+  } catch {
+    // 日志写入失败不应影响桌面应用启动。
+  }
+}
+
+function writeLog(level, ...messages) {
+  const text = messages.map((message) => (
+    message instanceof Error ? message.stack || message.message : String(message)
+  )).join(" ");
+  console[level](`[lite-code] ${text}`);
+  try {
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+    rotateLogFile();
+    fs.appendFileSync(ELECTRON_LOG_FILE, `${new Date().toISOString()} ${level.toUpperCase()} ${text}\n`, "utf-8");
+  } catch {
+    // 同上：磁盘或权限异常时仅保留控制台输出。
+  }
+}
 let coreMode = "local"; // "local" | "remote" | "dev"
 const localInstances = new Map(); // webContents.id -> { window, child, url, workspace }
 const terminals = new Map(); // webContents.id -> pty process
@@ -27,7 +58,7 @@ function loadClientConfig() {
       return JSON.parse(fs.readFileSync(CLIENT_CONFIG, "utf-8"));
     }
   } catch (err) {
-    console.warn("[lite-code] 客户端配置读取失败:", err.message);
+    writeLog("warn", "客户端配置读取失败:", err.message);
   }
   return { coreUrl: "", token: "" };
 }
@@ -61,11 +92,11 @@ function createWindow(url) {
   });
   // preload 注入失败时输出错误，便于排查
   window.webContents.on("preload-error", (event, preloadPath, error) => {
-    console.error(`[lite-code] preload 加载失败: ${preloadPath}`, error.message);
+    writeLog("error", `preload 加载失败: ${preloadPath}`, error.message);
   });
   // 渲染进程崩溃 / 白屏自动恢复
   window.webContents.on("render-process-gone", (event, details) => {
-    console.error("[lite-code] 渲染进程异常:", details.reason);
+    writeLog("error", "渲染进程异常:", details.reason);
     setTimeout(() => {
       if (!window.isDestroyed()) {
         window.reload();
@@ -76,7 +107,7 @@ function createWindow(url) {
   let failCount = 0;
   window.webContents.on("did-fail-load", (event, code, desc) => {
     failCount += 1;
-    console.warn(`[lite-code] 页面加载失败(${code}): ${desc}`);
+    writeLog("warn", `页面加载失败(${code}): ${desc}`);
     if (failCount <= 3) {
       setTimeout(() => {
         if (!window.isDestroyed()) window.reload();
@@ -150,7 +181,7 @@ function spawnLocalCore(workspace) {
       LITECODE_SPAWNED: "1",
     };
 
-    console.log(`[lite-code] 启动本地 Core: ${python} ${args.join(" ")}`);
+    writeLog("log", `启动本地 Core: ${python} ${args.join(" ")}`);
     const child = spawn(python, args, {
       cwd: projectRoot,
       env,
@@ -168,6 +199,9 @@ function spawnLocalCore(workspace) {
     const onData = (buf) => {
       const text = buf.toString();
       process.stdout.write(text);
+      for (const line of text.split(/\r?\n/)) {
+        if (line) writeLog("log", `Core: ${line}`);
+      }
       const m = text.match(/LITECODE_CORE_READY port=(\d+)/);
       if (m && !resolved) {
         resolved = true;
@@ -218,10 +252,10 @@ async function hotSwitchWorkspace(instance, workspace) {
     if (instance.window && !instance.window.isDestroyed()) {
       stopTerminal(instance.window.webContents.id);
     }
-    console.log(`[lite-code] 热切换工作区 → ${workspace}`);
+    writeLog("log", `热切换工作区 → ${workspace}`);
     return { ok: true };
   } catch (err) {
-    console.warn("[lite-code] 热切换工作区失败:", err.message);
+    writeLog("warn", "热切换工作区失败:", err.message);
     return { ok: false, error: err.message };
   }
 }
@@ -375,7 +409,7 @@ app.whenReady().then(async () => {
   if (config.coreUrl) {
     coreMode = "remote";
     injectRemoteToken(config.token);
-    console.log(`[lite-code] 连接远程 Core: ${config.coreUrl}`);
+    writeLog("log", `连接远程 Core: ${config.coreUrl}`);
     createWindow(config.coreUrl);
     app.on("window-all-closed", () => app.quit());
     return;

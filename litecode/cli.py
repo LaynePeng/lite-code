@@ -15,6 +15,7 @@ import logging
 import os
 import sys
 import time
+from logging.handlers import RotatingFileHandler
 
 import uvicorn
 
@@ -23,6 +24,9 @@ from .app import AgentApp
 from .server.app import create_app
 
 VERSION = __version__
+LOG_FILE_NAME = "lite-code.log"
+LOG_MAX_BYTES = 5 * 1024 * 1024
+LOG_BACKUP_COUNT = 3
 
 
 def _parse_args(argv: list) -> argparse.Namespace:
@@ -48,6 +52,38 @@ def _parse_args(argv: list) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _configure_logging(log_level: str, config_dir: str | None) -> str:
+    """同时输出到终端与用户配置目录下的滚动日志文件。"""
+    log_dir = os.path.join(
+        os.path.abspath(os.path.expanduser(config_dir or "~/.lite-code")), "logs"
+    )
+    log_path = os.path.join(log_dir, LOG_FILE_NAME)
+    formatter = logging.Formatter(
+        "%(asctime)s %(levelname)-7s %(name)s: %(message)s", datefmt="%H:%M:%S"
+    )
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+        handlers.append(
+            RotatingFileHandler(
+                log_path,
+                encoding="utf-8",
+                maxBytes=LOG_MAX_BYTES,
+                backupCount=LOG_BACKUP_COUNT,
+            )
+        )
+    except OSError as exc:
+        # 文件系统不可用时仍应保证 Core 可以启动并输出终端日志。
+        print(f"lite-code 日志文件不可用（{log_path}）: {exc}", file=sys.stderr)
+
+    for handler in handlers:
+        handler.setFormatter(formatter)
+    logging.basicConfig(
+        level=getattr(logging, log_level.upper()), handlers=handlers, force=True
+    )
+    return log_path
+
+
 def main(argv: list = None) -> None:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
 
@@ -59,11 +95,8 @@ def main(argv: list = None) -> None:
         print("用法: lite-code serve [--port N] [--token xxx] [--workspace /path]")
         sys.exit(1)
 
-    logging.basicConfig(
-        level=getattr(logging, args.log_level.upper()),
-        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
-    )
+    log_path = _configure_logging(args.log_level, args.config_dir)
+    logging.getLogger("litecode.cli").info("日志文件: %s", log_path)
 
     app = AgentApp(
         workspace=args.workspace,

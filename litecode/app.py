@@ -219,6 +219,7 @@ class AgentApp:
                     self.llm_registry.providers[pid] = {
                         "name": settings.get("name") or pid, "api_key": "",
                         "base_url": "", "model": "", "models": [], "temperature": 0.2,
+                        "custom_headers": {},
                     }
                 current = self.llm_registry.providers[pid]
                 # 跳过脱敏 api_key（含 … 或 **** 视为未修改）
@@ -231,16 +232,18 @@ class AgentApp:
                 # 空/无效的 context_window（手动覆盖）视为未设置
                 if settings.get("context_window") in (None, "", 0):
                     settings.pop("context_window", None)
-                # custom_headers 必须是 str:str 字典；非法或空字典视为未设置
-                raw_headers = settings.get("custom_headers")
-                if not isinstance(raw_headers, dict) or not raw_headers:
-                    settings.pop("custom_headers", None)
-                else:
-                    settings["custom_headers"] = {
-                        str(k).strip(): str(v).strip()
-                        for k, v in raw_headers.items()
-                        if str(k).strip() and str(v).strip()
-                    }
+                # custom_headers 必须是 str:str 字典；非法值忽略，空字典表示明确清空
+                if "custom_headers" in settings:
+                    raw_headers = settings["custom_headers"]
+                    if isinstance(raw_headers, dict):
+                        settings["custom_headers"] = {
+                            str(k).strip(): str(v).strip()
+                            for k, v in raw_headers.items()
+                            if isinstance(k, str) and isinstance(v, str)
+                            and k.strip() and v.strip()
+                        }
+                    else:
+                        settings.pop("custom_headers")
                 merged = {**current, **settings}
                 if pid.startswith("custom_"):
                     merged["name"] = str(merged.get("name") or pid).strip()

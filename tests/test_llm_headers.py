@@ -4,8 +4,9 @@ from __future__ import annotations
 import httpx
 import pytest
 
+from litecode.app import AgentApp
 from litecode.llm.anthropic import AnthropicAdapter
-from litecode.llm.base import clean_custom_headers
+from litecode.llm.base import clean_custom_headers, merge_headers
 from litecode.llm.openai_compat import OpenAICompatAdapter
 from litecode.llm.registry import LLMRegistry
 
@@ -27,14 +28,23 @@ def test_clean_custom_headers_filters_invalid():
 def test_openai_headers_merge_and_override():
     adapter = OpenAICompatAdapter(
         api_key="sk-test",
-        custom_headers={"X-Title": "My App", "Authorization": "Bearer gateway-token"},
+        custom_headers={"X-Title": "My App", "authorization": "Bearer gateway-token"},
     )
     headers = adapter._headers()
     assert headers["Content-Type"] == "application/json"
     # 自定义头追加
     assert headers["X-Title"] == "My App"
-    # 同名覆盖默认认证头（网关自定义鉴权场景）
-    assert headers["Authorization"] == "Bearer gateway-token"
+    # HTTP 头名大小写不敏感：小写自定义头覆盖默认 Authorization，且不重复
+    assert headers["authorization"] == "Bearer gateway-token"
+    assert "Authorization" not in headers
+
+
+def test_merge_headers_is_case_insensitive():
+    headers = merge_headers(
+        {"Content-Type": "application/json", "X-Test": "default"},
+        {"content-type": "text/plain", "x-test": "custom"},
+    )
+    assert headers == {"content-type": "text/plain", "x-test": "custom"}
 
 
 def test_anthropic_headers_merge_and_keep_defaults():
@@ -154,3 +164,20 @@ def test_registry_apply_config_round_trip():
     reg3 = LLMRegistry()
     reg3.apply_config(cfg2)
     assert reg3.providers["deepseek"]["custom_headers"] == {}
+
+
+def test_app_update_llm_config_can_clear_headers(tmp_path):
+    app = AgentApp(config_dir=str(tmp_path / ".lite-code"))
+    app.llm_registry.providers["deepseek"]["api_key"] = "sk-test"
+    app.llm_registry.providers["deepseek"]["custom_headers"] = {"X-Test": "old"}
+
+    app.update_llm_config(providers={"deepseek": {"custom_headers": {}}})
+    assert app.llm_registry.providers["deepseek"]["custom_headers"] == {}
+
+
+def test_app_update_llm_config_ignores_invalid_headers(tmp_path):
+    app = AgentApp(config_dir=str(tmp_path / ".lite-code"))
+    app.llm_registry.providers["deepseek"]["custom_headers"] = {"X-Test": "old"}
+
+    app.update_llm_config(providers={"deepseek": {"custom_headers": "invalid"}})
+    assert app.llm_registry.providers["deepseek"]["custom_headers"] == {"X-Test": "old"}

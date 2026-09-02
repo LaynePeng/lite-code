@@ -105,8 +105,8 @@ export default function SettingsModal({
   };
 
   // 自定义 Header 文本 → dict：每行按第一个冒号/等号切分（值可含冒号，如 URL），
-  // 空行、# 注释、无分隔符的行忽略；同键后者覆盖。blur 时提交。
-  const commitHeaders = (pid: string, text: string) => {
+  // 空行、# 注释、无分隔符的行忽略；同键后者覆盖。
+  const parseHeaders = (text: string): Record<string, string> => {
     const headers: Record<string, string> = {};
     for (const line of text.split("\n")) {
       const trimmed = line.trim();
@@ -119,7 +119,11 @@ export default function SettingsModal({
       const value = trimmed.slice(sepIdx + 1).trim();
       if (key && value) headers[key] = value;
     }
-    update(pid, "custom_headers", headers);
+    return headers;
+  };
+
+  const commitHeaders = (pid: string, text: string) => {
+    update(pid, "custom_headers", parseHeaders(text));
   };
 
   const providerMeta = providers.find((p) => p.id === activeProvider);
@@ -163,20 +167,8 @@ export default function SettingsModal({
       // 测试连接带上当前编辑的自定义 Header（含未 blur 的文本框内容）
       const liveText = headersText[activeProvider];
       if (liveText !== undefined) {
-        const headers: Record<string, string> = {};
-        for (const line of liveText.split("\n")) {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith("#")) continue;
-          const sepIdx = Math.min(
-            ...[trimmed.indexOf(":"), trimmed.indexOf("=")].filter((i) => i > 0).concat([Infinity]),
-          );
-          if (!Number.isFinite(sepIdx)) continue;
-          const key = trimmed.slice(0, sepIdx).trim();
-          const value = trimmed.slice(sepIdx + 1).trim();
-          if (key && value) headers[key] = value;
-        }
-        overrides.custom_headers = headers;
-      } else if (e?.custom_headers && Object.keys(e.custom_headers).length > 0) {
+        overrides.custom_headers = parseHeaders(liveText);
+      } else if (e?.custom_headers !== undefined) {
         overrides.custom_headers = e.custom_headers;
       }
       const res = await api.testLLM(activeProvider, Object.keys(overrides).length ? overrides : undefined);
@@ -194,6 +186,9 @@ export default function SettingsModal({
       const providersPayload: Record<string, Partial<LLMProviderSettings>> = {};
       for (const pid of Object.keys(editing)) {
         providersPayload[pid] = { ...editing[pid] };
+        if (headersText[pid] !== undefined) {
+          providersPayload[pid].custom_headers = parseHeaders(headersText[pid]);
+        }
       }
       const newConfig = await api.updateLLMConfig(activeProvider, providersPayload);
       setConfig(newConfig);

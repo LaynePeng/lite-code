@@ -19,6 +19,7 @@
 - **真实终端**：node-pty + xterm.js，macOS 使用 `$SHELL`，Windows 使用 PowerShell；终端不进入会话上下文
 - **多窗口项目**：窗口 = 项目 = Core；当前窗口可热切换工作区，也可新窗口打开项目，窗口间共享用户配置
 - **多会话管理**：按项目隔离历史会话，JSON 原子写盘持久化，重启后自动加载续聊
+- **运行日志**：后端与 Electron 主进程均写入 `~/.lite-code/logs/`（Windows：`C:\Users\<用户名>\.lite-code\logs\`），按 5 MiB 滚动并保留 3 个备份
 
 ## 架构
 

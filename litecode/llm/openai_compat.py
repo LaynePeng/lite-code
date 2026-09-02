@@ -16,7 +16,7 @@ import httpx
 
 from ..core.events import TypedEventBus
 from ..core.types import Message, ToolCall, ToolDefinition
-from .base import BaseLLMAdapter, LLMError, clean_custom_headers, decode_utf8_incremental
+from .base import BaseLLMAdapter, LLMError, clean_custom_headers, decode_utf8_incremental, merge_headers
 
 logger = logging.getLogger("litecode.llm")
 
@@ -58,11 +58,13 @@ class OpenAICompatAdapter(BaseLLMAdapter):
             self._client = None
 
     def _headers(self) -> Dict[str, str]:
-        return {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}",
-            **self.custom_headers,
-        }
+        return merge_headers(
+            {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {self.api_key}",
+            },
+            self.custom_headers,
+        )
 
     def _build_payload(
         self, messages: List[Message], tools: List[ToolDefinition]
