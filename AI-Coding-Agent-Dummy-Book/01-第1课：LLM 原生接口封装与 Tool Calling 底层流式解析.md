@@ -155,7 +155,7 @@ def finalize_tool_calls(pending_tool_calls: Dict[int, ToolCall]) -> List[ToolCal
     return calls
 ```
 
-> 实测教训（后续版本修复）：某兼容供应商的流式响应不带 `tool_call id`，用户连续两次"网上查一下"都触发 webfetch 后二次请求 400。根因不在 webfetch 工具本身，而在解析层放行了空 id——补齐合成 id 后闭环恢复。
+> 实测教训：某兼容供应商的流式响应不带 `tool_call id`，用户连续两次"网上查一下"都触发 webfetch 后二次请求 400。根因不在 webfetch 工具本身，而在解析层放行了空 id——补齐合成 id 后闭环恢复。
 
 #### 2.5 多字节 UTF-8 增量解码（中文乱码的根因）
 
