@@ -73,7 +73,7 @@ export const api = {
   chat: (sessionId: string, prompt: string, agentId?: string) => {
     const body: Record<string, unknown> = { session_id: sessionId, prompt };
     if (agentId && agentId !== "build") body.agent_id = agentId;
-    return req<{ task_id: string }>("/api/chat", {
+    return req<{ task_id: string; queued?: boolean }>("/api/chat", {
       method: "POST", body: JSON.stringify(body),
     });
   },
@@ -94,7 +94,39 @@ export const api = {
     }),
 
   contextStats: (sessionId: string) =>
-    req<{ session: import("./types").ContextSessionStats }>(
+    req<import("./types").ContextStats>(
       `/api/context/stats?session_id=${encodeURIComponent(sessionId)}`
     ),
+
+  compact: (sessionId: string, focus: string) =>
+    req<{
+      ok: boolean;
+      before_tokens: number;
+      after_tokens: number;
+      removed_tokens: number;
+      turns_compacted: number;
+      keep_turns: number;
+      summary: string;
+    }>("/api/compact", {
+      method: "POST", body: JSON.stringify({ session_id: sessionId, focus }),
+    }),
+
+  // ------------------------------------------------------------ Skills 管理与命令
+
+  skills: () => req<{ skills: import("./types").SkillInfo[] }>("/api/skills"),
+  readSkill: (name: string) =>
+    req<{ name: string; content: string }>(`/api/skills/${encodeURIComponent(name)}`),
+  createSkill: (name: string, description: string, scope: string) =>
+    req<{ ok: boolean; name: string; path: string }>("/api/skills/create", {
+      method: "POST", body: JSON.stringify({ name, description, scope }),
+    }),
+  importSkill: (payload: { source?: string; zip_base64?: string; scope: string; name?: string }) =>
+    req<{ skills: import("./types").SkillInfo[] }>("/api/skills/import", {
+      method: "POST", body: JSON.stringify(payload),
+    }),
+  deleteSkill: (name: string, scope: string) =>
+    req<{ ok: boolean }>(`/api/skills/${encodeURIComponent(name)}?scope=${encodeURIComponent(scope)}`, {
+      method: "DELETE",
+    }),
+  commands: () => req<{ commands: import("./types").CommandInfo[] }>("/api/commands"),
 };

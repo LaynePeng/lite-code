@@ -647,6 +647,68 @@ body.resizing-row * { cursor: row-resize !important; user-select: none !importan
   gap: 8px;
 }
 
+/* 右面板「TODOs」Tab：任务清单与进度 */
+.todos-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.todos-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-1);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.todo-mark {
+  flex: none;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.todo-item.todo-completed .todo-content {
+  color: var(--text-3);
+  text-decoration: line-through;
+}
+
+.todo-item.todo-in_progress {
+  border-color: var(--accent, #4c8dff);
+  background: color-mix(in srgb, var(--accent, #4c8dff) 8%, var(--bg-2));
+}
+
+.todo-item.todo-in_progress .todo-mark {
+  color: var(--accent, #4c8dff);
+}
+
+/* 消息气泡：补充指令"已入队"标记 */
+.queued-badge {
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px 7px;
+  margin-right: 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text-2);
+  vertical-align: middle;
+}
+
 .tools-panel-count {
   font-size: 12px;
   font-weight: 600;
@@ -3050,4 +3112,403 @@ body.resizing-row * { cursor: row-resize !important; user-select: none !importan
   overflow-y: auto;
   border: 1px solid var(--border);
   border-radius: 6px;
+}
+
+
+/* ============================================================ v0.14.0 */
+
+.udiff-row.udiff-del .udiff-prefix {
+  color: #f85149;
+}
+
+/* 工具卡片内的 diff 折叠 */
+.unified-diff-wrap {
+  max-height: 400px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+/* ============================================================
+   v0.14.0：命令面板 / 子 Agent 活动卡 / 审批队列 / Skills 管理
+   ============================================================ */
+
+/* ---------------- 命令面板 ---------------- */
+
+.composer {
+  position: relative;
+}
+
+.command-palette {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 60;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.command-palette-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 14px;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-0);
+  cursor: pointer;
+  text-align: left;
+  font-size: 13px;
+}
+
+.command-palette-item:last-child {
+  border-bottom: none;
+}
+
+.command-palette-item.active {
+  background: rgba(79, 140, 255, 0.12);
+}
+
+.command-palette-name {
+  font-weight: 600;
+  color: var(--accent);
+  min-width: 110px;
+}
+
+.command-palette-desc {
+  flex: 1;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.command-palette-hint {
+  color: var(--text-2);
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+}
+
+/* ---------------- 子 Agent 活动卡 ---------------- */
+
+.subagent-card {
+  margin: 10px 0;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-2);
+  overflow: hidden;
+}
+
+.subagent-card.running {
+  border-color: rgba(139, 92, 246, 0.45);
+  box-shadow: 0 0 0 1px rgba(139, 92, 246, 0.15);
+}
+
+.subagent-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  background: transparent;
+  border: none;
+  color: var(--text-0);
+  cursor: pointer;
+  font-size: 13px;
+  text-align: left;
+}
+
+.subagent-icon {
+  color: var(--accent-2);
+  font-size: 15px;
+}
+
+.subagent-role {
+  font-weight: 600;
+}
+
+.subagent-spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid rgba(139, 92, 246, 0.25);
+  border-top-color: var(--accent-2);
+  border-radius: 50%;
+  animation: subagent-spin 0.9s linear infinite;
+}
+
+@keyframes subagent-spin {
+  to { transform: rotate(360deg); }
+}
+
+.subagent-status {
+  margin-left: auto;
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.subagent-body {
+  padding: 0 12px 10px;
+  border-top: 1px solid var(--border);
+}
+
+.subagent-task {
+  padding: 8px 0;
+  color: var(--text-1);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.subagent-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.subagent-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--bg-1);
+  font-size: 12px;
+  min-width: 0;
+}
+
+.subagent-step-state {
+  width: 14px;
+  text-align: center;
+  color: var(--text-2);
+  flex: none;
+}
+
+.subagent-step.done .subagent-step-state { color: var(--green); }
+.subagent-step.error .subagent-step-state,
+.subagent-step.cancelled .subagent-step-state { color: var(--red); }
+.subagent-step.running .subagent-step-state { color: var(--accent-2); }
+
+.subagent-step-tool {
+  font-family: ui-monospace, monospace;
+  color: var(--text-0);
+  flex: none;
+}
+
+.subagent-step-brief {
+  color: var(--text-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.subagent-step-dur {
+  color: var(--text-2);
+  font-size: 11px;
+  flex: none;
+}
+
+.subagent-summary {
+  margin-top: 8px;
+}
+
+.subagent-summary-toggle {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0;
+}
+
+.subagent-summary-body {
+  margin-top: 6px;
+  padding: 8px 10px;
+  background: var(--bg-1);
+  border-radius: 6px;
+  font-size: 12.5px;
+  color: var(--text-1);
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+/* ---------------- 任务后归档摘要 ---------------- */
+
+.subagent-records {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 10px 0;
+}
+
+.subagent-record {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text-2);
+  min-width: 0;
+}
+
+.subagent-record-role {
+  color: var(--accent-2);
+  font-weight: 600;
+  flex: none;
+}
+
+.subagent-record .rec-done { color: var(--green); flex: none; }
+.subagent-record .rec-error { color: var(--red); flex: none; }
+.subagent-record .rec-tokens { flex: none; }
+
+.subagent-record-task {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------- skill:loaded 提示 ---------------- */
+
+.skill-loaded-hint {
+  margin: 8px 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(139, 92, 246, 0.1);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+  color: var(--text-1);
+  font-size: 12.5px;
+}
+
+/* ---------------- Skills 管理面板 ---------------- */
+
+.skills-import-row,
+.skills-create-row {
+  display: flex;
+  gap: 8px;
+  margin: 10px 0;
+}
+
+.skills-import-row .form-input,
+.skills-create-row .form-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.skills-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.skill-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.skill-item-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.skill-item-name {
+  font-weight: 600;
+  color: var(--text-0);
+  font-family: ui-monospace, monospace;
+  flex: none;
+}
+
+.skill-scope {
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  flex: none;
+}
+
+.skill-scope.workspace {
+  background: rgba(79, 140, 255, 0.15);
+  color: var(--accent);
+}
+
+.skill-scope.user {
+  background: rgba(139, 92, 246, 0.15);
+  color: var(--accent-2);
+}
+
+.skill-readonly {
+  font-size: 11px;
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1px 7px;
+  flex: none;
+}
+
+.skill-item-desc {
+  color: var(--text-2);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.skill-item-actions {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+
+.skill-viewer {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.skill-viewer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--bg-1);
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--text-1);
+  font-family: ui-monospace, monospace;
+}
+
+.skill-viewer-body {
+  margin: 0;
+  padding: 12px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-1);
+  max-height: 340px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }

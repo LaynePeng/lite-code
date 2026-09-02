@@ -250,3 +250,48 @@ async def test_summarize_failure_falls_back_none():
     result = await loop._try_compact(messages, 100)
     assert result is None
     assert loop._compression_count == 0
+
+
+async def test_injected_inputs_reach_conversation(tmp_path):
+    """任务运行中补充的指令：在下一回合开始前以 [用户补充指令] 前缀注入对话。"""
+    registry = ToolRegistry()
+
+    async def noop(args):
+        return "[Success] ok"
+
+    registry.register("noop", "空操作", {"type": "object"}, noop)
+
+    seen_turn_payloads = []
+
+    class RecordingAdapter(MockLLMAdapter):
+        async def chat_stream(self, messages, tools, events=None):
+            seen_turn_payloads.append([m.content for m in messages])
+            return await super().chat_stream(messages, tools, events)
+
+    # 首轮必须调工具否则直接终答；补充指令在第二轮开始前注入
+    adapter = RecordingAdapter([
+        ("", [tool_call("noop", "{}")]),
+        ("已处理补充指令", []),
+    ])
+    loop, kernel, store = _make_loop(tmp_path, adapter, registry)
+
+    # 任务启动前排入两条补充指令（模拟运行中用户追加，回合开始时统一注入）
+    loop.injected_inputs.append("补充：顺便看下 README")
+    loop.injected_inputs.append("补充：注意 Windows 路径")
+
+    added_roles = []
+    kernel.events.on("message:added", lambda d: added_roles.append(d["message"]["role"]))
+
+    result, _ = await loop.run_task("开始任务", system_prompt=SYSTEM_PROMPT)
+
+    assert result == "已处理补充指令"
+    # 第二次 LLM 调用的输入里应包含两条补充指令（在首轮回答之后）
+    second_call = seen_turn_payloads[1]
+    assert any("[用户补充指令] 补充：顺便看下 README" in (c or "") for c in second_call)
+    assert any("[用户补充指令] 补充：注意 Windows 路径" in (c or "") for c in second_call)
+    # 注入消息以 user 角色进入消息链并触发 message:added
+    assert added_roles.count("user") >= 3  # 原始 1 条 + 注入 2 条
+    # 落盘的历史也包含注入消息
+    snap = store.load("test-session")
+    contents = [m.content for m in snap.messages]
+    assert any("[用户补充指令]" in (c or "") for c in contents)

@@ -23,6 +23,13 @@ export interface Msg {
   name?: string;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
+  queued?: boolean; // 任务运行中提交、待注入的补充指令（仅前端标记）
+}
+
+// Agent 维护的任务 TODO 清单（todo_write 工具全量覆盖）
+export interface TodoItem {
+  content: string;
+  status: "pending" | "in_progress" | "completed";
 }
 
 export interface SessionInfo {
@@ -164,8 +171,8 @@ export type SSEEvent =
   | { type: "message:added"; data: { message: Msg } }
   | { type: "llm:stream"; data: { chunk: string } }
   | { type: "llm:turn_start"; data: { turn: number } }
-  | { type: "tool:before_execute"; data: { toolName: string; args: unknown } }
-  | { type: "tool:after_execute"; data: { toolName: string; durationMs: number; status: string; result?: string } }
+  | { type: "tool:before_execute"; data: { toolName: string; args: unknown; callId?: string } }
+  | { type: "tool:after_execute"; data: { toolName: string; durationMs: number; status: string; result?: string; callId?: string } }
   | { type: "approval:request"; data: { id: string; action: string; reason: string } }
   | { type: "approval:resolved"; data: { id: string; approved: boolean } }
   | { type: "task:start"; data: { session_id: string } }
@@ -173,8 +180,54 @@ export type SSEEvent =
   | { type: "task:error"; data: { message: string } }
   | { type: "stats:update"; data: Stats }
   | { type: "context:stats"; data: ContextStats }
-  | { type: "subagent:started"; data: { task: string; role: string } }
-  | { type: "subagent:completed"; data: Record<string, unknown> };
+  | { type: "subagent:started"; data: { task: string; role: string; subagentId?: string; callId?: string | null } }
+  | { type: "subagent:progress"; data: SubAgentProgressEvent }
+  | { type: "subagent:completed"; data: SubAgentCompletedData }
+  | { type: "skill:loaded"; data: { names: string[] } }
+  | { type: "chat:queued"; data: { text: string; count: number } }
+  | { type: "todo:updated"; data: { todos: TodoItem[] } };
+
+// 子 Agent 实时进度事件（命名空间转发自隔离 kernel）
+export interface SubAgentProgressEvent {
+  subagentId: string;
+  role: string;
+  callId: string | null;
+  kind: "llm:turn_start" | "tool:before_execute" | "tool:after_execute";
+  turn?: number;
+  tool?: string;
+  brief?: string;
+  status?: string;
+  durationMs?: number;
+}
+
+export interface SubAgentCompletedData {
+  task: string;
+  role: string;
+  subagentId?: string;
+  callId?: string | null;
+  tokens_used?: number;
+  turns?: number;
+  summary?: string;
+}
+
+// 子 Agent 活动卡片（嵌在 spawn_sub_agent 工具卡内渲染）
+export interface SubAgentStep {
+  tool: string;
+  brief?: string;
+  status: "running" | "done" | "error" | "cancelled";
+  durationMs?: number;
+}
+
+export interface SubAgentProgress {
+  subagentId: string;
+  role: string;
+  task: string;
+  turn: number;
+  steps: SubAgentStep[];
+  status: "running" | "done" | "error";
+  summary?: string;
+  tokens?: number;
+}
 
 // Electron 注入的原生能力（浏览器模式下不存在）
 export interface LiteCodeBridge {
@@ -205,6 +258,8 @@ export interface ToolCardInfo {
   status: "running" | "done" | "cancelled" | "error";
   durationMs?: number;
   result?: string;
+  callId?: string;
+  subagent?: SubAgentProgress;
 }
 
 // 按 SSE / 会话消息原始顺序排列的工作时间线
@@ -255,10 +310,35 @@ export interface ChatSessionState {
   stats: Stats | null;
   contextStats: ContextStats | null;
   error: string | null;
-  pendingApproval: { id: string; action: string; reason: string } | null;
+  // 审批队列：并行工具可同时挂起多个审批请求
+  pendingApprovals: { id: string; action: string; reason: string }[];
+  // 任务完成后归档的子 Agent 活动卡（会话级内存态，刷新即失）
+  subAgentRecords: SubAgentProgress[];
   stalled: boolean;
   modelOverride?: SessionModel | null;
   effectiveModel?: SessionModel;
+  skillLoaded?: string[];
+  // 任务 TODO 清单（todo_write 工具推送，任务结束后保留展示）
+  todos: TodoItem[];
+}
+
+// ---------------------------------------------------------------- Skills 管理与命令
+
+export interface SkillInfo {
+  name: string;
+  description: string;
+  dirName: string;
+  path: string;
+  scope: "workspace" | "user";
+  writable: boolean;
+  triggers: string;
+}
+
+export interface CommandInfo {
+  name: string;
+  description: string;
+  argsHint: string;
+  kind: "builtin" | "skill";
 }
 
 // ---------------------------------------------------------------- MCP 配置

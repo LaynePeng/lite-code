@@ -9,9 +9,11 @@ LLM 调用(带动态 System Prompt / Token 预算裁剪 / beforeLLM 管道)
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import logging
 import os
 import time
+from collections import deque
 from typing import Any, Dict, List, Optional, Tuple
 
 from .context_manager import ContextManager, repair_tool_call_pairs
@@ -23,8 +25,21 @@ from .system_prompt import SystemPromptBuilder
 from .token_counter import TokenCounter
 from .truncator import truncate_tool_output
 from .types import Message, ToolCall, ToolDefinition
+from ..tools.todos import current_session_id
 
 logger = logging.getLogger("litecode.agentloop")
+
+# 当前执行的工具调用 ID（跨层传递给 spawn_sub_agent 等需要关联事件的工具；
+# asyncio 同一 task 内 ContextVar 可靠传播，并行协程各自独立 context）
+current_tool_call: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    "current_tool_call", default=None
+)
+
+# 写类工具：同轮出现时整轮退化为串行（顺序依赖风险，如 write A + read A）
+WRITE_TOOLS = frozenset({
+    "write_file", "apply_search_replace", "apply_unified_diff",
+    "execute_command", "git_commit", "git_push",
+})
 
 
 class AgentLoop:
@@ -63,6 +78,10 @@ class AgentLoop:
         self._compression_count = 0
         self._compressed_tokens = 0
         self._last_usage: Optional[Dict[str, int]] = None
+        # 并行工具执行模式："auto"（只读轮并行/含写串行）| "always" | "never"
+        self.parallel_tool_calls: str = "auto"
+        # 任务运行期间用户补充的输入队列（TaskHandle 持有同一个 deque，跨回合注入）
+        self.injected_inputs = deque()
 
     def request_stop(self) -> None:
         if self.abort_event:
@@ -83,6 +102,8 @@ class AgentLoop:
     ) -> Tuple[str, Dict[str, Any]]:
         messages: List[Message] = self.kernel.ctx.messages
         tools = tools if tools is not None else self.registry.get_tools()
+        # 工具处理器（todo_write 等）经 ContextVar 知道当前会话
+        current_session_id.set(self.kernel.session_id)
         self.state = AgentStateTracker()
         self.state.status = AgentStatus.RUNNING
 
@@ -128,6 +149,16 @@ class AgentLoop:
 
                 if self._check_abort():
                     return await self._finish("[Stopped]: 已由用户手动停止。", messages, stats, store_snapshot)
+
+                # A-. 注入任务运行期间用户补充的指令（排队输入在下一回合进入对话）
+                while self.injected_inputs:
+                    text = str(self.injected_inputs.popleft()).strip()
+                    if not text:
+                        continue
+                    injected = Message(role="user", content=f"[用户补充指令] {text}")
+                    messages.append(injected)
+                    await self.kernel.events.emit("message:added", {"message": injected.to_dict()})
+                    logger.info("[AgentLoop] 已注入用户补充指令（%d 字符）", len(text))
 
                 # A. 上下文裁剪（保护 system 与 assistant/tool 原子对）
                 #    有效上限 = max(预算下限, 90% × 模型窗口)，到阈值先尝试 LLM 摘要压缩
@@ -218,12 +249,23 @@ class AgentLoop:
                     self.state.status = AgentStatus.SUCCESS
                     return await self._finish(content or "(空回复)", messages, stats, store_snapshot)
 
-                # G. 顺序派发执行工具
-                for call in tool_calls:
-                    if self._check_abort():
-                        return await self._finish("[Stopped]: 已由用户手动停止。", messages, stats, store_snapshot)
+                # G. 派发执行工具（只读轮并行 / 含写类或 never 时串行；结果按原序回填）
+                if self._should_parallelize(tool_calls):
+                    results = await asyncio.gather(
+                        *[self._execute_tool_call(c, stats) for c in tool_calls]
+                    )
+                else:
+                    results = []
+                    for call in tool_calls:
+                        if self._check_abort():
+                            return await self._finish(
+                                "[Stopped]: 已由用户手动停止。", messages, stats, store_snapshot
+                            )
+                        results.append(await self._execute_tool_call(call, stats))
+                if self._check_abort():
+                    return await self._finish("[Stopped]: 已由用户手动停止。", messages, stats, store_snapshot)
 
-                    result_text = await self._execute_tool_call(call, stats)
+                for call, result_text in zip(tool_calls, results):
                     tool_result = Message(
                         role="tool",
                         name=call.name,
@@ -255,7 +297,24 @@ class AgentLoop:
 
     # ------------------------------------------------------------------ 工具执行
 
+    def _should_parallelize(self, tool_calls: List[ToolCall]) -> bool:
+        """并行判定：never 串行；always 并行；auto 仅本轮全只读时并行。
+        单个工具调用无需并行；写类工具存在时保持顺序依赖语义。"""
+        if self.parallel_tool_calls == "never" or len(tool_calls) <= 1:
+            return False
+        if self.parallel_tool_calls == "always":
+            return True
+        return all(c.name not in WRITE_TOOLS for c in tool_calls)
+
     async def _execute_tool_call(self, call: ToolCall, stats: Dict[str, Any]) -> str:
+        tool_name = call.name
+        token = current_tool_call.set(call.id)
+        try:
+            return await self._execute_tool_call_inner(call, stats)
+        finally:
+            current_tool_call.reset(token)
+
+    async def _execute_tool_call_inner(self, call: ToolCall, stats: Dict[str, Any]) -> str:
         tool_name = call.name
 
         # 1. 死循环检测（连续 N 次相同工具+相同参数）
@@ -280,7 +339,7 @@ class AgentLoop:
             result_text = f"[Tool Execution Cancelled]: {verified.get('reason') or '被安全策略拒绝。'}"
         else:
             await self.kernel.events.emit(
-                "tool:before_execute", {"toolName": tool_name, "args": args}
+                "tool:before_execute", {"toolName": tool_name, "args": args, "callId": call.id}
             )
             try:
                 raw = await asyncio.wait_for(
@@ -311,7 +370,7 @@ class AgentLoop:
 
         await self.kernel.events.emit(
             "tool:after_execute",
-            {"toolName": tool_name, "durationMs": duration_ms,
+            {"toolName": tool_name, "durationMs": duration_ms, "callId": call.id,
              "status": "cancelled" if verified.get("cancel") else "success",
              "result": result_text},
         )

@@ -45,6 +45,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "approval_timeout": 600,
     "context_full_turns": 2,
     "mcp_servers": {},
+    # 并行工具执行："auto"（只读轮并行/含写类整轮串行）| "always" | "never"
+    "parallel_tool_calls": "auto",
     # 定价（每 M token，美元）：仅作 models.dev 无该模型数据时的回退；
     # cache_hit 缺省按 input 的 10% 折算（Anthropic 0.1x 惯例），真实价格优先取 models.dev
     "pricing": {"input_per_mtok": 1.6, "output_per_mtok": 4.8},
@@ -91,6 +93,9 @@ class AgentApp:
         self._last_task_snapshot: Dict[str, Dict[str, Any]] = {}
         self._load_config()
         self.mcp_manager = MCPManager(self.config.get("mcp_servers") or {})
+        # 任务 TODO 看板（todo_write 工具 + todo:updated 事件）
+        from .tools.todos import TodoPlugin
+        self.todo_plugin = TodoPlugin()
         self.approval_gate = ApprovalGate(
             timeout_seconds=self.config.get("approval_timeout", 600)
         )
@@ -331,6 +336,7 @@ class AgentApp:
             WebFetchPlugin(cache_dir=os.path.join(self.config_dir, "webfetch_cache")),
             SubAgentPlugin(self),
             SkillsPlugin(self.workspace),
+            self.todo_plugin,
         ]
 
     @staticmethod
@@ -400,6 +406,126 @@ class AgentApp:
         return kernel
 
     # ------------------------------------------------------------ Agent
+
+    # ------------------------------------------------------------ Skills 管理（Web/API 薄封装）
+
+    def skills_list(self) -> List[Dict[str, Any]]:
+        from .tools.skills import SkillsTools
+        return SkillsTools(self.workspace).list_skills()
+
+    def skills_read(self, name: str) -> Optional[str]:
+        from .tools.skills import SkillsTools
+        return SkillsTools(self.workspace).read_skill(name)
+
+    def skills_create(self, name: str, description: str, scope: str = "workspace") -> Dict[str, Any]:
+        from .tools.skills import SkillsTools
+        return SkillsTools(self.workspace).create_skill(name, description, scope)
+
+    def skills_import(self, source: str, scope: str = "workspace", name: Optional[str] = None) -> List[Dict[str, Any]]:
+        from .tools.skills import SkillsTools
+        return SkillsTools(self.workspace).import_skill(source, scope, name)
+
+    def skills_import_zip(self, data: bytes, scope: str = "workspace", name: Optional[str] = None) -> List[Dict[str, Any]]:
+        from .tools.skills import SkillsTools
+        return SkillsTools(self.workspace).import_zip_bytes(data, scope, name)
+
+    def skills_delete(self, name: str, scope: str) -> Dict[str, Any]:
+        from .tools.skills import SkillsTools
+        return SkillsTools(self.workspace).delete_skill(name, scope)
+
+    def commands_list(self) -> List[Dict[str, str]]:
+        from .core.commands import build_command_list
+        try:
+            return build_command_list(self.skills_list())
+        except Exception:
+            return build_command_list([])
+
+    # ------------------------------------------------------------ /compact 手动压缩
+
+    async def compact_session(self, session_id: str, focus: str = "") -> Dict[str, Any]:
+        """手动触发一次会话上下文压缩（策略 B：旧轮次 LLM 摘要化 + 最近 N 轮原样保留）。
+
+        与 AgentLoop 的自动压缩不同：不检查是否超预算——用户显式要求就强制折叠，
+        长任务间隙即可主动释放窗口。压缩结果直接落盘回写会话。
+        返回 {ok, before_tokens, after_tokens, removed_tokens, turns_compacted,
+        keep_turns, summary}；无需压缩时 {ok: False, reason}。
+        """
+        from .core.context_manager import ContextManager
+        from .core.token_counter import TokenCounter
+        from .core.types import Message
+
+        snapshot = self.session_store.load(session_id)
+        if not snapshot or len(snapshot.messages) < 3:
+            return {"ok": False, "reason": "会话为空或内容过少，无需压缩"}
+
+        messages = list(snapshot.messages)
+        system = messages[0] if messages[0].role == "system" else None
+        body = messages[1:] if system else messages
+
+        # 按轮次强制折叠：保留最近 N 轮完整细节（N 与自动压缩一致，取配置）
+        keep_turns = max(1, int(self.config.get("context_full_turns", 2)))
+        ranges = ContextManager._turn_ranges(body)
+        if len(ranges) <= keep_turns:
+            return {"ok": False,
+                    "reason": f"会话只有 {len(ranges)} 轮（保留阈值 {keep_turns} 轮），没有可压缩的历史"}
+        cut = ranges[-keep_turns][0]
+        head, tail = body[:cut], body[cut:]
+        head_tokens = sum(TokenCounter.count_message_tokens(m) for m in head)
+        if not head or head_tokens <= 0:
+            return {"ok": False, "reason": "没有可压缩的历史"}
+
+        summary = await self._summarize_head(head, system, focus)
+        if not summary:
+            return {"ok": False, "reason": "摘要调用失败（LLM 未返回正文），会话保持不变"}
+
+        compacted = ([system] if system else []) + [
+            Message(role="user", content=f"[历史摘要] {summary}")
+        ] + tail
+        before_tokens = TokenCounter.count_messages_tokens(messages)
+        after_tokens = TokenCounter.count_messages_tokens(compacted)
+        self.session_store.save(session_id, compacted, metadata=snapshot.metadata)
+
+        # 统计回写：面板立即反映压缩后水位（usage/费用等累计值不动）
+        acc = self._context_session_stats.setdefault(session_id, {})
+        acc["compression_count"] = int(acc.get("compression_count", 0) or 0) + 1
+        acc["compressed_tokens"] = int(acc.get("compressed_tokens", 0) or 0) + max(0, head_tokens - TokenCounter.count_text_tokens(summary))
+        acc["last_prompt_tokens"] = after_tokens
+        return {
+            "ok": True,
+            "before_tokens": before_tokens,
+            "after_tokens": after_tokens,
+            "removed_tokens": max(0, before_tokens - after_tokens),
+            "turns_compacted": len(ranges) - keep_turns,
+            "keep_turns": keep_turns,
+            "summary": summary,
+        }
+
+    async def _summarize_head(self, head: List[Any], system: Any, focus: str = "") -> Optional[str]:
+        """压缩摘要 LLM 调用（无工具、不流式转发），focus 指定摘要保留重点。"""
+        from .core.token_counter import TokenCounter
+        from .core.types import Message
+
+        body = [m for m in head if m.role != "system"]
+        if not body:
+            return None
+        total_chars = sum(len(m.content or "") for m in body)
+        if total_chars > 200_000:
+            return None
+        instruction = (
+            "请将以上全部对话历史压缩为一段精炼的中文摘要，作为后续工作的背景说明：\n"
+            "保留已完成的决策与结论、修改过的文件清单、关键发现与未完成的任务，"
+            "丢弃过程性细节。直接输出摘要正文，不要任何前缀，不要调用任何工具。"
+        )
+        if focus:
+            instruction += f"\n用户特别要求：摘要重点保留与以下关注点相关的内容：{focus}"
+        messages = ([system] if system else []) + body + [
+            Message(role="user", content=instruction),
+        ]
+        try:
+            content, _, _ = await self.adapter.chat_stream(messages, [], None)
+        except Exception:
+            return None
+        return (content or "").strip() or None
 
     def get_agent(self, agent_id: Optional[str] = None) -> AgentProfile:
         """获取 Agent 配置：不传则返回默认 build agent。"""

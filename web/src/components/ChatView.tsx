@@ -5,7 +5,7 @@ import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import { DiffPre, DiffStats, isFileDiff } from "./FileDiff";
 import AppIcon from "./AppIcon";
-import type { Msg, ToolCardInfo, WorkItem } from "../types";
+import type { Msg, SubAgentProgress, ToolCardInfo, WorkItem } from "../types";
 
 // ---------------------------------------------------------------- 渲染助手
 
@@ -101,6 +101,58 @@ function ToolActivity({ tools }: { tools: ToolCardInfo[] }) {
   );
 }
 
+// ---------------------------------------------------------------- 子 Agent 活动卡
+
+function SubAgentCard({ card }: { card: ToolCardInfo }) {
+  const sa = card.subagent;
+  const [open, setOpen] = useState(!sa || sa.status === "running");
+  const [showSummary, setShowSummary] = useState(false);
+  const running = card.status === "running" && (!sa || sa.status === "running");
+  const roleLabel = sa?.role ?? "general";
+  return (
+    <div className={`subagent-card ${running ? "running" : "finished"}`}>
+      <button className="subagent-header" onClick={() => setOpen(!open)}>
+        <span className="subagent-icon">◈</span>
+        <span className="subagent-role">子 Agent · {roleLabel}</span>
+        {running && <span className="subagent-spinner" />}
+        <span className="subagent-status">
+          {running
+            ? `运行中${sa?.turn ? ` · 第 ${sa.turn} 轮` : ""}`
+            : sa?.status === "error" ? "✗ 异常结束" : "✓ 已完成"}
+          {sa?.tokens != null && !running ? ` · ${sa.tokens} tokens` : ""}
+        </span>
+        <span className="tool-chevron">{open ? "▾" : "▸"}</span>
+      </button>
+      {open && (
+        <div className="subagent-body">
+          {sa?.task && <div className="subagent-task" title={sa.task}>{sa.task}</div>}
+          <div className="subagent-steps">
+            {(sa?.steps ?? []).map((step, i) => (
+              <div className={`subagent-step ${step.status}`} key={`${step.tool}-${i}`}>
+                <span className="subagent-step-state">
+                  {step.status === "running" ? "⋯" : step.status === "done" ? "✓" : "!"}
+                </span>
+                <span className="subagent-step-tool">{step.tool}</span>
+                {step.brief && <span className="subagent-step-brief" title={step.brief}>{step.brief}</span>}
+                {step.durationMs != null && <span className="subagent-step-dur">{step.durationMs}ms</span>}
+              </div>
+            ))}
+            {running && (!sa || sa.steps.length === 0) && <div className="subagent-step running"><span className="subagent-step-state">⋯</span><span>正在启动…</span></div>}
+          </div>
+          {!running && sa?.summary && (
+            <div className="subagent-summary">
+              <button className="subagent-summary-toggle" onClick={() => setShowSummary(!showSummary)}>
+                {showSummary ? "▾ 隐藏总结" : "▸ 查看总结"}
+              </button>
+              {showSummary && <div className="subagent-summary-body"><Markdown text={sa.summary} /></div>}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function WorkItems({ items, streaming = false }: { items: WorkItem[]; streaming?: boolean }) {
   return (
     <div className="work-timeline">
@@ -128,6 +180,10 @@ function WorkItems({ items, streaming = false }: { items: WorkItem[]; streaming?
             </div>
           );
         }
+        // spawn_sub_agent 独立卡：渲染子 Agent 活动面板
+        if (item.card.name === "spawn_sub_agent") {
+          return <SubAgentCard key={item.id} card={item.card} />;
+        }
         return <ToolCard key={item.id} card={item.card} />;
       })}
     </div>
@@ -141,6 +197,7 @@ function MessageBubble({ message }: { message: Msg }) {
     return (
       <div className="msg-row user">
         <div className="bubble user-bubble">
+          {message.queued && <span className="queued-badge" title="已提交，Agent 将在当前任务下一回合处理">已入队 ⏳</span>}
           <Markdown text={message.content ?? ""} />
         </div>
       </div>
@@ -236,7 +293,9 @@ export default function ChatView({
   streaming,
   running,
   turn,
-  pendingApproval,
+  pendingApprovals,
+  subAgentRecords,
+  skillLoaded,
   onSend,
   onStop,
   onApprove,
@@ -247,10 +306,12 @@ export default function ChatView({
   streaming: { items: WorkItem[]; turn?: number } | null;
   running: boolean;
   turn: number;
-  pendingApproval: { id: string; action: string; reason: string } | null;
+  pendingApprovals: { id: string; action: string; reason: string }[];
+  subAgentRecords: SubAgentProgress[];
+  skillLoaded?: string[];
   onSend: (prompt: string) => void;
   onStop: () => void;
-  onApprove: (approved: boolean) => void;
+  onApprove: (approvalId: string, approved: boolean) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -314,29 +375,46 @@ export default function ChatView({
             {streaming && (
               <StreamingTurn items={streaming.items} turn={streaming.turn} />
             )}
+            {skillLoaded && skillLoaded.length > 0 && (
+              <div className="skill-loaded-hint">📦 已注入技能：{skillLoaded.join("、")}</div>
+            )}
+            {subAgentRecords.length > 0 && (
+              <div className="subagent-records">
+                {subAgentRecords.map((r, i) => (
+                  <div className="subagent-record" key={`${r.subagentId}-${i}`}>
+                    <span className="subagent-record-role">◈ {r.role}</span>
+                    <span className={r.status === "error" ? "rec-error" : "rec-done"}>
+                      {r.status === "error" ? "✗ 异常" : "✓ 完成"}
+                    </span>
+                    {r.tokens != null && <span className="rec-tokens">{r.tokens} tokens</span>}
+                    <span className="subagent-record-task" title={r.task}>{r.task}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </>
         )}
         <div ref={bottomRef} />
       </div>
 
-      {pendingApproval && (
-        <div className="approval-overlay">
+      {pendingApprovals.map((pa) => (
+        <div className="approval-overlay" key={pa.id}>
           <div className="approval-card">
             <div className="approval-icon">🛡️</div>
-            <h3>需要你的确认</h3>
-            <p className="approval-action">{pendingApproval.action}</p>
-            <p className="approval-reason">{pendingApproval.reason}</p>
+            <h3>需要你的确认{pendingApprovals.length > 1 ? `（${pendingApprovals.length} 个待审批）` : ""}</h3>
+            <p className="approval-action">{pa.action}</p>
+            <p className="approval-reason">{pa.reason}</p>
             <div className="approval-buttons">
-              <button className="btn-deny" onClick={() => onApprove(false)}>
+              <button className="btn-deny" onClick={() => onApprove(pa.id, false)}>
                 拒绝
               </button>
-              <button className="btn-approve" onClick={() => onApprove(true)}>
+              <button className="btn-approve" onClick={() => onApprove(pa.id, true)}>
                 允许执行
               </button>
             </div>
           </div>
         </div>
-      )}
+      ))}
     </div>
   );
 }

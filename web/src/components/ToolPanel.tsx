@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { ContextStats, ContextTaskStats, MCPServerStatus } from "../types";
+import type { ContextStats, ContextTaskStats, MCPServerStatus, TodoItem } from "../types";
 
 // ---------------------------------------------------------------- 上下文情况面板
 
@@ -125,10 +125,43 @@ function ToolsPanel({ tools }: { tools: { name: string; description: string }[] 
   );
 }
 
+// ---------------------------------------------------------------- TODOs 面板
+
+const TODO_MARKS: Record<TodoItem["status"], string> = {
+  pending: "☐",
+  in_progress: "▶",
+  completed: "✔",
+};
+
+function TodosPanel({ todos }: { todos: TodoItem[] }) {
+  if (!todos || todos.length === 0) {
+    return <div className="tool-panel-empty">暂无 TODO（Agent 规划多步骤任务时自动生成）</div>;
+  }
+  const done = todos.filter((t) => t.status === "completed").length;
+  const doing = todos.find((t) => t.status === "in_progress");
+  return (
+    <div className="todos-panel">
+      <div className="tools-panel-count">
+        任务进度 {done}/{todos.length}
+        {doing ? ` · 当前：${doing.content}` : ""}
+      </div>
+      <ul className="todos-list">
+        {todos.map((t, i) => (
+          <li key={i} className={`todo-item todo-${t.status}`}>
+            <span className="todo-mark" aria-hidden>{TODO_MARKS[t.status]}</span>
+            <span className="todo-content">{t.content}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- 主组件
 
-export default function ToolPanel({ contextStats, mcpServers, tools }: { contextStats: ContextStats | null; mcpServers: MCPServerStatus[]; tools: { name: string; description: string }[] }) {
-  const [panelTab, setPanelTab] = useState<"context" | "mcp" | "tools">("context");
+export default function ToolPanel({ contextStats, mcpServers, tools, todos }: { contextStats: ContextStats | null; mcpServers: MCPServerStatus[]; tools: { name: string; description: string }[]; todos: TodoItem[] }) {
+  const [panelTab, setPanelTab] = useState<"context" | "todos" | "mcp" | "tools">("context");
+  const todoDone = todos.filter((t) => t.status === "completed").length;
 
   return (
     <aside className="tool-panel">
@@ -138,6 +171,13 @@ export default function ToolPanel({ contextStats, mcpServers, tools }: { context
           onClick={() => setPanelTab("context")}
         >
           上下文
+        </button>
+        <button
+          className={`panel-tab ${panelTab === "todos" ? "active" : ""}`}
+          onClick={() => setPanelTab("todos")}
+          title={todos.length ? `进度 ${todoDone}/${todos.length}` : "Agent 规划多步骤任务时生成 TODO 清单"}
+        >
+          {todos.length ? `TODOs ${todoDone}/${todos.length}` : "TODOs"}
         </button>
         <button
           className={`panel-tab ${panelTab === "mcp" ? "active" : ""}`}
@@ -155,9 +195,11 @@ export default function ToolPanel({ contextStats, mcpServers, tools }: { context
       <div className="tool-panel-body tool-panel-context">
         {panelTab === "context"
           ? <ContextPanel stats={contextStats} />
-          : panelTab === "mcp"
-            ? <McpPanel servers={mcpServers} />
-            : <ToolsPanel tools={tools} />}
+          : panelTab === "todos"
+            ? <TodosPanel todos={todos} />
+            : panelTab === "mcp"
+              ? <McpPanel servers={mcpServers} />
+              : <ToolsPanel tools={tools} />}
       </div>
     </aside>
   );

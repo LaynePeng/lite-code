@@ -4,7 +4,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from typing import Any, Dict, Optional
+from collections import deque
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..app import AgentApp
 from ..core.agent_loop import AgentLoop
@@ -17,7 +18,8 @@ EVENT_FORWARD = {
     "llm:stream", "llm:turn_start", "message:added", "tool:before_execute",
     "tool:after_execute", "approval:request", "approval:resolved", "task:start",
     "task:done", "task:error", "stats:update", "subagent:completed",
-    "context:stats", "subagent:started",
+    "context:stats", "subagent:started", "subagent:progress", "skill:loaded",
+    "todo:updated",
 }
 
 
@@ -31,11 +33,22 @@ class TaskHandle:
         self.queue: asyncio.Queue = asyncio.Queue(maxsize=512)
         self.abort_event = asyncio.Event()
         self.loop.abort_event = self.abort_event
+        # 用户补充指令队列：与 loop 共享同一 deque，回合开始时注入对话
+        self.pending_inputs: deque = deque(maxlen=32)
+        self.loop.injected_inputs = self.pending_inputs
         self.task: Optional[asyncio.Task] = None
         self.stopping = False
         self.running = False
         self.done = False
         self.subscription = None
+
+    def queue_input(self, text: str) -> int:
+        """任务运行中追加用户补充指令，Agent 在下一回合开始前注入对话。"""
+        self.pending_inputs.append(text)
+        count = len(self.pending_inputs)
+        self._forward_event({"type": "chat:queued",
+                             "data": {"text": text, "count": count}})
+        return count
 
     def _forward_event(self, data: Any) -> None:
         event_type = data.get("type") if isinstance(data, dict) else ""
@@ -77,6 +90,9 @@ class TaskHandle:
     async def run(self, prompt: str) -> None:
         self._subscribe_events()
         self.running = True
+        todo_plugin = getattr(self.app, "todo_plugin", None)
+        if todo_plugin is not None:
+            todo_plugin.bind(self.kernel.session_id, self.kernel.events)
         try:
             # Agent 专属角色提示（Plan 的规划人格 / 自定义 Agent）注入 System Prompt；
             # build 无专属提示时输出与通用版逐字节一致，缓存前缀不受影响
@@ -87,8 +103,14 @@ class TaskHandle:
             except KeyError:
                 pass
             system_prompt = SystemPromptBuilder.build(
-                self.app.workspace, self.registry.get_tools(), agent_prompt=agent_prompt
+                self.app.workspace, self.registry.get_tools(), agent_prompt=agent_prompt,
+                skill_extra=getattr(self, "skill_extra", None),
             )
+            skill_extra_used = getattr(self, "skill_extra", None)
+            if skill_extra_used:
+                # 轻量提示：告知用户本任务注入了哪些技能（不进会话历史）
+                self._forward_event({"type": "skill:loaded",
+                                     "data": {"names": getattr(self, "skill_names", []) or []}})
             await self.loop.run_task(prompt, system_prompt=system_prompt, store_snapshot=True)
         except asyncio.CancelledError:
             self._forward_event({"type": "task:error",
@@ -99,6 +121,8 @@ class TaskHandle:
         finally:
             self.running = False
             self.done = True
+            if todo_plugin is not None:
+                todo_plugin.unbind(self.kernel.session_id)
             # 任务结束：清差分基线，下个任务的统计从 0 重新起算
             self.app._last_task_snapshot.pop(self.kernel.session_id, None)
             # 结束哨兵必须送达，否则客户端会一直处于运行状态。
@@ -140,15 +164,56 @@ class TaskManager:
             model_override = None
         loop = self.app.create_loop(kernel, registry, agent_id=agent_id,
                                     model_override=model_override)
+        loop.parallel_tool_calls = str(self.app.config.get("parallel_tool_calls", "auto")).lower()
 
         handle = TaskHandle(task_id, kernel, registry, loop, self.app)
         handle.agent_id = agent_id or "build"
+        handle.skill_extra, handle.skill_names = self._resolve_skill_extra(prompt)
         self.tasks[task_id] = handle
         handle.task = asyncio.get_event_loop().create_task(handle.run(prompt))
         return handle
 
+    def _resolve_skill_extra(self, prompt: str) -> Tuple[Optional[str], List[str]]:
+        """/skill 显式命令 + triggers 自动匹配 → 任务级附加技能内容（不进历史）。"""
+        from ..core.commands import parse_skill_command
+        try:
+            from ..tools.skills import SkillsTools
+        except Exception:
+            return None, []
+        try:
+            skills_tools = SkillsTools(self.app.workspace)
+            skill_content = ""
+            loaded_names: List[str] = []
+            cmd = parse_skill_command(prompt)
+            if cmd and cmd.get("name"):
+                content = skills_tools.read_skill(cmd["name"])
+                if content:
+                    skill_content += content
+                    loaded_names.append(cmd["name"])
+                else:
+                    skill_content += f"[未找到技能 {cmd['name']!r}，请检查名称]"
+                    loaded_names.append(cmd["name"])
+            # triggers 自动匹配（/skill 命令时跳过，避免重复注入）
+            if not cmd:
+                for skill in skills_tools.match_skills(prompt):
+                    content = skills_tools.read_skill(skill["name"])
+                    if content:
+                        skill_content += ("\n\n" if skill_content else "") + content
+                        loaded_names.append(skill["name"])
+            return (skill_content or None), loaded_names
+        except Exception:
+            logger.exception("[TaskManager] 技能解析失败（忽略，不影响任务）")
+            return None, []
+
     def get(self, task_id: str) -> Optional[TaskHandle]:
         return self.tasks.get(task_id)
+
+    def active_for_session(self, session_id: str) -> Optional[TaskHandle]:
+        """该会话当前正在运行的任务（供 /api/chat 排队补充指令）。"""
+        for handle in self.tasks.values():
+            if handle.running and not handle.stopping and handle.kernel.session_id == session_id:
+                return handle
+        return None
 
     def stop(self, task_id: str) -> bool:
         handle = self.tasks.get(task_id)

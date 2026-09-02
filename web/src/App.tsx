@@ -10,7 +10,7 @@ import Sidebar from "./components/Sidebar";
 import TabBar from "./components/TabBar";
 import ToolPanel from "./components/ToolPanel";
 import { useResizable } from "./hooks/useResizable";
-import type { AgentInfo, AppConfig, ContextStats, ChatSessionState, LLMConfig, LLMProviderMeta, MCPServerStatus, Msg, ServerStatus, SessionInfo, SessionModel, Stats, TabItem, ToolCardInfo, WorkItem } from "./types";
+import type { AgentInfo, AppConfig, ContextStats, ChatSessionState, LLMConfig, LLMProviderMeta, MCPServerStatus, Msg, ServerStatus, SessionInfo, SessionModel, Stats, SubAgentProgress, SubAgentStep, TabItem, ToolCardInfo, WorkItem } from "./types";
 
 interface PendingApproval {
   id: string;
@@ -42,8 +42,10 @@ const EMPTY_CHAT: ChatSessionState = {
   stats: null,
   contextStats: null,
   error: null,
-  pendingApproval: null,
+  pendingApprovals: [],
+  subAgentRecords: [],
   stalled: false,
+  todos: [],
 };
 
 export default function App() {
@@ -207,6 +209,14 @@ export default function App() {
         modelOverride: result.override,
         effectiveModel: result.effective,
       });
+      // 切换后立即刷新「上下文情况」面板的模型名与窗口（端点按会话生效模型解析），
+      // 不必等下一次任务的 SSE 推送才更新
+      try {
+        const ctx = await api.contextStats(activeSessionId);
+        if (ctx) patchChat(activeSessionId, { contextStats: ctx });
+      } catch {
+        // 统计端点异常时面板保持现状
+      }
     } catch (e) {
       patchActiveChat({ error: (e as Error).message });
     }
@@ -323,18 +333,26 @@ export default function App() {
         const snap = await api.getSession(sid);
         patchChat(sid, { ...EMPTY_CHAT, messages: snap?.messages ?? [] });
         try {
-          const model = await api.sessionModel(sid);
-          patchChat(sid, { modelOverride: model.override, effectiveModel: model.effective });
-        } catch {
-          // 旧会话或刚创建的会话没有模型覆盖时，沿用系统默认。
-        }
-        try {
-          const ctx = await api.contextStats(sid);
-          if (ctx.session && Object.keys(ctx.session).length > 0) {
-            patchChat(sid, { contextStats: { model: "", context_window: 0, session: ctx.session } });
+          // 并行拉取模型覆盖与上下文统计，一次 patch 消除两次 patch 之间的显示闪烁
+          const [model, ctx] = await Promise.all([
+            api.sessionModel(sid).catch(() => null),
+            api.contextStats(sid).catch(() => null),
+          ]);
+          if (model) {
+            patchChat(sid, { modelOverride: model.override, effectiveModel: model.effective });
+          }
+          if (ctx && (ctx.model || (ctx.session && Object.keys(ctx.session).length > 0))) {
+            // 端点现携带会话生效模型与窗口，重开会话即可正确显示，不再置空等待 SSE
+            patchChat(sid, {
+              contextStats: {
+                model: ctx.model || "",
+                context_window: ctx.context_window || 0,
+                session: ctx.session ?? {},
+              },
+            });
           }
         } catch {
-          /* ignore */
+          // 旧会话或刚创建的会话没有模型覆盖时，沿用系统默认。
         }
       }
     },
@@ -504,17 +522,24 @@ export default function App() {
         }
         case "tool:before_execute": {
           const card: ToolCardInfo = {
-            id: `t${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            id: ev.data.callId ?? `t${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+            callId: ev.data.callId,
             name: ev.data.toolName,
             args: ev.data.args,
             status: "running",
           };
           const cur = streamingRefs.current.get(sid) ?? getChat(sid).streaming ?? { items: [] };
-          const lastItem = cur.items[cur.items.length - 1];
-          const items = lastItem?.type === "activity"
-            ? [...cur.items.slice(0, -1), { ...lastItem, tools: [...lastItem.tools, card] }]
-            : [...cur.items, { type: "activity" as const, id: `a${Date.now()}`, tools: [card] }];
-          streamingRefs.current.set(sid, { ...cur, items });
+          // spawn_sub_agent 独立成卡（承载子 Agent 活动面板），其余工具进紧凑聚合
+          if (ev.data.toolName === "spawn_sub_agent") {
+            const items = [...cur.items, { type: "tool" as const, id: card.id, card }];
+            streamingRefs.current.set(sid, { ...cur, items });
+          } else {
+            const lastItem = cur.items[cur.items.length - 1];
+            const items = lastItem?.type === "activity"
+              ? [...cur.items.slice(0, -1), { ...lastItem, tools: [...lastItem.tools, card] }]
+              : [...cur.items, { type: "activity" as const, id: `a${Date.now()}`, tools: [card] }];
+            streamingRefs.current.set(sid, { ...cur, items });
+          }
           patchChat(sid, { streaming: { ...streamingRefs.current.get(sid)! } });
           break;
         }
@@ -522,37 +547,46 @@ export default function App() {
           if (TREE_TOUCH_TOOLS.has(ev.data.toolName)) setTreeRevision((v) => v + 1);
           const cur = streamingRefs.current.get(sid) ?? getChat(sid).streaming;
           if (!cur) break;
-           let itemIndex = -1;
-           let toolIndex = -1;
-           for (let i = cur.items.length - 1; i >= 0 && itemIndex < 0; i -= 1) {
-             const item = cur.items[i];
-             if (item.type !== "activity") continue;
-             const found = [...item.tools].reverse().findIndex((c) => c.name === ev.data.toolName && c.status === "running");
-             if (found >= 0) { itemIndex = i; toolIndex = item.tools.length - 1 - found; }
-           }
-          const result = ev.data.result ?? "";
+          // callId 精确匹配（并行安全），缺失时回退 name+running 启发式（兼容旧后端）
           const status: ToolCardInfo["status"] = ev.data.status === "cancelled"
             ? "cancelled"
-            : ev.data.status === "error" || result.startsWith("[Execution Exception]") || result.startsWith("[Error]")
+            : ev.data.status === "error" || (ev.data.result ?? "").startsWith("[Execution Exception]") || (ev.data.result ?? "").startsWith("[Error]")
               ? "error"
               : "done";
-           const items = itemIndex < 0 ? cur.items : cur.items.map((item, i) => i !== itemIndex || item.type !== "activity" ? item : {
-             ...item,
-             tools: item.tools.map((card, j) => j !== toolIndex ? card : {
-               ...card, status, durationMs: ev.data.durationMs,
-               ...(ev.data.result !== undefined ? { result: ev.data.result } : {}),
-             }),
-           });
+          const matchCard = (c: ToolCardInfo) =>
+            (ev.data.callId ? c.callId === ev.data.callId : c.name === ev.data.toolName && c.status === "running");
+          const items = cur.items.map((item) => {
+            if (item.type === "tool" && item.card.name === ev.data.toolName && matchCard(item.card)) {
+              return { ...item, card: { ...item.card, status, durationMs: ev.data.durationMs, ...(ev.data.result !== undefined ? { result: ev.data.result } : {}) } };
+            }
+            if (item.type !== "activity") return item;
+            const idx = item.tools.findIndex(matchCard);
+            if (idx < 0) return item;
+            const tools = item.tools.map((c, j) => j !== idx ? c : {
+              ...c, status, durationMs: ev.data.durationMs,
+              ...(ev.data.result !== undefined ? { result: ev.data.result } : {}),
+            });
+            return { ...item, tools };
+          });
           streamingRefs.current.set(sid, { ...cur, items });
           patchChat(sid, { streaming: { ...streamingRefs.current.get(sid)! } });
           break;
         }
         case "approval:request": {
-          patchChat(sid, { pendingApproval: { id: ev.data.id, action: ev.data.action, reason: ev.data.reason } });
+          const cur = getChat(sid);
+          patchChat(sid, {
+            pendingApprovals: [
+              ...(cur.pendingApprovals ?? []).filter((p) => p.id !== ev.data.id),
+              { id: ev.data.id, action: ev.data.action, reason: ev.data.reason },
+            ],
+          });
           break;
         }
         case "approval:resolved": {
-          patchChat(sid, { pendingApproval: null });
+          const cur = getChat(sid);
+          patchChat(sid, {
+            pendingApprovals: (cur.pendingApprovals ?? []).filter((p) => p.id !== ev.data.id),
+          });
           break;
         }
         case "stats:update": {
@@ -563,9 +597,35 @@ export default function App() {
           patchChat(sid, { contextStats: ev.data });
           break;
         }
+        case "chat:queued": {
+          // 后端确认补充指令入队（乐观气泡已在发送时上屏）
+          pushLog(`📥 补充指令已入队（待注入 ${ev.data.count} 条）`);
+          break;
+        }
+        case "message:added": {
+          // 运行中注入的用户消息已进入上下文：清掉本地"已入队"标记
+          if (ev.data.message?.role === "user") {
+            const cur = getChat(sid);
+            if (cur.messages.some((m) => m.queued)) {
+              patchChat(sid, {
+                messages: cur.messages.map((m) => (m.queued ? { ...m, queued: false } : m)),
+              });
+            }
+          }
+          break;
+        }
+        case "todo:updated": {
+          patchChat(sid, { todos: ev.data.todos ?? [] });
+          break;
+        }
         case "task:done": {
           setTreeRevision((v) => v + 1);
           const cur = streamingRefs.current.get(sid);
+          // 归档本轮的子 Agent 活动卡到会话级记录（最终回复下方折叠展示）
+          const finished = (cur?.items ?? [])
+            .filter((i) => i.type === "tool" && i.card.subagent)
+            .map((i) => (i.type === "tool" ? i.card.subagent! : null))
+            .filter((s): s is SubAgentProgress => s !== null);
           const finalMsg: Msg = { role: "assistant", content: cur?.items.filter((i) => i.type === "text").map((i) => i.content).join("\n\n") || ev.data.content };
           patchChat(sid, {
             messages: [...getChat(sid).messages, finalMsg],
@@ -573,6 +633,8 @@ export default function App() {
             streaming: null,
             running: false,
             turn: 0,
+            subAgentRecords: [...(getChat(sid).subAgentRecords ?? []), ...finished],
+            skillLoaded: undefined,
           });
           cancelStreamFlush(sid);
           streamingRefs.current.delete(sid);
@@ -599,13 +661,126 @@ export default function App() {
           void refreshSessions();
           break;
         }
-        case "subagent:completed": {
-          setTreeRevision((v) => v + 1);
-          log(`◈ 子 Agent ${String(ev.data.role ?? "general")} 已完成`);
+        case "subagent:started": {
+          // 关联到对应 spawn_sub_agent 卡片（callId 匹配，缺失时取最近一张 running 卡）
+          const cur = streamingRefs.current.get(sid) ?? getChat(sid).streaming;
+          if (cur) {
+            let matched = false;
+            const items = cur.items.map((item) => {
+              if (matched) return item;
+              const card = item.type === "tool" ? item.card : null;
+              if (!card || card.name !== "spawn_sub_agent" || card.status !== "running") return item;
+              if (ev.data.callId && card.callId && card.callId !== ev.data.callId) return item;
+              matched = true;
+              return {
+                ...item,
+                card: {
+                  ...card,
+                  subagent: {
+                    subagentId: ev.data.subagentId ?? card.id,
+                    role: ev.data.role,
+                    task: ev.data.task,
+                    turn: 0,
+                    steps: [],
+                    status: "running" as const,
+                  },
+                },
+              };
+            });
+            if (matched) {
+              streamingRefs.current.set(sid, { ...cur, items });
+              patchChat(sid, { streaming: { ...streamingRefs.current.get(sid)! } });
+            }
+          }
+          log(`◈ 启动子 Agent ${ev.data.role}`);
           break;
         }
-        case "subagent:started": {
-          log(`◈ 启动子 Agent ${ev.data.role}`);
+        case "subagent:progress": {
+          const cur = streamingRefs.current.get(sid) ?? getChat(sid).streaming;
+          if (!cur) break;
+          const evData = ev.data;
+          const items = cur.items.map((item) => {
+            const card = item.type === "tool" ? item.card : null;
+            if (!card || card.name !== "spawn_sub_agent" || card.status !== "running") return item;
+            const sa = card.subagent;
+            if (!sa) return item;
+            if (evData.callId && card.callId && evData.callId !== card.callId) return item;
+            if (evData.subagentId && sa.subagentId && evData.subagentId !== sa.subagentId) return item;
+            if (evData.kind === "llm:turn_start") {
+              return { ...item, card: { ...card, subagent: { ...sa, turn: evData.turn ?? sa.turn + 1 } } };
+            }
+            if (evData.kind === "tool:before_execute") {
+              const step: SubAgentStep = {
+                tool: evData.tool ?? "?", brief: evData.brief, status: "running",
+              };
+              // 只保留最近 4 步，防长任务刷屏
+              return { ...item, card: { ...card, subagent: { ...sa, steps: [...sa.steps, step].slice(-4) } } };
+            }
+            // tool:after_execute：把最近一条同名 running 步骤置为终态
+            const steps = [...sa.steps];
+            for (let i = steps.length - 1; i >= 0; i -= 1) {
+              if (steps[i].tool === evData.tool && steps[i].status === "running") {
+                steps[i] = {
+                  ...steps[i],
+                  status: evData.status === "error" ? "error" : evData.status === "cancelled" ? "cancelled" : "done",
+                  durationMs: evData.durationMs,
+                };
+                break;
+              }
+            }
+            return { ...item, card: { ...card, subagent: { ...sa, steps } } };
+          });
+          streamingRefs.current.set(sid, { ...cur, items });
+          patchChat(sid, { streaming: { ...streamingRefs.current.get(sid)! } });
+          break;
+        }
+        case "subagent:completed": {
+          const data = ev.data;
+          const cur = streamingRefs.current.get(sid) ?? getChat(sid).streaming;
+          if (cur) {
+            let finalized: SubAgentProgress | null = null;
+            const items = cur.items.map((item) => {
+              const card = item.type === "tool" ? item.card : null;
+              if (!card || card.name !== "spawn_sub_agent" || card.status !== "running") return item;
+              if (data.callId && card.callId && data.callId !== card.callId) return item;
+              if (!finalized) {
+                const sa = card.subagent;
+                finalized = {
+                  subagentId: data.subagentId ?? sa?.subagentId ?? card.id,
+                  role: data.role,
+                  task: sa?.task ?? data.task,
+                  turn: data.turns ?? sa?.turn ?? 0,
+                  steps: sa?.steps ?? [],
+                  status: "done",
+                  summary: data.summary,
+                  tokens: data.tokens_used,
+                };
+              }
+              return {
+                ...item,
+                card: {
+                  ...card,
+                  status: "done" as const,
+                  durationMs: card.durationMs,
+                  subagent: finalized ?? undefined,
+                },
+              };
+            });
+            if (finalized) {
+              streamingRefs.current.set(sid, { ...cur, items });
+              patchChat(sid, { streaming: { ...streamingRefs.current.get(sid)! } });
+            }
+          }
+          setTreeRevision((v) => v + 1);
+          log(`◈ 子 Agent ${String(data.role ?? "general")} 已完成`);
+          break;
+        }
+        case "skill:loaded": {
+          const names = ev.data.names ?? [];
+          if (names.length > 0) {
+            const cur = getChat(sid);
+            patchChat(sid, { skillLoaded: names });
+          }
           break;
         }
         default:
@@ -617,11 +792,50 @@ export default function App() {
 
   // ------------------------------------------------------------ 发送
 
+  const runCompact = useCallback(
+    async (raw: string) => {
+      const sid = activeSessionId;
+      if (!sid) {
+        window.alert("当前没有会话，无法压缩上下文。");
+        return;
+      }
+      if (getChat(sid).running) {
+        window.alert("任务运行中无法压缩，请先停止任务。");
+        return;
+      }
+      const focus = raw.replace(/^\/compact\s*/i, "").trim();
+      patchChat(sid, { messages: [...(getChat(sid).messages ?? []), { role: "user", content: raw }], error: null });
+      pushLog("🗜️ 正在压缩会话上下文…");
+      try {
+        const r = await api.compact(sid, focus);
+        patchChat(sid, {
+          messages: [...getChat(sid).messages, {
+            role: "assistant",
+            content: `🗜️ 上下文已压缩：${r.before_tokens} → ${r.after_tokens} tokens（释放 ${r.removed_tokens}，折叠 ${r.turns_compacted} 轮、保留最近 ${r.keep_turns} 轮）。`,
+          }],
+        });
+        // 用压缩后的会话历史替换本地消息 + 刷新上下文面板水位
+        const [stats, snap] = await Promise.all([api.contextStats(sid), api.getSession(sid).catch(() => null)]);
+        patchChat(sid, { contextStats: stats, messages: snap?.messages ?? getChat(sid).messages });
+        pushLog(`🗜️ /compact 完成：${r.before_tokens} → ${r.after_tokens} tokens`);
+      } catch (e) {
+        patchChat(sid, { error: (e as Error).message });
+        pushLog(`✗ /compact 失败: ${(e as Error).message}`);
+      }
+    },
+    [activeSessionId, getChat, patchChat, pushLog]
+  );
+
   const send = useCallback(
     async (prompt: string) => {
       if (!status?.workspace) {
         window.alert("请先打开项目后再开始对话。");
         void openProject();
+        return;
+      }
+      if (prompt.trim().toLowerCase().startsWith("/compact")) {
+        // 本地命令：不走任务链路，直接压缩会话
+        await runCompact(prompt);
         return;
       }
       let sid = activeTabId ? tabsRef.current.find((t) => t.id === activeTabId)?.sessionId : null;
@@ -639,18 +853,29 @@ export default function App() {
           t.id === activeTabId ? { ...t, sessionId: session_id, modelOverride: selectedModel } : t
         ));
         if (selectedModel) {
-          await api.setSessionModel(session_id, selectedModel);
+          // 必须把后端确认的 override 写回会话状态，否则 Composer 读 currentChat.modelOverride
+          // 会回退显示“系统默认”（而实际后端一直在用 override 执行任务，显示与事实不符）
+          const resp = await api.setSessionModel(session_id, selectedModel);
+          patchChat(session_id, { modelOverride: resp.override, effectiveModel: resp.effective });
         }
       }
       const base = getChat(sid);
-      patchChat(sid, {
-        messages: [...(base.messages ?? []), { role: "user", content: prompt }],
-        error: null,
-        running: true,
-      });
-      cancelStreamFlush(sid);
-      streamingRefs.current.set(sid, { items: [] });
-      patchChat(sid, { streaming: { items: [] } });
+      if (base.running) {
+        // 任务运行中：本次输入作为补充指令排队，不新建任务/SSE 连接
+        patchChat(sid, {
+          messages: [...(base.messages ?? []), { role: "user", content: prompt, queued: true }],
+          error: null,
+        });
+      } else {
+        patchChat(sid, {
+          messages: [...(base.messages ?? []), { role: "user", content: prompt }],
+          error: null,
+          running: true,
+        });
+        cancelStreamFlush(sid);
+        streamingRefs.current.set(sid, { items: [] });
+        patchChat(sid, { streaming: { items: [] } });
+      }
 
       const connect = (taskId: string) => {
         const es = new EventSource(`/api/tasks/${taskId}/events`);
@@ -678,7 +903,13 @@ export default function App() {
 
       try {
         pushLog("➤ 提交任务…");
-        const { task_id } = await api.chat(sid, prompt, currentAgent);
+        const resp = await api.chat(sid, prompt, currentAgent);
+        if (resp.queued) {
+          // 后端确认入队：当前任务继续跑，不覆盖 taskIds/SSE 连接
+          pushLog("➥ 补充指令已入队，将在当前任务下一回合生效");
+          return;
+        }
+        const { task_id } = resp;
         taskIdsRef.current.set(sid, task_id);
         if (stopRequestedRef.current.has(sid)) {
           stopRequestedRef.current.delete(sid);
@@ -699,7 +930,7 @@ export default function App() {
         pushLog(`✗ 提交失败: ${(e as Error).message}`);
       }
     },
-    [activeTabId, activeSessionId, currentChat.modelOverride, draftModels, getChat, patchChat, refreshSessions, cancelStreamFlush, handleSSEEvent, pushLog, currentAgent, openProject, status?.workspace]
+    [activeTabId, activeSessionId, currentChat.modelOverride, draftModels, getChat, patchChat, refreshSessions, cancelStreamFlush, handleSSEEvent, pushLog, currentAgent, openProject, status?.workspace, runCompact]
   );
 
   const stop = useCallback(async () => {
@@ -715,7 +946,7 @@ export default function App() {
     }
     try {
       await api.stopTask(tid);
-      patchChat(sid, { running: false, streaming: null, pendingApproval: null });
+      patchChat(sid, { running: false, streaming: null, pendingApprovals: [] });
       pushLog("■ 停止请求已发送");
     } catch (e) {
       pushLog(`✗ 停止失败: ${(e as Error).message}`);
@@ -723,17 +954,15 @@ export default function App() {
   }, [activeSessionId, patchChat, pushLog]);
 
   const approve = useCallback(
-    async (approved: boolean) => {
-      const pa = currentChat.pendingApproval;
-      if (!pa) return;
-      patchActiveChat({ pendingApproval: null });
+    async (approvalId: string, approved: boolean) => {
+      patchActiveChat({ pendingApprovals: (currentChat.pendingApprovals ?? []).filter((p) => p.id !== approvalId) });
       try {
-        await api.approve(pa.id, approved);
+        await api.approve(approvalId, approved);
       } catch {
         /* ignore */
       }
     },
-    [currentChat.pendingApproval, patchActiveChat]
+    [currentChat.pendingApprovals, patchActiveChat]
   );
 
   const activeSessionTitle = useMemo(() => {
@@ -823,10 +1052,12 @@ export default function App() {
               streaming={currentChat.streaming}
               running={currentChat.running}
               turn={currentChat.turn}
-              pendingApproval={currentChat.pendingApproval}
+              pendingApprovals={currentChat.pendingApprovals}
+              subAgentRecords={currentChat.subAgentRecords}
+              skillLoaded={currentChat.skillLoaded}
               onSend={(p) => void send(p)}
               onStop={stop}
-              onApprove={(a) => void approve(a)}
+              onApprove={(id, a) => void approve(id, a)}
             />
             <Composer
               disabled={currentChat.running}
@@ -885,7 +1116,7 @@ export default function App() {
             onPointerDown={toolPanelResize.startDrag}
             onDoubleClick={toolPanelResize.reset}
           />
-          <ToolPanel contextStats={currentChat.contextStats} mcpServers={mcpServers} tools={registeredTools} />
+          <ToolPanel contextStats={currentChat.contextStats} mcpServers={mcpServers} tools={registeredTools} todos={currentChat.todos} />
         </>
       )}
       {showSettings && (

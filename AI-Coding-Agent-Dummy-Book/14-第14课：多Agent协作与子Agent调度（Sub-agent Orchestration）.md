@@ -161,6 +161,28 @@ async def main():
         print(f"\nSubAgent #{idx+1} Summary:\n{res['summary']}")
 ```
 
+#### 5. 可见性闭环：子 Agent 事件的命名空间转发（v0.14）
+
+上下文隔离有一个副作用：子 Agent 在自己的 kernel 里干活，**父事件总线上看不到任何动静**——用户盯着界面，只知道"在跑"，不知道跑到了哪一步。v0.14 用"命名空间转发"补上这块：
+
+```python
+# sub_agent.py：订阅子 kernel 事件 → 改名转发到父总线
+def _forward_progress(event_name, payload):
+    item = {"subagentId": sub_id, "role": role, "kind": event_name,
+            "callId": current_tool_call.get()}          # ContextVar 取父任务的调用 ID
+    ...  # llm:turn_start / tool:before_execute / tool:after_execute
+    await parent_events.emit("subagent:progress", item)
+
+sub_kernel.events.on("tool:before_execute",
+                     lambda p: _forward_progress("tool:before_execute", p))
+```
+
+三个关键决策：
+
+1. **隔离与可见性的边界**：转发的是"活动元数据"（工具名、参数摘要截断 100 字符、状态、耗时），**不是上下文本身**——隔离原则不被破坏，前端拿到的是"演出海报"而不是"后台剧本"；
+2. **`callId` 全链路关联**：`spawn_sub_agent` 执行时通过 `contextvars.ContextVar` 记录当前工具调用 ID，所有子 Agent 事件带上它——前端据此把活动挂到正确的卡片上。没有它，并行派生两个子 Agent 时，两个卡片的活动会互相串门；
+3. **配套的并行化**：v0.14 同步让 AgentLoop 支持同轮多工具并行（`asyncio.gather`），此时"按工具名匹配最后一张 running 卡"的老启发式必然错配（同名工具并行），`callId` 精确匹配从"锦上添花"升级为"必需品"。含写类工具的轮次仍整轮串行——`write A` 和 `read A` 的顺序依赖不能赌。
+
 ### 本课小结
 
 在本课中，我们掌握了复杂 Agent 架构设计的高级模式：

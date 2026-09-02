@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import os
@@ -32,6 +33,11 @@ class ChatRequest(BaseModel):
     prompt: str
     task_id: Optional[str] = None
     agent_id: Optional[str] = None
+
+
+class CompactRequest(BaseModel):
+    session_id: str
+    focus: str = ""
 
 
 class StopRequest(BaseModel):
@@ -77,6 +83,19 @@ class LLMConfigRequest(BaseModel):
 class LLMTestRequest(BaseModel):
     provider_id: Optional[str] = None
     overrides: Optional[Dict[str, Any]] = None
+
+
+class SkillCreateRequest(BaseModel):
+    name: str
+    description: str
+    scope: str = "workspace"
+
+
+class SkillImportRequest(BaseModel):
+    source: Optional[str] = None          # 本地目录 / zip 文件路径 / GitHub URL
+    zip_base64: Optional[str] = None      # 前端上传的 zip（base64）
+    scope: str = "workspace"
+    name: Optional[str] = None            # 覆盖技能名（单技能来源时）
 
 
 # ---------------------------------------------------------------- 鉴权
@@ -224,7 +243,22 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
             _check_auth(request)
         if not session_id:
             return {"session": {}}
-        return {"session": app.get_context_session_stats(session_id)}
+        # 会话生效模型（会话覆盖 > 全局默认）及对应上下文窗口，
+        # 让前端在切换模型/重开会话时立即刷新「上下文情况」面板，而非等下一轮 SSE
+        snapshot = app.session_store.load(session_id)
+        override = snapshot.metadata.get("model") if snapshot else None
+        if not isinstance(override, dict):
+            override = None
+        provider_id = override.get("provider") if override else app.llm_registry.active
+        if override and override.get("model"):
+            model_name = override["model"]
+        else:
+            model_name = app.llm_registry.get_active_provider_settings().get("model", "")
+        return {
+            "model": model_name,
+            "context_window": app.llm_registry.get_context_window(provider_id, model_name),
+            "session": app.get_context_session_stats(session_id),
+        }
 
     # ------------------------------------------------------------ 安全规则
 
@@ -361,6 +395,76 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
             "provider": override["provider"] if override else app.llm_registry.active,
             "model": override["model"] if override else default.get("model", ""),
         }}
+
+    # ------------------------------------------------------------ Skills 与命令
+
+    @fast_app.get("/api/skills")
+    async def list_skills(request: Request):
+        _check_auth(request)
+        try:
+            return {"skills": app.skills_list()}
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @fast_app.get("/api/skills/{name}")
+    async def read_skill(name: str, request: Request):
+        _check_auth(request)
+        content = app.skills_read(name)
+        if content is None:
+            raise HTTPException(status_code=404, detail=f"技能 {name!r} 不存在")
+        return {"name": name, "content": content}
+
+    @fast_app.post("/api/skills/create")
+    async def create_skill(payload: SkillCreateRequest, request: Request):
+        _check_auth(request)
+        try:
+            return app.skills_create(payload.name, payload.description, payload.scope)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @fast_app.post("/api/skills/import")
+    async def import_skill(payload: SkillImportRequest, request: Request):
+        _check_auth(request)
+        try:
+            if payload.zip_base64:
+                data = base64.b64decode(payload.zip_base64)
+                return {"skills": app.skills_import_zip(data, payload.scope, payload.name)}
+            if payload.source:
+                return {"skills": app.skills_import(payload.source, payload.scope, payload.name)}
+            raise ValueError("需要 source（目录/zip/GitHub URL）或 zip_base64")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc))
+
+    @fast_app.delete("/api/skills/{name}")
+    async def delete_skill(name: str, request: Request, scope: str = "workspace"):
+        _check_auth(request)
+        try:
+            return app.skills_delete(name, scope)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @fast_app.get("/api/commands")
+    async def list_commands(request: Request):
+        _check_auth(request)
+        return {"commands": app.commands_list()}
+
+    @fast_app.post("/api/compact")
+    async def compact_session(payload: CompactRequest, request: Request):
+        """手动压缩会话上下文：旧轮次摘要化，最近 N 轮原样保留，立即落盘。"""
+        _check_auth(request)
+        _require_workspace()
+        session_id = payload.session_id.strip()
+        if not session_id:
+            raise HTTPException(status_code=400, detail="session_id 不能为空")
+        # 运行中任务的内存历史会在下轮落盘时覆盖压缩结果，必须拒绝
+        if tasks.active_for_session(session_id) is not None:
+            raise HTTPException(status_code=409, detail="任务运行中无法压缩，请先停止任务")
+        result = await app.compact_session(session_id, focus=(payload.focus or "").strip())
+        if not result.get("ok"):
+            raise HTTPException(status_code=400, detail=result.get("reason", "压缩失败"))
+        return result
 
     # ------------------------------------------------------------ 工具与工作区
 
@@ -558,6 +662,11 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
         if not prompt:
             raise HTTPException(status_code=400, detail="prompt 不能为空")
 
+        handle = tasks.active_for_session(session_id)
+        if handle is not None:
+            # 会话已有任务在跑：本次输入作为补充指令排队，下一回合注入对话
+            handle.queue_input(prompt)
+            return {"task_id": handle.task_id, "queued": True}
         handle = tasks.start(session_id, prompt, agent_id=payload.agent_id)
         return {"task_id": handle.task_id}
 

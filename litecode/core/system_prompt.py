@@ -68,13 +68,17 @@ class SystemPromptBuilder:
         return "\n\n".join(sections)
 
     @classmethod
-    def build(cls, cwd: str, tools: List[ToolDefinition], agent_prompt: Optional[str] = None) -> str:
+    def build(cls, cwd: str, tools: List[ToolDefinition], agent_prompt: Optional[str] = None,
+              skill_extra: Optional[str] = None) -> str:
         """构建任务级静态 System Prompt。
 
         agent_prompt：Agent 专属角色提示（如 Plan 的规划型人格）。注入位置在
         共享的「强制交付要求」之后、环境信息之前——两个 Agent 仍共享最前面的
         交付要求段；agent_prompt 为 None 时（build）输出与旧版逐字节一致，
         已有会话的 Prompt 缓存前缀不受影响。
+        skill_extra：本任务显式/自动命中的技能内容（/skill 命令或 triggers
+        匹配），追加到技能索引段之后。任务级注入——不进会话历史，任务内
+        所有调用共享（缓存前缀稳定），任务结束即消失。
         """
         os_name = f"{platform.system()} {platform.release()} ({platform.machine()})"
         tools_summary = "\n".join(f"- **{t.name}**: {t.description}" for t in tools)
@@ -96,6 +100,12 @@ class SystemPromptBuilder:
             "需要专项流程时，使用 `load_skill` 按名称加载完整 SKILL.md；不要猜测技能内容。\n"
             f"{skill_index}"
         )
+        if skill_extra:
+            skill_section += (
+                "\n\n### 本任务已加载技能\n"
+                "以下技能内容由 /skill 命令或自动匹配注入，请优先遵循其指引：\n"
+                f"{skill_extra}"
+            )
         # Agent 角色段：专属提示优先（Plan/自定义 Agent），否则通用角色行
         role_section = agent_prompt.strip() if agent_prompt and agent_prompt.strip() else (
             "你是一个专业的 AI 软件工程师 Code Agent，运行在用户本地的开发环境中。"

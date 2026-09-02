@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 import uuid
 from typing import Any, Dict, List, Optional
@@ -77,7 +78,8 @@ class SubAgentRunner:
             exclude=["spawn_sub_agent"],  # 子 Agent 不再嵌套派生，防止失控
             permissions=permissions,
         )
-        sub_kernel = self.app.create_kernel(f"sub_{uuid.uuid4().hex[:8]}", registry=registry)
+        sub_id = f"sub_{uuid.uuid4().hex[:8]}"
+        sub_kernel = self.app.create_kernel(sub_id, registry=registry)
         tools: List[ToolDefinition] = registry.get_tools()
 
         system = (
@@ -103,10 +105,59 @@ class SubAgentRunner:
         logger.info('[SubAgent] 派生子 Agent role=%s task="%s..."',
                     role, task_description[:60])
 
+        # 内部活动转发：子 kernel 事件命名空间化为 subagent:progress 发到父事件总线，
+        # 前端按 callId 关联到 spawn_sub_agent 卡片，实现实时可见（隔离上下文不丢失）
+        parent_bus = parent_events
+        call_id = None
+        try:
+            from ..core.agent_loop import current_tool_call
+            call_id = current_tool_call.get()
+        except Exception:
+            call_id = None
+
+        def _brief(data: Any) -> str:
+            try:
+                s = json.dumps(data, ensure_ascii=False)
+            except Exception:
+                s = str(data)
+            return s[:100] + ("…" if len(s) > 100 else "")
+
+        async def _forward_progress(event_name: str, payload: Any) -> None:
+            if parent_bus is None:
+                return
+            data = payload or {}
+            item: Dict[str, Any] = {
+                "subagentId": sub_id, "role": role, "kind": event_name, "callId": call_id,
+            }
+            if event_name == "llm:turn_start":
+                item.update({"turn": data.get("turn")})
+            elif event_name == "tool:before_execute":
+                item.update({
+                    "tool": data.get("toolName"), "brief": _brief(data.get("args")),
+                    "status": "running",
+                })
+            elif event_name == "tool:after_execute":
+                item.update({
+                    "tool": data.get("toolName"), "status": data.get("status") or "done",
+                    "durationMs": data.get("durationMs"),
+                })
+            else:
+                return
+            try:
+                await parent_bus.emit("subagent:progress", item)
+            except Exception:
+                logger.debug("[SubAgent] progress 转发失败", exc_info=True)
+
+        sub_kernel.events.on("llm:turn_start", lambda p: _forward_progress("llm:turn_start", p))
+        sub_kernel.events.on("tool:before_execute", lambda p: _forward_progress("tool:before_execute", p))
+        sub_kernel.events.on("tool:after_execute", lambda p: _forward_progress("tool:after_execute", p))
+
         if parent_events is not None:
             await parent_events.emit("subagent:started", {
                 "task": task_description,
                 "role": role,
+                "subagentId": sub_id,
+                "callId": call_id,
             })
 
         summary, stats = await loop.run_task(
@@ -119,6 +170,8 @@ class SubAgentRunner:
         completed_payload = {
             "task": task_description,
             "role": role,
+            "subagentId": sub_id,
+            "callId": call_id,
             "tokens_used": stats["input_tokens"] + stats["output_tokens"],
             "turns": stats["turns"],
             "summary": summary,

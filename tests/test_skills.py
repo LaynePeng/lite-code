@@ -1,7 +1,26 @@
 import asyncio
+import io
+import json
+import zipfile
+
+import pytest
 
 from litecode.core.system_prompt import SystemPromptBuilder
-from litecode.tools.skills import SkillsTools
+from litecode.tools.skills import (
+    SkillsTools,
+    parse_frontmatter,
+)
+
+
+def _make_skill(base, name, description="Review workflow", triggers=None, body="Run tests first."):
+    skill_dir = base / ".agents" / "skills" / name
+    skill_dir.mkdir(parents=True)
+    fm = "---\nname: {n}\ndescription: {d}\n".format(n=name, d=description)
+    if triggers:
+        fm += "triggers: {t}\n".format(t=triggers)
+    fm += "---\n\n# " + name + "\n\n" + body
+    (skill_dir / "SKILL.md").write_text(fm, encoding="utf-8")
+    return skill_dir
 
 
 def test_skill_index_and_load(tmp_path):
@@ -20,3 +39,164 @@ def test_project_instructions_support_claude_uppercase(tmp_path):
     prompt = SystemPromptBuilder.build(str(tmp_path), [])
     assert "Use the repository style." in prompt
     assert "load_skill" in prompt
+
+
+# ---------------------------------------------------------------- frontmatter
+
+def test_parse_frontmatter_flat_and_nested():
+    text = "---\nname: my-skill\ndescription: 测试技能\nlicense: MIT\nmetadata:\n  audience: devs\n---\nbody"
+    meta = parse_frontmatter(text)
+    assert meta["name"] == "my-skill"
+    assert meta["description"] == "测试技能"
+    assert meta["license"] == "MIT"
+    assert meta["metadata"] == {"audience": "devs"}
+
+
+def test_parse_frontmatter_absent():
+    assert parse_frontmatter("no frontmatter here") == {}
+
+
+# ---------------------------------------------------------------- 列表与读取
+
+def test_list_skills_with_scope_and_writable(tmp_path):
+    _make_skill(tmp_path, "review")
+    tools = SkillsTools(str(tmp_path))
+    skills = tools.list_skills()
+    assert len(skills) == 1
+    s = skills[0]
+    assert s["name"] == "review"
+    assert s["scope"] == "workspace"
+    assert s["writable"] is True
+    assert s["description"] == "Review workflow"
+
+
+def test_workspace_none_user_scope_only(tmp_path, monkeypatch):
+    """桌面版未开项目：workspace=None 时仅用户级技能可见。"""
+    monkeypatch.setenv("USERPROFILE" , str(tmp_path))  # Windows 家目录
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _make_skill(tmp_path, "user-skill", description="User level")
+    tools = SkillsTools(None)
+    assert tools.workspace is None
+    skills = tools.list_skills()
+    assert [s["name"] for s in skills] == ["user-skill"]
+    assert skills[0]["scope"] == "user"
+
+
+def test_read_skill_and_match_triggers(tmp_path):
+    _make_skill(tmp_path, "review", triggers="审查, review, code review")
+    tools = SkillsTools(str(tmp_path))
+    assert "Run tests first." in tools.read_skill("review")
+    assert [s["name"] for s in tools.match_skills("帮我 review 一下这段代码")] == ["review"]
+    assert [s["name"] for s in tools.match_skills("审查这个 PR")] == ["review"]
+    assert tools.match_skills("无关任务") == []
+
+
+# ---------------------------------------------------------------- 创建/删除
+
+def test_create_and_delete_skill(tmp_path):
+    tools = SkillsTools(str(tmp_path))
+    r = tools.create_skill("my-new-skill", "临时技能", "workspace")
+    assert r["ok"] is True
+    assert (tmp_path / ".agents" / "skills" / "my-new-skill" / "SKILL.md").is_file()
+    names = [s["name"] for s in tools.list_skills()]
+    assert "my-new-skill" in names
+    d = tools.delete_skill("my-new-skill", "workspace")
+    assert d["ok"] is True
+    assert "my-new-skill" not in [s["name"] for s in tools.list_skills()]
+
+
+def test_delete_readonly_scope_rejected(tmp_path):
+    """第三方目录（.claude/skills）只读：删除必须拒绝。"""
+    claude_dir = tmp_path / ".claude" / "skills" / "third-party"
+    claude_dir.mkdir(parents=True)
+    (claude_dir / "SKILL.md").write_text("---\nname: third-party\ndescription: x\n---\n", encoding="utf-8")
+    tools = SkillsTools(str(tmp_path))
+    with pytest.raises(ValueError):
+        tools.delete_skill("third-party", "workspace")
+
+
+def test_create_rejects_duplicate_and_bad_name(tmp_path):
+    _make_skill(tmp_path, "review")
+    tools = SkillsTools(str(tmp_path))
+    with pytest.raises(ValueError):
+        tools.create_skill("review", "dup", "workspace")
+    with pytest.raises(ValueError):
+        tools.create_skill("../escape", "bad", "workspace")
+    with pytest.raises(ValueError):
+        tools.create_skill("a/b", "bad", "workspace")
+
+
+# ---------------------------------------------------------------- 导入
+
+def test_import_from_local_dir(tmp_path, tmp_path_factory):
+    src_base = tmp_path_factory.mktemp("src")
+    src = src_base / "my-tool"
+    src.mkdir()
+    (src / "SKILL.md").write_text("---\nname: imported-skill\ndescription: 导入测试\n---\n正文", encoding="utf-8")
+    tools = SkillsTools(str(tmp_path))
+    results = tools.import_skill(str(src), "workspace")
+    assert len(results) == 1
+    assert results[0]["name"] == "imported-skill"
+    assert (tmp_path / ".agents" / "skills" / "imported-skill" / "SKILL.md").is_file()
+
+
+def test_import_zip_three_layouts(tmp_path):
+    tools = SkillsTools(str(tmp_path))
+
+    def _zip_bytes(files: dict) -> bytes:
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            for fname, content in files.items():
+                zf.writestr(fname, content)
+        return buf.getvalue()
+
+    skill_md = "---\nname: zipped\ndescription: zip 导入\n---\nZIPBODY"
+    # 布局1：SKILL.md 在 zip 根
+    r1 = tools.import_zip_bytes(_zip_bytes({"SKILL.md": skill_md}), "workspace")
+    assert r1[0]["name"] == "zipped"
+    # 布局2：单顶层目录
+    r2 = tools.import_zip_bytes(
+        _zip_bytes({"my-skill/SKILL.md": "---\nname: layout2\ndescription: zip 导入\n---\nZIPBODY"}),
+        "workspace")
+    assert r2[0]["name"] == "layout2"
+    # 布局3：多技能仓库
+    r3 = tools.import_zip_bytes(_zip_bytes({
+        "repo-main/skills-a/SKILL.md": "---\nname: skills-a\ndescription: A\n---\nA",
+        "repo-main/skills-b/SKILL.md": "---\nname: skills-b\ndescription: B\n---\nB",
+        "repo-main/README.md": "readme",
+    }), "workspace")
+    assert {r["name"] for r in r3} == {"skills-a", "skills-b"}
+
+
+def test_import_zip_slip_blocked(tmp_path):
+    tools = SkillsTools(str(tmp_path))
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("../evil.txt", "malicious")
+        zf.writestr("SKILL.md", "---\nname: evil\ndescription: x\n---\n")
+    with pytest.raises(ValueError):
+        tools.import_zip_bytes(buf.getvalue(), "workspace")
+    assert not (tmp_path / "evil.txt").exists()
+
+
+def test_import_duplicate_rejected(tmp_path):
+    _make_skill(tmp_path, "review")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "SKILL.md").write_text("---\nname: review\ndescription: dup\n---\n", encoding="utf-8")
+    tools = SkillsTools(str(tmp_path))
+    with pytest.raises(ValueError):
+        tools.import_skill(str(src), "workspace")
+
+
+def test_skill_extra_injected_into_system_prompt_only(tmp_path):
+    """/skill 与 triggers 命中注入 system prompt，不进会话历史。"""
+    _make_skill(tmp_path, "review", triggers="审查, review")
+    from types import SimpleNamespace
+
+    from litecode.server.tasks import TaskManager
+    tm = TaskManager.__new__(TaskManager)  # 不走完整依赖，仅测解析函数
+    tm.app = SimpleNamespace(workspace=str(tmp_path))
+    extra, names = TaskManager._resolve_skill_extra(tm, "帮我 review 这段代码")
+    assert extra is not None and "Run tests first." in extra
+    assert names == ["review"]

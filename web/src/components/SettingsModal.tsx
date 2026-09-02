@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "../api";
-import type { LLMConfig, LLMProviderMeta, LLMProviderSettings, MCPServerConfig, MCPServerStatus } from "../types";
+import type { LLMConfig, LLMProviderMeta, LLMProviderSettings, MCPServerConfig, MCPServerStatus, SkillInfo } from "../types";
 
 export default function SettingsModal({
   onClose,
@@ -16,7 +16,56 @@ export default function SettingsModal({
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<"llm" | "mcp">("llm");
+  const [activeTab, setActiveTab] = useState<"llm" | "mcp" | "skills">("llm");
+
+  // Skills 管理（独立于 LLM/MCP 配置，操作即时生效）
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [skillContent, setSkillContent] = useState<{ name: string; content: string } | null>(null);
+  const [skillBusy, setSkillBusy] = useState(false);
+  const [skillMsg, setSkillMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [newSkill, setNewSkill] = useState({ name: "", description: "" });
+
+  const refreshSkills = useCallback(() => {
+    api.skills().then((r) => setSkills(r.skills)).catch(() => setSkills([]));
+  }, []);
+
+  useEffect(() => {
+    refreshSkills();
+  }, [refreshSkills]);
+
+  // ------------------------------------------------------------ Skills 操作
+
+  const skillAction = useCallback(async (fn: () => Promise<string>) => {
+    setSkillBusy(true);
+    setSkillMsg(null);
+    try {
+      const text = await fn();
+      setSkillMsg({ ok: true, text });
+      refreshSkills();
+    } catch (e) {
+      setSkillMsg({ ok: false, text: (e as Error).message });
+    } finally {
+      setSkillBusy(false);
+    }
+  }, [refreshSkills]);
+
+  const handleImport = (source?: string, zipBase64?: string) => {
+    const scope = window.prompt("导入到哪个范围？输入 workspace（需已打开项目）或 user", "workspace");
+    if (!scope) return;
+    void skillAction(async () => {
+      const r = await api.importSkill({ source, zip_base64: zipBase64, scope, name: undefined });
+      return `已导入: ${r.skills.map((s) => s.name).join(", ")}`;
+    });
+  };
+
+  const handleZipFile = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = (reader.result as string).split(",")[1] ?? "";
+      handleImport(undefined, base64);
+    };
+    reader.readAsDataURL(file);
+  };
 
   // MCP 服务器配置（独立于 LLM 配置保存，保存即热重连）
   const [mcpServers, setMcpServers] = useState<Record<string, MCPServerConfig>>({});
@@ -71,6 +120,32 @@ export default function SettingsModal({
     setMcpServers((prev) => {
       const copy = { ...prev };
       delete copy[name];
+      return copy;
+    });
+  };
+
+  const [renamingMcp, setRenamingMcp] = useState<{ from: string; value: string } | null>(null);
+
+  const renameMcpServer = (from: string, to: string) => {
+    const newName = to.trim().replace(/\s+/g, "-");
+    setRenamingMcp(null);
+    if (!newName || newName === from) return;
+    if (newName in mcpServers) {
+      window.alert(`已存在同名服务器「${newName}」`);
+      return;
+    }
+    // 保持原有键顺序，仅替换键名（保存时全量替换重连，工具前缀 mcp_<name>_ 随之更新）
+    setMcpServers((prev) => {
+      const next: Record<string, MCPServerConfig> = {};
+      for (const [k, v] of Object.entries(prev)) next[k === from ? newName : k] = v;
+      return next;
+    });
+    // 参数草稿的键也要跟着迁移
+    setMcpArgsText((prev) => {
+      if (!(from in prev)) return prev;
+      const copy = { ...prev };
+      copy[newName] = copy[from];
+      delete copy[from];
       return copy;
     });
   };
@@ -222,6 +297,12 @@ export default function SettingsModal({
               onClick={() => setActiveTab("mcp")}
             >
               MCP Server
+            </button>
+            <button
+              className={`settings-tab ${activeTab === "skills" ? "active" : ""}`}
+              onClick={() => setActiveTab("skills")}
+            >
+              Skills
             </button>
           </div>
 
@@ -378,7 +459,7 @@ export default function SettingsModal({
                 </div>
               )}
             </>
-          ) : (
+          ) : activeTab === "mcp" ? (
             <div className="settings-section">
               <div className="mcp-section-head">
                 <h3>MCP Server（stdio）</h3>
@@ -393,12 +474,39 @@ export default function SettingsModal({
                 return (
                   <div className="mcp-server-card" key={name}>
                     <div className="mcp-server-row">
-                      <input
-                        className="form-input mcp-name"
-                        value={name}
-                        readOnly
-                        title="服务器名（新增后不可改，删除重建）"
-                      />
+                      {renamingMcp?.from === name ? (
+                        <>
+                          <input
+                            className="form-input mcp-name"
+                            autoFocus
+                            value={renamingMcp.value}
+                            onChange={(e) => setRenamingMcp({ from: name, value: e.target.value })}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") renameMcpServer(name, renamingMcp.value);
+                              if (e.key === "Escape") setRenamingMcp(null);
+                            }}
+                            placeholder="新名称（作为工具前缀 mcp_<name>_）"
+                          />
+                          <button className="btn-test" title="确认改名" onClick={() => renameMcpServer(name, renamingMcp.value)}>✔</button>
+                          <button className="btn-test mcp-remove" title="取消" onClick={() => setRenamingMcp(null)}>✕</button>
+                        </>
+                      ) : (
+                        <>
+                          <input
+                            className="form-input mcp-name"
+                            value={name}
+                            readOnly
+                            title="服务器名（点击 ✏️ 改名，保存后生效；工具前缀 mcp_<name>_ 随之更新）"
+                          />
+                          <button
+                            className="btn-test"
+                            title="重命名此服务器"
+                            onClick={() => setRenamingMcp({ from: name, value: name })}
+                          >
+                            ✏️
+                          </button>
+                        </>
+                      )}
                       <label className="mcp-toggle" title="禁用的服务器不连接">
                         <input
                           type="checkbox"
@@ -446,7 +554,95 @@ export default function SettingsModal({
               </div>
               {mcpResult && <div className="test-result ok">{mcpResult}</div>}
             </div>
-          )}
+          ) : activeTab === "skills" ? (
+            <div className="settings-section">
+              <h3>技能（Skills）</h3>
+              <p className="mcp-hint">
+                技能是 <code>.agents/skills/&lt;名称&gt;/SKILL.md</code>（frontmatter: name/description/triggers）。
+                Agent 通过技能索引自主加载，也可用 <code>/skill &lt;名称&gt;</code> 显式注入当前任务。
+                仅 <code>.agents/skills</code> 可写；<code>.claude/.opencode</code> 等第三方目录只读。
+              </p>
+
+              {skillMsg && <div className={`test-result ${skillMsg.ok ? "ok" : "error"}`}>{skillMsg.text}</div>}
+
+              <div className="mcp-section-head">
+                <span>已安装 {skills.length} 个技能</span>
+                <label className="btn-test" style={{ cursor: "pointer" }}>
+                  📤 导入 zip
+                  <input type="file" accept=".zip" style={{ display: "none" }}
+                    onChange={(e) => { const f = e.target.files?.[0]; if (f) handleZipFile(f); e.target.value = ""; }} />
+                </label>
+              </div>
+
+              <div className="skills-import-row">
+                <input className="form-input" placeholder="本地目录路径或 GitHub URL（https://github.com/owner/repo）"
+                  id="skill-import-source" disabled={skillBusy} />
+                <button className="btn-test" disabled={skillBusy}
+                  onClick={() => {
+                    const el = document.getElementById("skill-import-source") as HTMLInputElement | null;
+                    const v = el?.value.trim();
+                    if (v) handleImport(v);
+                  }}>导入</button>
+              </div>
+
+              <div className="skills-create-row">
+                <input className="form-input" placeholder="新技能名（kebab-case）" value={newSkill.name}
+                  onChange={(e) => setNewSkill({ ...newSkill, name: e.target.value })} disabled={skillBusy} />
+                <input className="form-input" placeholder="一句话描述" value={newSkill.description}
+                  onChange={(e) => setNewSkill({ ...newSkill, description: e.target.value })} disabled={skillBusy} />
+                <button className="btn-test" disabled={skillBusy || !newSkill.name.trim()}
+                  onClick={() => void skillAction(async () => {
+                    const r = await api.createSkill(newSkill.name.trim(), newSkill.description.trim() || "（未填写描述）", "workspace");
+                    setNewSkill({ name: "", description: "" });
+                    return `已创建 ${r.name}`;
+                  })}>新建</button>
+              </div>
+
+              <div className="skills-list">
+                {skills.length === 0 && <div className="mcp-empty">暂无技能。可导入 zip / 本地目录 / GitHub 仓库，或新建模板。</div>}
+                {skills.map((s) => (
+                  <div className="skill-item" key={`${s.scope}-${s.name}`}>
+                    <div className="skill-item-main">
+                      <span className="skill-item-name">{s.name}</span>
+                      <span className={`skill-scope ${s.scope}`}>{s.scope === "user" ? "用户级" : "工作区"}</span>
+                      {!s.writable && <span className="skill-readonly" title="第三方目录只读">只读</span>}
+                      <span className="skill-item-desc" title={s.description}>{s.description || "（无描述）"}</span>
+                    </div>
+                    <div className="skill-item-actions">
+                      <button className="btn-test" disabled={skillBusy}
+                        onClick={() => void skillAction(async () => {
+                          const r = await api.readSkill(s.name);
+                          setSkillContent({ name: s.name, content: r.content });
+                          return `已加载 ${s.name}`;
+                        })}>查看</button>
+                      {s.writable && (
+                        <button className="btn-test" disabled={skillBusy}
+                          onClick={() => {
+                            if (window.confirm(`确定删除技能 ${s.name}？（${s.scope === "user" ? "用户级" : "工作区"}）`)) {
+                              void skillAction(async () => {
+                                await api.deleteSkill(s.name, s.scope);
+                                if (skillContent?.name === s.name) setSkillContent(null);
+                                return `已删除 ${s.name}`;
+                              });
+                            }
+                          }}>删除</button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {skillContent && (
+                <div className="skill-viewer">
+                  <div className="skill-viewer-head">
+                    <span>{skillContent.name} / SKILL.md</span>
+                    <button className="modal-close" onClick={() => setSkillContent(null)}>✕</button>
+                  </div>
+                  <pre className="skill-viewer-body">{skillContent.content}</pre>
+                </div>
+              )}
+            </div>
+          ) : null}
         </div>
       </div>
     </div>

@@ -34,7 +34,9 @@ class TypedEventBus:
         "stats:update": dict,
         "context:stats": dict,
         "subagent:started": dict,
+        "subagent:progress": dict,
         "subagent:completed": dict,
+        "skill:loaded": dict,
     }
 
     def __init__(self) -> None:

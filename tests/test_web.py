@@ -284,7 +284,9 @@ def test_webfetch_registered_in_full_registry(tmp_path):
     registry = app.build_registry()
     assert registry.has("webfetch")
     assert registry.has("webfetch_batch")
-    assert len(registry.get_tools()) == 20
+    # 20 基础工具 + todo_write（任务 TODO 清单）
+    assert len(registry.get_tools()) == 21
+    assert registry.has("todo_write")
 
 
 def test_webfetch_kept_in_plan_agent(tmp_path):
