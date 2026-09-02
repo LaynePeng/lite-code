@@ -103,6 +103,8 @@ export interface AppConfig {
   auto_approve: boolean;
   context_full_turns?: number;
   pricing: { input_per_mtok: number; output_per_mtok: number };
+  /** 技能权限规则：glob 模式 → allow/deny/ask */
+  skill_permissions?: Record<string, "allow" | "deny" | "ask">;
 }
 
 export interface ContextTaskStats {
@@ -332,6 +334,8 @@ export interface SkillInfo {
   scope: "workspace" | "user";
   writable: boolean;
   triggers: string;
+  /** 权限动作：allow（默认）/ deny（对 Agent 隐藏）/ ask（使用前需确认） */
+  permission?: "allow" | "deny" | "ask";
 }
 
 export interface CommandInfo {

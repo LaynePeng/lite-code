@@ -24,6 +24,9 @@ export default function SettingsModal({
   const [skillBusy, setSkillBusy] = useState(false);
   const [skillMsg, setSkillMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [newSkill, setNewSkill] = useState({ name: "", description: "" });
+  // 技能权限规则（glob → allow/deny/ask），保存走 /api/config
+  const [permRules, setPermRules] = useState<Array<{ pattern: string; action: "allow" | "deny" | "ask" }>>([]);
+  const [permDirty, setPermDirty] = useState(false);
 
   const refreshSkills = useCallback(() => {
     api.skills().then((r) => setSkills(r.skills)).catch(() => setSkills([]));
@@ -31,7 +34,28 @@ export default function SettingsModal({
 
   useEffect(() => {
     refreshSkills();
+    // 拉取技能权限规则（config.json 的 skill_permissions）
+    api.config().then((c) => {
+      const rules = c.skill_permissions || {};
+      setPermRules(Object.entries(rules).map(([pattern, action]) => ({
+        pattern, action: (action as "allow" | "deny" | "ask") || "allow",
+      })));
+      setPermDirty(false);
+    }).catch(() => { /* 配置拉取失败不阻塞技能页 */ });
   }, [refreshSkills]);
+
+  const savePermRules = useCallback(async () => {
+    const rules: Record<string, "allow" | "deny" | "ask"> = {};
+    for (const r of permRules) {
+      const p = r.pattern.trim().toLowerCase();
+      if (p) rules[p] = r.action;
+    }
+    await api.updateConfig({ skill_permissions: rules });
+    setPermRules(Object.entries(rules).map(([pattern, action]) => ({ pattern, action })));
+    setPermDirty(false);
+    setSkillMsg({ ok: true, text: "技能权限规则已保存并即时生效" });
+    refreshSkills();
+  }, [permRules, refreshSkills]);
 
   // ------------------------------------------------------------ Skills 操作
 
@@ -561,6 +585,7 @@ export default function SettingsModal({
                 技能是 <code>.agents/skills/&lt;名称&gt;/SKILL.md</code>（frontmatter: name/description/triggers）。
                 Agent 通过技能索引自主加载，也可用 <code>/skill &lt;名称&gt;</code> 显式注入当前任务。
                 仅 <code>.agents/skills</code> 可写；<code>.claude/.opencode</code> 等第三方目录只读。
+                权限规则（glob → allow/deny/ask）：<b>deny</b> 对 Agent 完全隐藏，<b>ask</b> 使用前弹确认。
               </p>
 
               {skillMsg && <div className={`test-result ${skillMsg.ok ? "ok" : "error"}`}>{skillMsg.text}</div>}
@@ -604,6 +629,8 @@ export default function SettingsModal({
                   <div className="skill-item" key={`${s.scope}-${s.name}`}>
                     <div className="skill-item-main">
                       <span className="skill-item-name">{s.name}</span>
+                      {s.permission === "deny" && <span className="skill-perm deny" title="权限规则 deny：对 Agent 隐藏">🚫 禁用</span>}
+                      {s.permission === "ask" && <span className="skill-perm ask" title="权限规则 ask：使用前需确认">❓ 需确认</span>}
                       <span className={`skill-scope ${s.scope}`}>{s.scope === "user" ? "用户级" : "工作区"}</span>
                       {!s.writable && <span className="skill-readonly" title="第三方目录只读">只读</span>}
                       <span className="skill-item-desc" title={s.description}>{s.description || "（无描述）"}</span>
@@ -641,6 +668,47 @@ export default function SettingsModal({
                   <pre className="skill-viewer-body">{skillContent.content}</pre>
                 </div>
               )}
+
+              <div className="mcp-section-head" style={{ marginTop: 18 }}>
+                <span>权限规则（skill_permissions，glob 模式 → 动作）</span>
+                <button className="btn-test" onClick={() => void savePermRules()} disabled={!permDirty && permRules.length === 0}>
+                  {permDirty ? "保存规则" : "已保存"}
+                </button>
+              </div>
+              <p className="mcp-hint">
+                按配置顺序匹配，首个命中的模式生效，未命中默认 allow。示例：<code>internal-*: deny</code>、<code>experimental-*: ask</code>。
+              </p>
+              <div className="skills-perm-editor">
+                {permRules.map((r, i) => (
+                  <div className="skills-perm-row" key={i}>
+                    <input className="form-input" placeholder="模式，如 internal-*"
+                      value={r.pattern}
+                      onChange={(e) => {
+                        const next = [...permRules];
+                        next[i] = { ...r, pattern: e.target.value };
+                        setPermRules(next);
+                        setPermDirty(true);
+                      }} />
+                    <select className="form-input" value={r.action}
+                      onChange={(e) => {
+                        const next = [...permRules];
+                        next[i] = { ...r, action: e.target.value as "allow" | "deny" | "ask" };
+                        setPermRules(next);
+                        setPermDirty(true);
+                      }}>
+                      <option value="allow">allow（允许）</option>
+                      <option value="deny">deny（禁用）</option>
+                      <option value="ask">ask（需确认）</option>
+                    </select>
+                    <button className="modal-close" title="删除规则"
+                      onClick={() => { setPermRules(permRules.filter((_, j) => j !== i)); setPermDirty(true); }}>✕</button>
+                  </div>
+                ))}
+                <button className="btn-test" style={{ marginTop: 6 }}
+                  onClick={() => { setPermRules([...permRules, { pattern: "", action: "deny" }]); setPermDirty(true); }}>
+                  + 添加规则
+                </button>
+              </div>
             </div>
           ) : null}
         </div>

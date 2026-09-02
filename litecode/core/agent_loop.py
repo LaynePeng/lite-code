@@ -119,7 +119,8 @@ class AgentLoop:
 
         # 1. System Prompt 初始化（每任务一次：静态骨架，保证缓存前缀稳定）
         if system_prompt is None:
-            system_prompt = SystemPromptBuilder.build(self.workspace, tools)
+            system_prompt = SystemPromptBuilder.build(
+                self.workspace, tools, skill_index=self._filtered_skill_index())
         if not messages or messages[0].role != "system":
             messages.insert(0, Message(role="system", content=system_prompt))
         else:
@@ -375,6 +376,20 @@ class AgentLoop:
              "result": result_text},
         )
         return result_text
+
+    def _filtered_skill_index(self) -> Optional[str]:
+        """技能索引（过滤 deny 的技能）。kernel 无 app 服务时返回 None 走默认。"""
+        try:
+            app = self.kernel.get_service("app")
+            lines = []
+            for s in app.skills_list():
+                if s.get("permission") == "deny":
+                    continue
+                desc = s.get("description") or "使用该技能目录中的 SKILL.md"
+                lines.append(f"- {s['name']}: {desc}")
+            return "\n".join(lines) or "（当前没有发现可用技能）"
+        except Exception:
+            return None
 
     # ------------------------------------------------------------------ 上下文压缩
 

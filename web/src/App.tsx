@@ -333,11 +333,15 @@ export default function App() {
         const snap = await api.getSession(sid);
         patchChat(sid, { ...EMPTY_CHAT, messages: snap?.messages ?? [] });
         try {
-          // 并行拉取模型覆盖与上下文统计，一次 patch 消除两次 patch 之间的显示闪烁
-          const [model, ctx] = await Promise.all([
+          // 并行拉取模型覆盖、上下文统计与 TODO 看板，一次 patch 消除两次 patch 之间的显示闪烁
+          const [model, ctx, todos] = await Promise.all([
             api.sessionModel(sid).catch(() => null),
             api.contextStats(sid).catch(() => null),
+            api.getTodos(sid).catch(() => null),
           ]);
+          if (todos && Array.isArray(todos.todos)) {
+            patchChat(sid, { todos: todos.todos });
+          }
           if (model) {
             patchChat(sid, { modelOverride: model.override, effectiveModel: model.effective });
           }

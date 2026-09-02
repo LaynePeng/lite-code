@@ -102,9 +102,25 @@ class TaskHandle:
                 agent_prompt = profile.system_prompt
             except KeyError:
                 pass
+            # ask 权限的技能：任务启动前逐个审批，拒绝的不注入
+            ask_names = list(getattr(self, "skill_ask_names", []) or [])
+            if ask_names:
+                for name in ask_names:
+                    ok = await self._approve_skill(name)
+                    extra = self.skill_extra or ""
+                    if ok:
+                        content = self._read_skill_content(name)
+                        if content:
+                            self.skill_extra = (extra + ("\n\n" if extra else "") + content)
+                    else:
+                        # 审批拒绝：从已加载名单剔除，给出可见提示
+                        self.skill_names = [n for n in (self.skill_names or []) if n != name]
+                        note = f"[技能 {name!r} 需要确认，已被操作员拒绝]"
+                        self.skill_extra = (extra + ("\n\n" if extra else "") + note) if extra else note
             system_prompt = SystemPromptBuilder.build(
                 self.app.workspace, self.registry.get_tools(), agent_prompt=agent_prompt,
                 skill_extra=getattr(self, "skill_extra", None),
+                skill_index=self._filtered_skill_index(),
             )
             skill_extra_used = getattr(self, "skill_extra", None)
             if skill_extra_used:
@@ -143,6 +159,39 @@ class TaskHandle:
         if self.task is not None and not self.task.done():
             self.task.cancel()
 
+    async def _approve_skill(self, name: str) -> bool:
+        """ask 权限技能的启动前审批（复用全局审批门 + approval:request 事件）。"""
+        future = self.app.approval_gate.request_approval(
+            f'加载技能 "{name}"', "该技能的权限规则为 ask，使用前需要确认。")
+        approval_id = self.app.approval_gate.current_id(future)
+        await self.kernel.events.emit("approval:request", {
+            "id": approval_id, "action": f'加载技能 "{name}"',
+            "reason": "该技能的权限规则为 ask，使用前需要确认。",
+        })
+        approved = await future
+        await self.kernel.events.emit("approval:resolved", {"id": approval_id, "approved": approved})
+        return approved
+
+    def _read_skill_content(self, name: str) -> Optional[str]:
+        try:
+            from ..tools.skills import SkillsTools
+            return SkillsTools(self.app.workspace).read_skill(name)
+        except Exception:
+            return None
+
+    def _filtered_skill_index(self) -> Optional[str]:
+        """技能索引（过滤 deny 的技能），供 System Prompt 技能段使用。"""
+        try:
+            lines = []
+            for s in self.app.skills_list():
+                if s.get("permission") == "deny":
+                    continue
+                desc = s.get("description") or "使用该技能目录中的 SKILL.md"
+                lines.append(f"- {s['name']}: {desc}")
+            return "\n".join(lines) or "（当前没有发现可用技能）"
+        except Exception:
+            return None
+
 
 class TaskManager:
     def __init__(self, app: AgentApp) -> None:
@@ -168,42 +217,67 @@ class TaskManager:
 
         handle = TaskHandle(task_id, kernel, registry, loop, self.app)
         handle.agent_id = agent_id or "build"
-        handle.skill_extra, handle.skill_names = self._resolve_skill_extra(prompt)
+        handle.skill_extra, handle.skill_names, handle.skill_ask_names = self._resolve_skill_extra(prompt)
         self.tasks[task_id] = handle
         handle.task = asyncio.get_event_loop().create_task(handle.run(prompt))
         return handle
 
-    def _resolve_skill_extra(self, prompt: str) -> Tuple[Optional[str], List[str]]:
-        """/skill 显式命令 + triggers 自动匹配 → 任务级附加技能内容（不进历史）。"""
+    def _resolve_skill_extra(self, prompt: str) -> Tuple[Optional[str], List[str], List[str]]:
+        """技能权限感知的解析：/skill 显式命令 + triggers 自动匹配。
+
+        返回 (skill_content, loaded_names, ask_names)：
+        - allow 的技能直接注入内容；
+        - deny 的技能对 Agent 隐藏——/skill 显式加载给出禁用提示，
+          triggers 自动匹配静默跳过；
+        - ask 的技能延迟到任务启动时（TaskHandle.run）逐个审批后注入。
+        """
         from ..core.commands import parse_skill_command
         try:
             from ..tools.skills import SkillsTools
         except Exception:
-            return None, []
+            return None, [], []
         try:
             skills_tools = SkillsTools(self.app.workspace)
             skill_content = ""
             loaded_names: List[str] = []
+            ask_names: List[str] = []
             cmd = parse_skill_command(prompt)
             if cmd and cmd.get("name"):
-                content = skills_tools.read_skill(cmd["name"])
-                if content:
-                    skill_content += content
-                    loaded_names.append(cmd["name"])
+                name = cmd["name"]
+                action = self.app.skill_permission(name)
+                if action == "deny":
+                    skill_content += f"[技能 {name!r} 已被权限规则禁用，请检查 skill_permissions 配置]"
+                    loaded_names.append(name)
+                elif action == "ask":
+                    ask_names.append(name)
+                    loaded_names.append(name)
                 else:
-                    skill_content += f"[未找到技能 {cmd['name']!r}，请检查名称]"
-                    loaded_names.append(cmd["name"])
+                    content = skills_tools.read_skill(name)
+                    if content:
+                        skill_content += content
+                    else:
+                        skill_content += f"[未找到技能 {name!r}，请检查名称]"
+                    loaded_names.append(name)
             # triggers 自动匹配（/skill 命令时跳过，避免重复注入）
             if not cmd:
                 for skill in skills_tools.match_skills(prompt):
-                    content = skills_tools.read_skill(skill["name"])
+                    name = skill["name"]
+                    action = self.app.skill_permission(name)
+                    if action == "deny":
+                        continue  # deny 对 Agent 隐藏
+                    if action == "ask":
+                        if name not in ask_names:
+                            ask_names.append(name)
+                            loaded_names.append(name)
+                        continue
+                    content = skills_tools.read_skill(name)
                     if content:
                         skill_content += ("\n\n" if skill_content else "") + content
-                        loaded_names.append(skill["name"])
-            return (skill_content or None), loaded_names
+                        loaded_names.append(name)
+            return (skill_content or None), loaded_names, ask_names
         except Exception:
             logger.exception("[TaskManager] 技能解析失败（忽略，不影响任务）")
-            return None, []
+            return None, [], []
 
     def get(self, task_id: str) -> Optional[TaskHandle]:
         return self.tasks.get(task_id)

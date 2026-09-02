@@ -196,7 +196,11 @@ def test_skill_extra_injected_into_system_prompt_only(tmp_path):
 
     from litecode.server.tasks import TaskManager
     tm = TaskManager.__new__(TaskManager)  # 不走完整依赖，仅测解析函数
-    tm.app = SimpleNamespace(workspace=str(tmp_path))
-    extra, names = TaskManager._resolve_skill_extra(tm, "帮我 review 这段代码")
+    tm.app = SimpleNamespace(
+        workspace=str(tmp_path),
+        skill_permission=lambda name: "allow",  # 无权限规则时全部放行
+    )
+    extra, names, ask_names = TaskManager._resolve_skill_extra(tm, "帮我 review 这段代码")
     assert extra is not None and "Run tests first." in extra
     assert names == ["review"]
+    assert ask_names == []

@@ -111,6 +111,11 @@ export const api = {
       method: "POST", body: JSON.stringify({ session_id: sessionId, focus }),
     }),
 
+  getTodos: (sessionId: string) =>
+    req<{ todos: import("./types").TodoItem[] }>(
+      `/api/todos?session_id=${encodeURIComponent(sessionId)}`
+    ),
+
   // ------------------------------------------------------------ Skills 管理与命令
 
   skills: () => req<{ skills: import("./types").SkillInfo[] }>("/api/skills"),

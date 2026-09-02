@@ -45,6 +45,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "approval_timeout": 600,
     "context_full_turns": 2,
     "mcp_servers": {},
+    # 技能权限（对齐 OpenCode permission.skill）：glob 模式 → allow/deny/ask，
+    # 插入序首个命中生效，默认 allow；deny 对 Agent 完全隐藏，ask 使用前需审批
+    "skill_permissions": {},
     # 并行工具执行："auto"（只读轮并行/含写类整轮串行）| "always" | "never"
     "parallel_tool_calls": "auto",
     # 定价（每 M token，美元）：仅作 models.dev 无该模型数据时的回退；
@@ -93,9 +96,10 @@ class AgentApp:
         self._last_task_snapshot: Dict[str, Dict[str, Any]] = {}
         self._load_config()
         self.mcp_manager = MCPManager(self.config.get("mcp_servers") or {})
-        # 任务 TODO 看板（todo_write 工具 + todo:updated 事件）
+        # 任务 TODO 看板（todo_write 工具 + todo:updated 事件 + 看板持久化）
         from .tools.todos import TodoPlugin
-        self.todo_plugin = TodoPlugin()
+        self.todo_plugin = TodoPlugin(
+            storage_dir=os.path.join(self.config_dir, "todo_boards"))
         self.approval_gate = ApprovalGate(
             timeout_seconds=self.config.get("approval_timeout", 600)
         )
@@ -401,7 +405,8 @@ class AgentApp:
             kernel.register_service(TOOLS_SERVICE, ToolRegistry())
             for plugin in self.tool_plugins():
                 kernel.use(plugin)
-        kernel.use(SecurityPlugin(self.guard, self.approval_gate, self.workspace))
+        kernel.use(SecurityPlugin(self.guard, self.approval_gate, self.workspace,
+                                  skill_perm_resolver=self.skill_permission_rules))
         kernel.register_service("app", self)
         return kernel
 
@@ -411,7 +416,20 @@ class AgentApp:
 
     def skills_list(self) -> List[Dict[str, Any]]:
         from .tools.skills import SkillsTools
-        return SkillsTools(self.workspace).list_skills()
+        skills = SkillsTools(self.workspace).list_skills()
+        for s in skills:
+            s["permission"] = self.skill_permission(s.get("name") or "")
+        return skills
+
+    def skill_permission_rules(self) -> Dict[str, str]:
+        """清洗后的技能权限规则（glob 模式 → allow/deny/ask）。"""
+        from .security.skill_permissions import normalize_rules
+        return normalize_rules(self.config.get("skill_permissions"))
+
+    def skill_permission(self, name: str) -> str:
+        """解析单个技能名的动作：allow / deny / ask（默认 allow）。"""
+        from .security.skill_permissions import resolve
+        return resolve(self.skill_permission_rules(), name)
 
     def skills_read(self, name: str) -> Optional[str]:
         from .tools.skills import SkillsTools
@@ -436,7 +454,9 @@ class AgentApp:
     def commands_list(self) -> List[Dict[str, str]]:
         from .core.commands import build_command_list
         try:
-            return build_command_list(self.skills_list())
+            # deny 的技能不派生命令（对 Agent 隐藏的技能对命令面板也隐藏）
+            skills = [s for s in self.skills_list() if s.get("permission") != "deny"]
+            return build_command_list(skills)
         except Exception:
             return build_command_list([])
 

@@ -1,8 +1,9 @@
-"""todo_write 工具测试：校验 / 存储 / 事件推送 / Agent 裁剪。"""
+"""todo_write 工具测试：校验 / 存储 / 事件推送 / Agent 裁剪 / 持久化。"""
 import asyncio
 
 import pytest
 
+from litecode.core.types import Message
 from litecode.tools.todos import TodoPlugin, current_session_id
 
 
@@ -97,3 +98,102 @@ def test_build_registry_exposes_todo_write(tmp_path):
     assert "todo_write" in names
     plan_names = {t.name for t in app.create_agent_registry("plan").get_tools()}
     assert "todo_write" in plan_names
+
+
+# ---------------------------------------------------------------- 持久化
+
+def test_todo_board_persists_and_restores(tmp_path):
+    """todo_write 落盘 → 新插件实例（模拟重启）经 get() 恢复。"""
+    storage = str(tmp_path / "boards")
+    plugin = TodoPlugin(storage_dir=storage)
+    token = current_session_id.set("s-persist")
+    try:
+        result = asyncio.run(plugin.execute(
+            "todo_write",
+            {"todos": [{"content": "第一步", "status": "completed"},
+                       {"content": "第二步", "status": "pending"}]}))
+    finally:
+        current_session_id.reset(token)
+    assert "TODO 清单已更新" in result
+
+    # 新实例（模拟服务重启）：内存为空 → 从磁盘恢复
+    plugin2 = TodoPlugin(storage_dir=storage)
+    todos = plugin2.get("s-persist")
+    assert [t["content"] for t in todos] == ["第一步", "第二步"]
+    assert todos[0]["status"] == "completed"
+
+    # bind() 也会从磁盘恢复（任务启动路径）
+    plugin3 = TodoPlugin(storage_dir=storage)
+    plugin3.bind("s-persist", _EventBus())
+    assert len(plugin3.get("s-persist")) == 2
+
+
+def test_todo_board_delete_board(tmp_path):
+    storage = str(tmp_path / "boards")
+    plugin = TodoPlugin(storage_dir=storage)
+    token = current_session_id.set("s-del")
+    try:
+        asyncio.run(plugin.execute("todo_write", {"todos": [{"content": "x", "status": "pending"}]}))
+    finally:
+        current_session_id.reset(token)
+    assert plugin.get("s-del")
+    plugin.delete_board("s-del")
+    assert plugin.get("s-del") == []
+    plugin2 = TodoPlugin(storage_dir=storage)
+    assert plugin2.get("s-del") == []  # 磁盘也清了
+
+
+def test_todo_board_unsafe_session_id(tmp_path):
+    """诡异 session_id 不炸：非法字符替换，空串不落盘。"""
+    storage = str(tmp_path / "boards")
+    plugin = TodoPlugin(storage_dir=storage)
+    token = current_session_id.set("../../evil")
+    try:
+        result = asyncio.run(plugin.execute("todo_write", {"todos": [{"content": "a", "status": "pending"}]}))
+    finally:
+        current_session_id.reset(token)
+    assert "TODO 清单已更新" in result
+    # 未越界：文件都在 storage 内（非法字符已替换，无路径分隔符）
+    import os
+    for name in os.listdir(storage):
+        assert "/" not in name and "\\" not in name
+    assert plugin.get("../../evil")
+
+
+def test_todo_persistence_endpoint_roundtrip(tmp_path):
+    """App 级：todo_plugin 落盘目录在 config_dir 下；GET /api/todos 恢复看板。"""
+    import os
+
+    from fastapi.testclient import TestClient
+
+    from litecode.app import AgentApp
+    from litecode.server.app import create_app
+
+    app = AgentApp(workspace=str(tmp_path), config_dir=str(tmp_path / ".lc"))
+    assert app.todo_plugin.storage_dir == os.path.join(str(tmp_path / ".lc"), "todo_boards")
+
+    token = current_session_id.set("s-web")
+    try:
+        asyncio.run(app.todo_plugin.execute(
+            "todo_write", {"todos": [{"content": "任务A", "status": "in_progress"}]}))
+    finally:
+        current_session_id.reset(token)
+
+    with TestClient(create_app(app)) as client:
+        r = client.get("/api/todos", params={"session_id": "s-web"})
+        assert r.status_code == 200
+        todos = r.json()["todos"]
+        assert len(todos) == 1 and todos[0]["content"] == "任务A"
+
+        # 模拟重启：全新 App 实例共享 config_dir → 端点返回持久化看板
+        app2 = AgentApp(workspace=str(tmp_path), config_dir=str(tmp_path / ".lc"))
+        with TestClient(create_app(app2)) as client2:
+            r2 = client2.get("/api/todos", params={"session_id": "s-web"})
+            assert r2.json()["todos"][0]["content"] == "任务A"
+
+        # 删除会话 → 看板清理
+        app.session_store.save("s-web", [Message(role="user", content="hi")])
+        with TestClient(create_app(app)) as client3:
+            assert client3.delete("/api/sessions/s-web").status_code == 200
+            r3 = client3.get("/api/todos", params={"session_id": "s-web"})
+            assert r3.json()["todos"] == []

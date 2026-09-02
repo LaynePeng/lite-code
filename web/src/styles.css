@@ -3466,6 +3466,46 @@ body.resizing-row * { cursor: row-resize !important; user-select: none !importan
   flex: none;
 }
 
+/* 技能权限徽标与规则编辑器 */
+.skill-perm {
+  font-size: 11px;
+  border-radius: 10px;
+  padding: 1px 7px;
+  flex: none;
+}
+
+.skill-perm.deny {
+  background: rgba(239, 68, 68, 0.15);
+  color: #ef4444;
+}
+
+.skill-perm.ask {
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+}
+
+.skills-perm-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.skills-perm-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.skills-perm-row .form-input {
+  flex: 1;
+}
+
+.skills-perm-row select.form-input {
+  flex: none;
+  width: 160px;
+}
+
 .skill-item-desc {
   color: var(--text-2);
   font-size: 12px;

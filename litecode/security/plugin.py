@@ -22,16 +22,38 @@ logger = logging.getLogger("litecode.security")
 class SecurityPlugin(Plugin):
     name = "security-plugin"
 
-    def __init__(self, guard: SecurityGuard, approval_gate: ApprovalGate, workspace: str) -> None:
+    def __init__(self, guard: SecurityGuard, approval_gate: ApprovalGate, workspace: str,
+                 skill_perm_resolver=None) -> None:
         self.guard = guard
         self.approval_gate = approval_gate
         self.workspace = os.path.abspath(workspace)
+        # 技能权限规则解析器（返回 {glob: allow/deny/ask}），None 时 load_skill 不做权限过滤
+        self.skill_perm_resolver = skill_perm_resolver
 
     def install(self, kernel: Kernel) -> None:
         @kernel.before_tool.use
         async def _middleware(ctx, data, next):
             tool_name = data.get("toolName", "")
             args = data.get("args", {}) or {}
+
+            # 技能权限（对齐 OpenCode permission.skill）：deny 拒绝 / ask 审批
+            if tool_name == "load_skill" and self.skill_perm_resolver is not None:
+                action = self._skill_action(str(args.get("skillName") or ""))
+                if action == "deny":
+                    data["cancel"] = True
+                    data["reason"] = (f"[Skill Denied]: 技能 {args.get('skillName')!r} "
+                                      f"被权限规则禁用（skill_permissions）")
+                    return await next(data)
+                if action == "ask":
+                    skill_name = str(args.get("skillName") or "")
+                    approved = await self._request_approval(
+                        kernel, f'load_skill("{skill_name}")',
+                        "该技能的权限规则为 ask，加载前需要确认。",
+                    )
+                    if not approved:
+                        data["cancel"] = True
+                        data["reason"] = "[User Rejected]: 技能加载已被拒绝。"
+                        return await next(data)
 
             # 路径型工具过滤
             path_result = self.guard.check_tool(tool_name, args)
@@ -94,6 +116,17 @@ class SecurityPlugin(Plugin):
             return await next(data)
 
         kernel.register_service("security_guard", self.guard)
+
+    def _skill_action(self, skill_name: str) -> str:
+        """解析技能权限动作（allow/deny/ask），规则解析失败按 allow 放行。"""
+        if not skill_name.strip():
+            return "allow"
+        try:
+            from .skill_permissions import resolve
+            return resolve(self.skill_perm_resolver() or {}, skill_name)
+        except Exception:
+            logger.exception("[Security] 技能权限解析失败，按 allow 放行: %s", skill_name)
+            return "allow"
 
     async def _request_approval(self, kernel: Kernel, action: str, reason: str) -> bool:
         future = self.approval_gate.request_approval(action, reason)

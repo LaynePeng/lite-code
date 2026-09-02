@@ -69,7 +69,7 @@ class SystemPromptBuilder:
 
     @classmethod
     def build(cls, cwd: str, tools: List[ToolDefinition], agent_prompt: Optional[str] = None,
-              skill_extra: Optional[str] = None) -> str:
+              skill_extra: Optional[str] = None, skill_index: Optional[str] = None) -> str:
         """构建任务级静态 System Prompt。
 
         agent_prompt：Agent 专属角色提示（如 Plan 的规划型人格）。注入位置在
@@ -83,12 +83,13 @@ class SystemPromptBuilder:
         os_name = f"{platform.system()} {platform.release()} ({platform.machine()})"
         tools_summary = "\n".join(f"- **{t.name}**: {t.description}" for t in tools)
         project_instructions = cls._project_instructions(cwd)
-        skill_index = ""
-        try:
-            from ..tools.skills import SkillsTools
-            skill_index = SkillsTools(cwd).index()
-        except Exception:
-            skill_index = "（技能索引不可用）"
+        skill_index = skill_index if skill_index is not None else ""
+        if not skill_index:
+            try:
+                from ..tools.skills import SkillsTools
+                skill_index = SkillsTools(cwd).index()
+            except Exception:
+                skill_index = "（技能索引不可用）"
         instruction_section = (
             "\n\n### 项目指令 (Project Instructions)\n"
             "以下内容来自 workspace 中的项目指令文件，请在不违反系统安全规则的前提下遵守：\n"

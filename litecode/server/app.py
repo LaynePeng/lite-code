@@ -199,6 +199,7 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
             k: app.config.get(k) for k in (
                 "max_steps", "token_budget", "tool_timeout",
                 "auto_approve", "pricing", "context_full_turns", "llm_timeout",
+                "skill_permissions",
             )
         }
 
@@ -348,7 +349,21 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
         ok = app.session_store.delete(session_id)
         if not ok:
             raise HTTPException(status_code=404, detail="会话不存在")
+        # 附带清理该会话的 TODO 看板（内存 + 磁盘）
+        try:
+            app.todo_plugin.delete_board(session_id)
+        except Exception:
+            pass
         return {"ok": True}
+
+    @fast_app.get("/api/todos")
+    async def get_todos(session_id: str = "", request: Request = None):
+        """读取会话 TODO 看板（内存命中优先，未命中从磁盘恢复；刷新/重启后可还原）。"""
+        if request:
+            _check_auth(request)
+        if not session_id:
+            return {"todos": []}
+        return {"todos": app.todo_plugin.get(session_id.strip())}
 
     @fast_app.get("/api/sessions/{session_id}/model")
     async def get_session_model(session_id: str, request: Request):
