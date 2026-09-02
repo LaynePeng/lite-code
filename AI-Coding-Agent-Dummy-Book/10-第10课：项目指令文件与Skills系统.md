@@ -95,8 +95,10 @@ description: 发布流程：跑测试 → 改版本号 → 打 tag → 发 Relea
 # 发布技能
 
 1. 运行 `pytest -q` 确认全绿
-2. 更新 `pyproject.toml` 版本号
-3. ……（完整工作流程）
+2. 更新 `litecode/__init__.py` 中的 `__version__`（版本单一来源）
+3. 运行 `node scripts/sync-version.mjs` 同步 npm 元数据
+4. 提交改动，创建并推送 `v<版本>` 标签
+5. ……（完整工作流程）
 ```
 
 扫描逻辑与 MCP 工具发现（下一课）异曲同工——**能力自描述，Harness 只做发现与注册**：
@@ -186,7 +188,7 @@ async def execute(self, name: str, args: Dict[str, Any]) -> str:
 ```text
 System Prompt: "- release: 发布流程：跑测试 → 改版本号 → 打 tag → 发 Release"   (常驻，~15 Token)
       │
-      ▼ 用户："帮我发布 v1.2.0"
+      ▼ 用户："帮我发布 v<版本>"
 Agent 调用 load_skill(skillName="release")
       │
       ▼

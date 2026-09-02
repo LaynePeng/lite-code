@@ -224,19 +224,24 @@ class LLMRegistry:
 
 自定义服务不应共用一个固定的 `custom` 槽位。每个 `custom_*` 实例独立保存显示名称、Base URL、API Key、当前模型和模型列表，注册表根据当前 `active` ID 构建对应适配器。这样同一类 OpenAI 兼容协议可以同时连接多个不同网关，而不会互相覆盖配置。
 
-多实例之外还有一类真实需求：**有些服务对请求头有额外要求**。典型如 OpenRouter 要求附带 `HTTP-Referer` / `X-Title` 用于应用归因统计；企业内网网关则常用自定义鉴权头（如 `X-Api-Token`）替代标准的 `Authorization: Bearer`。为此每个供应商配置支持 `custom_headers` 字段（任意多个键值对），适配器在构造时接收并**叠加在默认头之上**：
+多实例之外还有一类真实需求：**有些服务对请求头有额外要求**。典型如 OpenRouter 要求附带 `HTTP-Referer` / `X-Title` 用于应用归因统计；企业内网网关则常用自定义鉴权头（如 `X-Api-Token`）替代标准的 `Authorization: Bearer`。为此每个供应商配置支持 `custom_headers` 字段（任意多个键值对），适配器在构造时接收并按 HTTP 规范合并：自定义头以大小写不敏感方式覆盖默认头：
 
 ```python
-# 适配器：默认头 + 自定义头合并，同名时自定义头覆盖（网关自定义鉴权场景）
+from .base import merge_headers
+
+# 默认头 + 自定义头合并；HTTP Header 名称大小写不敏感
+# authorization 与 Authorization 视为同一个头，最终只保留自定义值
 def _headers(self) -> Dict[str, str]:
-    return {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {self.api_key}",
-        **self.custom_headers,   # {"X-Title": "My App", ...} 可覆盖 Authorization
-    }
+    return merge_headers(
+        {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+        },
+        self.custom_headers,
+    )
 ```
 
-`custom_headers` 经 `clean_custom_headers` 清洗（仅保留 `str: str`、去空键空值）后才进入适配器——配置层校验失守时这是最终防线。注册表的 `build_adapter` 与 `to_config` 均透传该字段，因此 `chat_stream` 与「测试连接」共用 `_headers()`，设置界面填完头点测试即可验证真实生效。设置界面用多行文本编辑（每行 `Key: Value`，按第一个冒号切分，值里可以再含冒号——URL 就常见），这与 MCP 参数输入的「本地文本 + 失焦解析提交」是同一个交互模式。
+`custom_headers` 经 `clean_custom_headers` 清洗（仅保留 `str: str`、去空键空值）后才进入适配器——配置层校验失守时这是最终防线。注册表的 `build_adapter` 与 `to_config` 均透传该字段，因此 `chat_stream` 与「测试连接」共用 `_headers()`，设置界面填完头点测试即可验证真实生效。设置界面用多行文本编辑（每行 `Key: Value` 或 `Key=Value`，按第一个分隔符切分，值里可以再含冒号——URL 就常见）。保存和测试连接都会直接读取当前文本框内容，不依赖失焦；清空文本并保存会明确清除旧 Header。
 
 #### 5. 模型元数据服务 (`litecode/llm/model_meta.py`)
 

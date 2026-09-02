@@ -404,13 +404,13 @@ function resolvePython() {
 [package] Step 3/4: Wrap DMG with hdiutil
 [7641] prepare... (0.2s)
 [7893] hdiutil create... (18.1s)
-[package] Done -> release/lite-code-0.10.0-arm64.dmg
+[package] Done -> release/lite-code-<版本>-arm64.dmg
 ```
 
-**产物**（以 macOS 为例，实际版本号来自 `package.json`）：
+**产物**（以 macOS 为例）：版本唯一来源是 `litecode/__init__.py` 中的 `__version__`，构建时 `scripts/sync-version.mjs` 会同步 npm 元数据，DMG 名称读取同步后的版本。
 ```
 release/
-├── lite-code-0.10.0-arm64.dmg         (安装包)
+├── lite-code-<版本>-arm64.dmg          (安装包)
 └── mac-arm64/lite-code.app             (解包目录，可直接运行)
 ```
 
@@ -420,6 +420,8 @@ release/
 - **加载页**：`--onedir` 直接携带依赖目录，启动时无需解压，配合 loading.html 明确展示后端就绪进度。
 
 **配置目录**：Core 的默认配置目录为 `~/.lite-code`，其中保存模型、API Key、安全规则、模型元数据和会话历史。`--config-dir` 可用于测试或显式隔离配置；正常桌面启动始终使用用户目录。
+
+**运行日志**：后端与 Electron 主进程均写入 `~/.lite-code/logs/`。`lite-code.log` 记录 Python Core 日志，`electron.log` 记录 Electron 主进程及其转发的本地 Core 输出；单文件达到 5 MiB 后滚动，保留 3 个备份。Windows 对应目录为 `C:\\Users\\<用户名>\\.lite-code\\logs\\`。
 
 **开发模式**：`npm run dev`（concurrently 编排 Python Core + Vite + Electron，一行命令三步启动）
 
