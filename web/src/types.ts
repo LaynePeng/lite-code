@@ -107,7 +107,10 @@ export interface ContextTaskStats {
   compression_count: number;
   compressed_tokens: number;
   usage_ratio: number | null;
-  last_prompt_tokens: number;
+  last_prompt_tokens?: number;
+  tool_calls?: number;
+  blocked?: number;
+  cost_estimate?: number;
 }
 
 export interface ContextSessionStats {
@@ -118,6 +121,9 @@ export interface ContextSessionStats {
   cache_hit_rate: number | null;
   compression_count: number;
   compressed_tokens: number;
+  tool_calls?: number;
+  blocked?: number;
+  cost_estimate?: number;
 }
 
 export interface ContextStats {

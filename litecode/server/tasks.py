@@ -99,6 +99,8 @@ class TaskHandle:
         finally:
             self.running = False
             self.done = True
+            # 任务结束：清差分基线，下个任务的统计从 0 重新起算
+            self.app._last_task_snapshot.pop(self.kernel.session_id, None)
             # 结束哨兵必须送达，否则客户端会一直处于运行状态。
             while True:
                 try:

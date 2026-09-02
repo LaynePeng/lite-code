@@ -437,6 +437,11 @@ class AgentLoop:
         prompt_tokens = last_usage.get("prompt_tokens") or stats.get("input_tokens", 0)
         usage_ratio = round(prompt_tokens / self.context_window, 4) if self.context_window else None
         model = getattr(self.adapter, "model", None) or ""
+        # 成本按本次任务输入/输出估算（缓存命中部分的折扣不在此处展开，展示口径即可）
+        cost = (
+            stats.get("input_tokens", 0) / 1_000_000 * self.pricing.get("input_per_mtok", 0)
+            + stats.get("output_tokens", 0) / 1_000_000 * self.pricing.get("output_per_mtok", 0)
+        )
         await self.kernel.events.emit("context:stats", {
             "model": model,
             "context_window": self.context_window,
@@ -450,5 +455,8 @@ class AgentLoop:
                 "compressed_tokens": self._compressed_tokens,
                 "usage_ratio": usage_ratio,
                 "last_prompt_tokens": prompt_tokens,
+                "tool_calls": stats.get("tool_calls", 0),
+                "blocked": stats.get("blocked", 0),
+                "cost_estimate": round(cost, 4),
             },
         })

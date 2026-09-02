@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { api } from "../api";
 import AppIcon from "./AppIcon";
+import TerminalPanel from "./TerminalPanel";
 import type { SessionInfo, TreeEntry } from "../types";
 
 // ---------------------------------------------------------------- 目录树
@@ -142,7 +143,6 @@ export default function Sidebar({
   sessions,
   activeSessionId,
   workspace,
-  stats,
   tab,
   treeRevision,
   version,
@@ -159,11 +159,10 @@ export default function Sidebar({
   sessions: SessionInfo[];
   activeSessionId: string | null;
   workspace: string;
-  stats: { input_tokens: number; output_tokens: number; cost_estimate: number; tool_calls: number; blocked: number } | null;
-  tab: "sessions" | "files" | "stats";
+  tab: "sessions" | "files" | "terminal";
   treeRevision: number;
   version: string;
-  onTabChange: (tab: "sessions" | "files" | "stats") => void;
+  onTabChange: (tab: "sessions" | "files" | "terminal") => void;
   onSelectSession: (id: string) => void;
   onNewSession: () => void;
   onDeleteSession: (id: string) => void;
@@ -173,14 +172,6 @@ export default function Sidebar({
   onOpenAbout: () => void;
   onFileOpen?: (path: string) => void;
 }) {
-  const [tools, setTools] = useState<{ name: string; description: string }[]>([]);
-
-  useEffect(() => {
-    if (tab === "stats") {
-      api.tools().then(setTools).catch(() => {});
-    }
-  }, [tab]);
-
   return (
     <aside className="sidebar">
       <div className="sidebar-brand">
@@ -195,8 +186,8 @@ export default function Sidebar({
         <button className={tab === "files" ? "active" : ""} onClick={() => onTabChange("files")}>
           文件
         </button>
-        <button className={tab === "stats" ? "active" : ""} onClick={() => onTabChange("stats")}>
-          统计
+        <button className={tab === "terminal" ? "active" : ""} onClick={() => onTabChange("terminal")}>
+          终端
         </button>
       </div>
 
@@ -241,40 +232,9 @@ export default function Sidebar({
 
         {tab === "files" && <FileTree workspace={workspace} revision={treeRevision} onFileOpen={onFileOpen} />}
 
-        {tab === "stats" && (
-          <div className="stats-panel">
-            <div className="stat-block">
-              <div className="stat-row">
-                <span>输入 Tokens</span>
-                <b>{stats ? stats.input_tokens.toLocaleString() : "—"}</b>
-              </div>
-              <div className="stat-row">
-                <span>输出 Tokens</span>
-                <b>{stats ? stats.output_tokens.toLocaleString() : "—"}</b>
-              </div>
-              <div className="stat-row">
-                <span>工具调用</span>
-                <b>{stats ? stats.tool_calls : "—"}</b>
-              </div>
-              <div className="stat-row">
-                <span>安全拦截</span>
-                <b>{stats ? stats.blocked : "—"}</b>
-              </div>
-              <div className="stat-row cost">
-                <span>预估成本</span>
-                <b>¥{stats ? stats.cost_estimate.toFixed(4) : "—"}</b>
-              </div>
-            </div>
-            <div className="stat-divider" />
-            <div className="stat-title">已注册工具（{tools.length}）</div>
-            <ul className="tools-list">
-              {tools.map((t) => (
-                <li key={t.name} title={t.description}>
-                  <span className="tool-dot" />
-                  {t.name}
-                </li>
-              ))}
-            </ul>
+        {tab === "terminal" && (
+          <div className="sidebar-terminal">
+            <TerminalPanel workspace={workspace} />
           </div>
         )}
       </div>

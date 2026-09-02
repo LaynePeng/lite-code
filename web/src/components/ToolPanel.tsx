@@ -1,7 +1,5 @@
 import { useState } from "react";
 import type { ContextStats, ContextTaskStats, MCPServerStatus } from "../types";
-import { useResizable } from "../hooks/useResizable";
-import TerminalPanel from "./TerminalPanel";
 
 // ---------------------------------------------------------------- 上下文情况面板
 
@@ -63,12 +61,18 @@ function ContextPanel({ stats }: { stats: ContextStats | null }) {
       <ContextBlock label="Cache 命中率" value={pct(task.cache_hit_rate)} />
       <ContextBlock label="上下文压缩" value={`${task.compression_count ?? 0} 次`} />
       <ContextBlock label="累计节省 tokens" value={fmt(task.compressed_tokens)} />
+      <ContextBlock label="工具调用" value={`${task.tool_calls ?? 0} 次`} />
+      <ContextBlock label="安全拦截" value={`${task.blocked ?? 0} 次`} />
+      <ContextBlock label="预估成本" value={task.cost_estimate != null ? `¥${task.cost_estimate.toFixed(4)}` : "—"} />
 
       <div className="ctx-section-label">会话累计</div>
       <ContextBlock label="Prompt tokens" value={fmt(session.prompt_tokens)} />
       <ContextBlock label="输出 tokens" value={fmt(session.output_tokens)} />
       <ContextBlock label="Cache 命中率" value={pct(session.cache_hit_rate)} />
       <ContextBlock label="压缩次数 / 节省" value={`${session.compression_count ?? 0} 次 / ${fmt(session.compressed_tokens)}`} />
+      <ContextBlock label="工具调用" value={`${session.tool_calls ?? 0} 次`} />
+      <ContextBlock label="安全拦截" value={`${session.blocked ?? 0} 次`} />
+      <ContextBlock label="预估成本" value={session.cost_estimate != null ? `¥${session.cost_estimate.toFixed(4)}` : "—"} />
     </div>
   );
 }
@@ -100,17 +104,31 @@ function McpPanel({ servers }: { servers: MCPServerStatus[] }) {
   );
 }
 
+// ---------------------------------------------------------------- 工具面板
+
+function ToolsPanel({ tools }: { tools: { name: string; description: string }[] }) {
+  if (!tools || tools.length === 0) {
+    return <div className="tool-panel-empty">暂无已注册工具（发起对话后显示）</div>;
+  }
+  return (
+    <div className="tools-panel">
+      <div className="tools-panel-count">已注册工具（{tools.length}）</div>
+      <ul className="tools-list">
+        {tools.map((t) => (
+          <li key={t.name} title={t.description}>
+            <span className="tool-dot" />
+            {t.name}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- 主组件
 
-export default function ToolPanel({ contextStats, workspace, mcpServers }: { contextStats: ContextStats | null; workspace: string | null; mcpServers: MCPServerStatus[] }) {
-  const [panelTab, setPanelTab] = useState<"context" | "mcp">("context");
-  // 终端高度可拖拽调整（双击分隔条重置，localStorage 持久化）
-  const terminalResize = useResizable({
-    axis: "row", initial: 300, min: 160,
-    max: () => Math.max(200, window.innerHeight - 220 - 180),
-    invert: true, // 分隔条在终端上方，向上拖 = 增大
-    storageKey: "litecode.terminalHeight",
-  });
+export default function ToolPanel({ contextStats, mcpServers, tools }: { contextStats: ContextStats | null; mcpServers: MCPServerStatus[]; tools: { name: string; description: string }[] }) {
+  const [panelTab, setPanelTab] = useState<"context" | "mcp" | "tools">("context");
 
   return (
     <aside className="tool-panel">
@@ -127,21 +145,19 @@ export default function ToolPanel({ contextStats, workspace, mcpServers }: { con
         >
           MCP
         </button>
+        <button
+          className={`panel-tab ${panelTab === "tools" ? "active" : ""}`}
+          onClick={() => setPanelTab("tools")}
+        >
+          工具
+        </button>
       </div>
       <div className="tool-panel-body tool-panel-context">
         {panelTab === "context"
           ? <ContextPanel stats={contextStats} />
-          : <McpPanel servers={mcpServers} />}
-      </div>
-      <div
-        className="resizer row"
-        title="拖拽调整终端高度（双击重置）"
-        onPointerDown={terminalResize.startDrag}
-        onDoubleClick={terminalResize.reset}
-      />
-      <div className="tool-panel-header terminal-header">终端</div>
-      <div className="tool-panel-terminal" style={{ height: terminalResize.size }}>
-        <TerminalPanel workspace={workspace} />
+          : panelTab === "mcp"
+            ? <McpPanel servers={mcpServers} />
+            : <ToolsPanel tools={tools} />}
       </div>
     </aside>
   );

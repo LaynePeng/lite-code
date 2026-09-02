@@ -624,6 +624,30 @@ body.resizing-row * { cursor: row-resize !important; user-select: none !importan
   gap: 6px;
 }
 
+/* 侧边栏「终端」Tab 容器：占满剩余高度 */
+.sidebar-terminal {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #0d1117;
+}
+
+/* 右面板「工具」Tab */
+.tools-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.tools-panel-count {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-1);
+  padding: 2px 0 4px;
+  border-bottom: 1px dashed var(--border);
+}
+
 .tools-list li {
   display: flex;
   align-items: center;
@@ -2691,10 +2715,8 @@ body.resizing-row * { cursor: row-resize !important; user-select: none !importan
   gap: 2px;
 }
 
-.tool-panel-context { flex: 1 1 auto; min-height: 180px; overflow: auto; }
-.terminal-header { border-top: 1px solid var(--border); flex-shrink: 0; }
-/* 终端高度由内联 style（拖拽 hook）控制；上下文面板 flex:1 自动占剩余 */
-.tool-panel-terminal { flex: 0 0 auto; min-height: 160px; overflow: hidden; background: #0d1117; }
+.tool-panel-context { flex: 1 1 auto; overflow: auto; }
+/* 终端已移至侧边栏 Tab；以下为 TerminalPanel 通用样式（侧边栏复用） */
 .terminal-wrap, .terminal-host { width: 100%; height: 100%; }
 .terminal-wrap { position: relative; padding: 6px; box-sizing: border-box; }
 .terminal-error { position: absolute; z-index: 2; left: 8px; right: 8px; top: 8px; color: #f87171; background: #2b1115; padding: 6px; }

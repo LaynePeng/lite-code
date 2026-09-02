@@ -59,7 +59,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<"sessions" | "files" | "stats">("sessions");
+  const [sidebarTab, setSidebarTab] = useState<"sessions" | "files" | "terminal">("sessions");
   const [loading, setLoading] = useState(true);
   const [showDebug, setShowDebug] = useState(false);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
@@ -69,6 +69,7 @@ export default function App() {
   const [treeRevision, setTreeRevision] = useState(0);
   const [draftModels, setDraftModels] = useState<Record<string, SessionModel | null>>({});
   const [mcpServers, setMcpServers] = useState<MCPServerStatus[]>([]);
+  const [registeredTools, setRegisteredTools] = useState<{ name: string; description: string }[]>([]);
 
   // 布局边界拖拽：侧边栏 / 右侧工具面板宽度（双击分隔条重置，localStorage 持久化）
   const sidebarResize = useResizable({
@@ -170,6 +171,15 @@ export default function App() {
       setLoading(false);
     }
   }, [refreshSessions]);
+
+  // 已注册工具（右面板「工具」Tab）；workspace 就绪后拉取
+  useEffect(() => {
+    if (status?.workspace) {
+      api.tools().then(setRegisteredTools).catch(() => {});
+    } else {
+      setRegisteredTools([]);
+    }
+  }, [status?.workspace]);
 
   function setErrorPublic(msg: string | null) {
     patchActiveChat({ error: msg });
@@ -717,8 +727,6 @@ export default function App() {
     return sessions.find((s) => s.session_id === activeSessionId)?.title ?? "新会话";
   }, [activeSessionId, sessions]);
 
-  const sidebarStats = currentChat.stats;
-
   if (loading) {
     return (
       <div className="app">
@@ -764,7 +772,6 @@ export default function App() {
         sessions={sessions}
         activeSessionId={activeSessionId}
         workspace={status?.workspace ?? "未打开项目"}
-        stats={sidebarStats}
         tab={sidebarTab}
         treeRevision={treeRevision}
         version={status?.version ?? "?"}
@@ -864,7 +871,7 @@ export default function App() {
             onPointerDown={toolPanelResize.startDrag}
             onDoubleClick={toolPanelResize.reset}
           />
-          <ToolPanel contextStats={currentChat.contextStats} workspace={status?.workspace ?? null} mcpServers={mcpServers} />
+          <ToolPanel contextStats={currentChat.contextStats} mcpServers={mcpServers} tools={registeredTools} />
         </>
       )}
       {showSettings && (

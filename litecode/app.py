@@ -85,6 +85,8 @@ class AgentApp:
         self.llm_registry = LLMRegistry(config_dir=self.config_dir)
         self.agent_registry = AgentRegistry()
         self._context_session_stats: Dict[str, Dict[str, Any]] = {}
+        # 任务内统计的差分基线（context:stats 每轮推送全量，需减去上次快照才是增量）
+        self._last_task_snapshot: Dict[str, Dict[str, Any]] = {}
         self._load_config()
         self.mcp_manager = MCPManager(self.config.get("mcp_servers") or {})
         self.approval_gate = ApprovalGate(
@@ -274,15 +276,36 @@ class AgentApp:
     # ------------------------------------------------------------ 上下文统计
 
     def accumulate_context_stats(self, session_id: str, task_stats: Dict[str, Any]) -> Dict[str, Any]:
-        """把一次任务内的上下文统计累加进会话级累计，返回最新会话累计。"""
+        """把任务内统计合并进会话级累计，返回最新会话累计。
+
+        task 段是「任务内累计」口径（AgentLoop 的 stats 字典跨轮持续累加，
+        每轮推送的是全量值），而本方法在 context:stats 每轮都会被调用——
+        因此必须按「本次全量 − 上次快照」的增量入账，否则多轮任务会把
+        会话累计重复放大。任务结束后快照清零，下个任务从 0 重新起算。
+        """
         acc = self._context_session_stats.setdefault(session_id, {
             "prompt_tokens": 0, "output_tokens": 0,
             "cache_hit_tokens": 0, "cache_miss_tokens": 0,
             "compression_count": 0, "compressed_tokens": 0,
+            "tool_calls": 0, "blocked": 0, "cost_estimate": 0.0,
         })
+        last = self._last_task_snapshot.get(session_id)
+        delta = {}
         for key in ("prompt_tokens", "output_tokens", "cache_hit_tokens",
-                    "cache_miss_tokens", "compression_count", "compressed_tokens"):
-            acc[key] += int(task_stats.get(key, 0) or 0)
+                    "cache_miss_tokens", "compression_count", "compressed_tokens",
+                    "tool_calls", "blocked"):
+            cur = int(task_stats.get(key, 0) or 0)
+            delta[key] = max(0, cur - int((last or {}).get(key, 0) or 0))
+            acc[key] += delta[key]
+        cur_cost = float(task_stats.get("cost_estimate", 0) or 0)
+        acc["cost_estimate"] = round(acc["cost_estimate"] + max(0.0, cur_cost - float((last or {}).get("cost_estimate", 0) or 0)), 4)
+        # 记录本次全量作为下轮差分基线
+        self._last_task_snapshot[session_id] = {
+            **{k: int(task_stats.get(k, 0) or 0) for k in
+               ("prompt_tokens", "output_tokens", "cache_hit_tokens", "cache_miss_tokens",
+                "compression_count", "compressed_tokens", "tool_calls", "blocked")},
+            "cost_estimate": cur_cost,
+        }
         hit = acc["cache_hit_tokens"]
         miss = acc["cache_miss_tokens"]
         acc["cache_hit_rate"] = round(hit / (hit + miss), 4) if (hit + miss) > 0 else None
