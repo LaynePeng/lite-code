@@ -292,6 +292,67 @@ function buildTurns(messages: Msg[]): RenderTurn[] {
 
 // ---------------------------------------------------------------- 主组件
 
+// 各 Agent 的空态欢迎语与场景入口（GAI 通用入口：办公/调研/代码一站式）
+const AGENT_WELCOME: Record<string, { title: string; sub: string; hints: [string, string][] }> = {
+  build: {
+    title: "lite-code",
+    sub: "手写内核的 Code 开发 Agent，已就绪。",
+    hints: [
+      ["🔍 查看项目结构", "帮我查看这个项目的代码结构"],
+      ["🕵️ 搜索 TODO 并分析", "帮我搜索代码里所有 TODO 标记并分析"],
+      ["🧪 运行测试并总结", "运行测试并总结结果"],
+      ["🔎 审查代码改动", "审查当前未提交的代码改动"],
+    ],
+  },
+  office: {
+    title: "lite-code · 办公助手",
+    sub: "写文档、做表格、生成 PPT、数据分析，产出直接保存为文件。",
+    hints: [
+      ["📄 写周报", "帮我写一份本周周报，生成 Word 文档"],
+      ["📊 做数据表格", "帮我把这些数据整理成 Excel 表格"],
+      ["🎞️ 生成 PPT", "帮我做一份汇报 PPT，先给我大纲"],
+      ["📈 数据分析", "帮我分析一组数据并生成图表"],
+      ["📝 写正式文档", "帮我起草一份项目实施方案文档"],
+      ["📝 会议纪要", "帮我整理这段会议记录，生成会议纪要"],
+    ],
+  },
+  research: {
+    title: "lite-code · 调研助手",
+    sub: "联网查证、多来源交叉验证，输出带来源标注的调研报告。",
+    hints: [
+      ["🔎 快速查证", "帮我查证一个问题的最新权威说法，并注明来源"],
+      ["📋 行业调研", "帮我调研某个行业的现状与趋势，生成调研报告"],
+      ["⚖️ 对比分析", "帮我对比两个产品的差异，输出对比表格"],
+      ["📄 生成报告", "把刚才的调研结果整理成 Word 报告"],
+    ],
+  },
+  plan: {
+    title: "lite-code · 规划模式",
+    sub: "只读分析：探查代码库、设计实现方案，不改任何文件。",
+    hints: [
+      ["📋 制定实现计划", "分析需求并列出实现计划的 TODO 清单"],
+      ["🏗️ 评估技术方案", "评估当前架构，给出改进建议"],
+      ["🧭 阅读并讲解代码", "阅读核心模块并讲解执行流程"],
+    ],
+  },
+};
+
+function EmptyState({ currentAgent, onSend }: { currentAgent: string; onSend: (p: string) => void }) {
+  const w = AGENT_WELCOME[currentAgent] ?? AGENT_WELCOME.build;
+  return (
+    <div className="empty-state">
+      <div className="empty-logo"><AppIcon size={76} /></div>
+      <h2>{w.title}</h2>
+      <p>{w.sub}</p>
+      <div className="empty-hints">
+        {w.hints.map(([label, prompt]) => (
+          <button key={label} onClick={() => onSend(prompt)}>{label}</button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function ChatView({
   sessionId,
   sessionTitle,
@@ -305,6 +366,7 @@ export default function ChatView({
   onSend,
   onStop,
   onApprove,
+  currentAgent,
 }: {
   sessionId: string;
   sessionTitle: string;
@@ -318,6 +380,7 @@ export default function ChatView({
   onSend: (prompt: string) => void;
   onStop: () => void;
   onApprove: (approvalId: string, approved: boolean) => void;
+  currentAgent: string;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -349,17 +412,7 @@ export default function ChatView({
     <div className="chat-view">
       <div className="chat-scroll" ref={scrollRef}>
         {turns.length === 0 && !streaming ? (
-          <div className="empty-state">
-            <div className="empty-logo"><AppIcon size={76} /></div>
-            <h2>lite-code</h2>
-            <p>手写内核的 Code 开发 Agent，已就绪。</p>
-            <div className="empty-hints">
-              <button onClick={() => onSend("帮我查看这个项目的代码结构")}>🔍 查看项目结构</button>
-              <button onClick={() => onSend("帮我搜索代码里所有 TODO 标记并分析")}>🕵️ 搜索 TODO 并分析</button>
-              <button onClick={() => onSend("运行测试并总结结果")}>🧪 运行测试并总结</button>
-              <button onClick={() => onSend("审查当前未提交的代码改动")}>🔎 审查代码改动</button>
-            </div>
-          </div>
+          <EmptyState currentAgent={currentAgent} onSend={onSend} />
         ) : (
           <>
             <div className="session-badge">{sessionTitle}</div>

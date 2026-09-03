@@ -38,7 +38,38 @@ export default function Composer({
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [selIdx, setSelIdx] = useState(0);
   const [reasoningOpen, setReasoningOpen] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Agent 图标与中文名（GAI 通用入口：办公/调研/代码一站式）
+  const AGENT_META: Record<string, { icon: string; label: string }> = {
+    build: { icon: "💻", label: "代码" },
+    plan: { icon: "📋", label: "规划" },
+    office: { icon: "📄", label: "办公" },
+    research: { icon: "🔎", label: "调研" },
+  };
+  const agentMeta = (id: string) => AGENT_META[id] ?? { icon: "🤖", label: id };
+
+  // 上传文件：成功后把工作区相对路径以引用形式插入输入框，随消息发给 Agent
+  const handleFilesPicked = async (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setUploading(true);
+    try {
+      for (const file of Array.from(files)) {
+        try {
+          const resp = await api.uploadFile(file);
+          setText((t) => (t ? `${t}\n` : "") + `📎 已上传文件：${resp.path}（请读取并处理该文件）`);
+        } catch (err) {
+          setText((t) => (t ? `${t}\n` : "") + `⚠ 文件上传失败：${file.name}（${err instanceof Error ? err.message : String(err)}）`);
+        }
+      }
+      inputRef.current?.focus();
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
   // 推理强度中文标签
   const reasoningLabel = (v: string) => {
@@ -161,17 +192,21 @@ export default function Composer({
       {primary.length > 0 && (
         <div className="agent-bar" role="group" aria-label="选择 Agent">
           <span className="agent-bar-label">Agent:</span>
-          {primary.map((a) => (
-            <button
-              key={a.id}
-              className={`agent-btn ${currentAgent === a.id ? "active" : ""}`}
-              title={a.description}
-              onClick={() => onSelectAgent(a.id)}
-              disabled={disabled || running}
-            >
-              {a.id}
-            </button>
-          ))}
+          {primary.map((a) => {
+            const meta = agentMeta(a.id);
+            return (
+              <button
+                key={a.id}
+                className={`agent-btn ${currentAgent === a.id ? "active" : ""}`}
+                title={a.description}
+                onClick={() => onSelectAgent(a.id)}
+                disabled={disabled || running}
+              >
+                <span className="agent-btn-icon" aria-hidden>{meta.icon}</span>
+                <span className="agent-btn-label">{meta.label}</span>
+              </button>
+            );
+          })}
           <span className="agent-bar-hint" title="按 Tab 在 Agent 之间切换">
             Tab
           </span>
@@ -351,9 +386,26 @@ export default function Composer({
             </button>
           </>
         ) : (
-          <button className="btn-send" onClick={submit} disabled={disabled || !text.trim()}>
-            ➤
-          </button>
+          <>
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              style={{ display: "none" }}
+              onChange={(e) => void handleFilesPicked(e.target.files)}
+            />
+            <button
+              className="btn-upload"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={disabled || uploading}
+              title={uploading ? "上传中…" : "上传文件（CSV/Excel/文档等素材，交给 Agent 处理）"}
+            >
+              {uploading ? "…" : "📎"}
+            </button>
+            <button className="btn-send" onClick={submit} disabled={disabled || !text.trim()}>
+              ➤
+            </button>
+          </>
         )}
       </div>
       <div className="composer-hint">

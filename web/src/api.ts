@@ -144,4 +144,18 @@ export const api = {
       method: "DELETE",
     }),
   commands: () => req<{ commands: import("./types").CommandInfo[] }>("/api/commands"),
+
+  // ------------------------------------------------------------ 办公场景：文件上传 / 产出物下载（GAI 通用入口）
+
+  uploadFile: (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return req<{ path: string; name: string; size: number }>("/api/upload", {
+      method: "POST",
+      body: form,
+      headers: {}, // 让浏览器自动设置 multipart boundary
+    });
+  },
+  fileDownloadUrl: (path: string) =>
+    `/api/files/download?path=${encodeURIComponent(path)}`,
 };

@@ -709,6 +709,77 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
         deletions = len([l for l in diff_text.split("\n") if l.startswith("-") and not l.startswith("---")])
         return {"path": path, "diff": diff_text, "additions": additions, "deletions": deletions}
 
+    # ------------------------------------------------------------ 办公场景：文件上传 / 产出物下载（GAI 通用入口）
+
+    @fast_app.post("/api/upload")
+    async def upload_file(request: Request):
+        """接收 multipart 文件上传，保存到工作区 .uploads/ 目录。
+
+        办公场景入口：用户把 CSV/Excel/文档等素材丢给 Agent 处理。
+        返回 {path: 工作区相对路径, size, name}，Agent 可直接用 read_file /
+        data_analyze 读取。
+        """
+        if request:
+            _check_auth(request)
+        import os as _os
+
+        workspace = _require_workspace()
+        try:
+            form = await request.form()
+        except Exception:
+            raise HTTPException(status_code=400, detail="无效的表单请求")
+        upload = form.get("file")
+        if upload is None or not hasattr(upload, "read"):
+            raise HTTPException(status_code=400, detail="缺少文件字段 file")
+
+        filename = _os.path.basename(getattr(upload, "filename", "") or "upload.bin")
+        # 清理文件名中的路径成分与危险字符
+        filename = "".join(c for c in filename if c not in '\\/:*?"<>|').strip() or "upload.bin"
+        size_limit = 50 * 1024 * 1024  # 50MB
+        data = await upload.read()
+        if len(data) > size_limit:
+            raise HTTPException(status_code=413, detail="文件超过 50MB 上传限制")
+        if not data:
+            raise HTTPException(status_code=400, detail="空文件")
+
+        uploads_dir = _os.path.join(workspace, ".uploads")
+        _os.makedirs(uploads_dir, exist_ok=True)
+        # 同名冲突：追加序号
+        base, ext = _os.path.splitext(filename)
+        target = _os.path.join(uploads_dir, filename)
+        n = 1
+        while _os.path.exists(target):
+            target = _os.path.join(uploads_dir, f"{base}_{n}{ext}")
+            n += 1
+        with open(target, "wb") as f:
+            f.write(data)
+
+        rel_path = _os.path.relpath(target, workspace).replace("\\", "/")
+        return {"path": rel_path, "name": _os.path.basename(target), "size": len(data)}
+
+    @fast_app.get("/api/files/download")
+    async def download_file(path: str, request: Request = None):
+        """下载工作区内的文件（用于办公产出物：docx/xlsx/pptx/pdf/图片）。"""
+        if request:
+            _check_auth(request)
+        import os as _os
+        from urllib.parse import quote
+        from fastapi.responses import FileResponse
+
+        workspace = _require_workspace()
+        target = _os.path.abspath(_os.path.join(workspace, path))
+        if not (target == workspace or target.startswith(workspace + _os.sep)):
+            raise HTTPException(status_code=403, detail="路径越界")
+        if not _os.path.isfile(target):
+            raise HTTPException(status_code=404, detail=f"文件不存在: {path}")
+        filename = _os.path.basename(target)
+        return FileResponse(
+            target,
+            filename=filename,
+            content_disposition_type="attachment",
+            headers={"Access-Control-Expose-Headers": "Content-Disposition"},
+        )
+
     # ------------------------------------------------------------ 聊天任务
 
     @fast_app.post("/api/chat")

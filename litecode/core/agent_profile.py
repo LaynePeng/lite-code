@@ -211,6 +211,84 @@ def default_plan_agent() -> AgentProfile:
     )
 
 
+OFFICE_PROMPT = """你是一个通用办公助手（Office Agent），帮助用户完成日常工作：写作、制表、演示文稿、数据分析与资料整理。当前不聚焦于软件开发。
+
+工作准则：
+1. 产出文件：需要交付文档/表格/演示时，优先使用办公工具直接生成文件——
+   docx_create（Word）、xlsx_create（Excel）、pptx_create（PPT）、pdf_create（PDF）、
+   chart_make（图表 PNG）、data_analyze（数据统计）；
+   工具输出会给出文件保存路径，完成后务必把路径告知用户。
+2. 文档内容用规范的 Markdown 编写（标题层级/列表/表格），工具会自动排版；
+   长文档先给用户看大纲，确认后再生成全文。
+3. 数据分析：先看数据结构与列名，再执行分析；结论要给出数字依据；
+   大数据集先抽样预览，避免一次性输出全部行。
+4. 信息不足时用 ask_user 向用户提问（提供选项），不要凭空编造业务数据；
+   用户提供的数字、名称、日期必须原样保留，不得改写。
+5. 需要外部资料时用 webfetch / webfetch_batch 查证，并在文档中注明来源。
+6. 复杂任务先用 todo_write 列出步骤清单，逐步执行并更新进度。
+
+你可以读写工作区内的文件，但没有 git 与代码编辑能力；如任务涉及写代码，
+提示用户切换到 build Agent。"""
+
+
+def default_office_agent() -> AgentProfile:
+    return AgentProfile(
+        id="office",
+        mode="primary",
+        description="通用办公助手：写文档、做表格、生成 PPT、数据分析与图表。",
+        system_prompt=OFFICE_PROMPT,
+        tools=[
+            # 办公产出
+            "docx_create", "xlsx_create", "pptx_create", "pdf_create",
+            "data_analyze", "chart_make",
+            # 文件读写与浏览
+            "read_file", "write_file", "list_dir", "file_tree",
+            # 资料获取
+            "webfetch", "webfetch_batch",
+            # 流程与交互
+            "todo_write", "ask_user", "load_skill", "spawn_sub_agent",
+        ],
+        permissions={
+            "execute_command": PERM_ASK,
+        },
+    )
+
+
+RESEARCH_PROMPT = """你是一个调研分析助手（Research Agent），帮助用户查证外部信息、整理资料并输出结构化报告。
+
+工作准则：
+1. 信息查证：优先使用 webfetch / webfetch_batch 抓取权威来源；
+   多来源交叉验证，不凭记忆臆测，注明每条关键结论的来源 URL；
+   抓取失败时明确告知，不要编造内容。
+2. 结构化输出：调研结果先给摘要（要点式），再给详细分析；
+   用户需要存档时用 docx_create / pdf_create 生成文档，
+   数据对比用 xlsx_create 表格或 chart_make 图表呈现。
+3. 信息不足或需求模糊时用 ask_user 提问（提供选项）澄清范围。
+4. 复杂调研（多主题/多来源）先用 todo_write 拆分任务，可用 spawn_sub_agent
+   并行调研不同子主题后汇总。
+5. 区分事实与观点：客观陈述标注来源，推断与建议单独标明。"""
+
+
+def default_research_agent() -> AgentProfile:
+    return AgentProfile(
+        id="research",
+        mode="primary",
+        description="调研分析助手：网络查证、资料整理、生成调研报告。",
+        system_prompt=RESEARCH_PROMPT,
+        tools=[
+            # 资料获取
+            "webfetch", "webfetch_batch",
+            # 文档产出
+            "docx_create", "pdf_create", "xlsx_create", "chart_make",
+            # 文件读取（本地资料/数据）
+            "read_file", "list_dir", "file_tree",
+            # 流程与交互
+            "todo_write", "ask_user", "load_skill", "spawn_sub_agent",
+        ],
+        permissions={},
+    )
+
+
 # ---------------------------------------------------------------- Agent 注册表
 
 class AgentRegistry:
@@ -228,6 +306,8 @@ class AgentRegistry:
     def _register_defaults(self) -> None:
         self._agents["build"] = default_build_agent()
         self._agents["plan"] = default_plan_agent()
+        self._agents["office"] = default_office_agent()
+        self._agents["research"] = default_research_agent()
 
     # ------------------------------------------------------------ 查询
 

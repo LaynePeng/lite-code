@@ -1173,6 +1173,7 @@ export default function App() {
               onSend={(p) => void send(p)}
               onStop={stop}
               onApprove={(id, a) => void approve(id, a)}
+              currentAgent={currentAgent}
             />
             <QuestionBar
               pendingQuestions={currentChat.pendingQuestions ?? []}

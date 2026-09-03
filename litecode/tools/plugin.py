@@ -17,6 +17,7 @@ from .codebase import CodebaseTools
 from .editor import EditorTools
 from .filesystem import FileSystemTools
 from .git import GitTools
+from .office import OfficeTools
 from .registry import ToolRegistry
 from .review import ReviewTools
 from .shell import ShellTools
@@ -164,6 +165,19 @@ class WebFetchPlugin(ToolPlugin):
 
     def __init__(self, cache_dir: Optional[str] = None, cache_ttl: float = 3600) -> None:
         self._tools = WebFetchTools(cache_dir=cache_dir, cache_ttl=cache_ttl)
+
+    def get_tools(self) -> List[ToolDefinition]:
+        return self._tools.get_tools()
+
+    async def execute(self, name: str, args: Dict[str, Any]) -> str:
+        return await self._tools.execute(name, args)
+
+
+class OfficePlugin(ToolPlugin):
+    name = "office-plugin"
+
+    def __init__(self, workspace: str) -> None:
+        self._tools = OfficeTools(workspace)
 
     def get_tools(self) -> List[ToolDefinition]:
         return self._tools.get_tools()

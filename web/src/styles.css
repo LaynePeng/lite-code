@@ -1781,8 +1781,19 @@ body.resizing-row * { cursor: row-resize !important; user-select: none !importan
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 12px;
-  text-transform: capitalize;
   transition: all 0.15s;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.agent-btn-icon {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.agent-btn-label {
+  line-height: 1;
 }
 
 .agent-btn:hover {
@@ -1795,6 +1806,33 @@ body.resizing-row * { cursor: row-resize !important; user-select: none !importan
   color: var(--bg);
   border-color: var(--accent);
   font-weight: 600;
+}
+
+/* 办公场景：附件上传按钮 */
+.btn-upload {
+  align-self: flex-end;
+  height: 30px;
+  min-width: 30px;
+  margin-bottom: 8px;
+  margin-right: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  transition: all 0.15s;
+}
+
+.btn-upload:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.btn-upload:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .agent-bar-hint {

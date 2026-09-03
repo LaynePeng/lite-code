@@ -1,6 +1,8 @@
 # lite-code
 
-一个手写内核的 Code Agent 桌面应用：Python 内核 + React UI + Electron 外壳，从 LLM 流式解析、上下文压缩到沙箱审批全部纯手写，不依赖 LangChain 等高层框架。
+一个手写内核的通用 AI Agent（GAI 入口）桌面应用：Python 内核 + React UI + Electron 外壳，从 LLM 流式解析、上下文压缩到沙箱审批全部纯手写，不依赖 LangChain 等高层框架。
+
+支持多种工作模式：**代码开发**（build/plan）之外，还有**办公助手**（写文档/做表格/生成 PPT/数据分析，直接产出 docx/xlsx/pptx/pdf 文件）与**调研分析**（联网查证、生成带来源标注的调研报告）。
 
 > 版本号单一事实源：`litecode/__init__.py` 的 `__version__`，构建时自动同步到 npm/安装包，页内不再标注具体版本。
 
@@ -9,11 +11,14 @@
 ## 功能
 
 - **20 个内置工具**：文件读写、Ripgrep 搜索、Tree-sitter AST 大纲、Search-Replace / Unified Diff 精确编辑、受限 Shell、Git 五件套、代码审查、子 Agent 编排、Web 抓取、`load_skill` 技能加载；MCP 工具按配置动态注册
+- **办公/生产力工具（GAI 通用入口）**：`docx_create`（Word）、`xlsx_create`（Excel）、`pptx_create`（PPT）、`pdf_create`（PDF）、`data_analyze`（数据统计）、`chart_make`（图表，自动适配中文字体）；产出保存到工作区 `.outputs/`。可选依赖：`pip install -e .[office]`；未安装时工具返回友好提示，不影响其他功能
 - **多 LLM 供应商**：DeepSeek / OpenAI / Kimi / 通义千问 / 智谱 GLM / Anthropic Claude / 自定义 OpenAI 兼容实例；上下文窗口经 models.dev 元数据自动解析（内置表兜底，断网可用）；**推理强度控制（reasoning_effort：关闭/低/中/高/最大）**，主界面显示实际生效的模型与推理档位（会话 override 优先，回退供应商默认）
 - **安全防御**：三级风险模型（SAFE / MEDIUM / HIGH）+ 动态黑白名单热加载 + Web 审批卡（Human-in-the-Loop）；MCP 外部工具默认需用户确认
 - **Agent 增强**：JSON 自愈、死循环检测、输出截断落盘（上下文只放句柄）、Token 预算与策略 B 两阶段上下文压缩
 - **Prompt 缓存**：断点标注 + 稳定前缀设计；右侧面板实时显示命中率、窗口占用（≥90% 红色警示并自动压缩）与压缩统计
 - **Build / Plan 双 Agent**：默认开发 Agent + 只读规划 Agent，支持 `agents/*.json` / `*.md`（frontmatter）自定义
+- **通用办公模式（office / research）**：办公助手（文档/表格/PPT/数据分析）与调研助手（联网查证/调研报告）作为内置 Agent 与 build/plan 一键切换；空态首页按当前模式展示场景入口
+- **文件上传与产出下载**：聊天区 📎 按钮上传素材（CSV/Excel/文档等，存入 `.uploads/`），`/api/files/download` 下载 Agent 产出的办公文件
 - **项目指令与 Skills**：读取项目根目录 `AGENTS.md` / `CLAUDE.md` 注入 System Prompt；技能索引常驻、`load_skill` 按需加载全文
 - **OpenCode 风格交互**：思考/回答分离、工具调用卡片、多 Tab 工作台（对话 + 文件查看）、布局边界可拖拽调整
 - **真实终端**：node-pty + xterm.js，macOS 使用 `$SHELL`，Windows 使用 PowerShell；终端不进入会话上下文
@@ -47,6 +52,9 @@ python3 -m venv .venv
 .venv/bin/pip install -e .[dev]    # Windows: .venv\Scripts\pip install -e .[dev]
 npm install
 
+# 可选：启用办公工具（Word/Excel/PPT/PDF/图表/数据分析）
+.venv/bin/pip install -e .[office]    # Windows: .venv\Scripts\pip install -e .[office]
+
 npm run dev    # 开发模式：Python Core + Vite + Electron 窗口
 npm start      # 生产模式：构建前端 → 自动拉起 Core → 窗口
 ```
@@ -56,6 +64,29 @@ npm start      # 生产模式：构建前端 → 自动拉起 Core → 窗口
 - **远程 Core**：`~/.lite-code/client.json` 配置 `coreUrl` 与 Token，窗口直连远程后端
 
 > 国内网络受限时 pip 可加 `-i https://pypi.tuna.tsinghua.edu.cn/simple`；Electron 二进制下载失败时执行 `node node_modules/electron/install.js`（已默认走 npmmirror 镜像）。
+
+## 扩展：MCP 办公生态
+
+lite-code 已内置 stdio MCP Client，可通过 MCP Server 无限扩展办公能力。在设置界面或 `~/.lite-code/config.json` 的 `mcp_servers` 中添加：
+
+```json
+{
+  "mcp_servers": {
+    "browser": {
+      "command": "npx",
+      "args": ["-y", "@playwright/mcp@latest"],
+      "desc": "浏览器自动化：让 Agent 操作网页（填表/查系统/截图）"
+    },
+    "filesystem-extra": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:/Users/你的用户名/Documents"],
+      "desc": "扩展文件系统：把我的文档等目录纳入 Agent 可操作范围"
+    }
+  }
+}
+```
+
+MCP 工具注册后以 `mcp_<服务名>_<工具名>` 命名，默认需用户审批（可在安全设置中放行）。
 
 ## 打包
 

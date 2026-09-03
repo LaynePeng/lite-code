@@ -26,6 +26,7 @@ from .tools.plugin import (
     EditorPlugin,
     FileSystemPlugin,
     GitPlugin,
+    OfficePlugin,
     ReviewPlugin,
     ShellPlugin,
     SkillsPlugin,
@@ -70,6 +71,9 @@ TOOL_NAMES = [
     "execute_command", "git_status", "git_diff", "git_log",
     "git_commit", "git_branch", "review_code", "spawn_sub_agent",
         "webfetch", "webfetch_batch", "load_skill",
+    # 办公工具（GAI 通用入口）
+    "docx_create", "xlsx_create", "pptx_create", "pdf_create",
+    "data_analyze", "chart_make",
 ]
 
 
@@ -347,6 +351,7 @@ class AgentApp:
             GitPlugin(self.workspace),
             ReviewPlugin(self.workspace),
             WebFetchPlugin(cache_dir=os.path.join(self.config_dir, "webfetch_cache")),
+            OfficePlugin(self.workspace),
             SubAgentPlugin(self),
             SkillsPlugin(self.workspace),
             self.todo_plugin,
