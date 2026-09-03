@@ -22,6 +22,7 @@ from .base import (
     LLMError,
     clean_custom_headers,
     decode_utf8_incremental,
+    expand_header_templates,
     merge_headers,
 )
 
@@ -78,7 +79,7 @@ class OpenAICompatAdapter(BaseLLMAdapter):
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {self.api_key}",
             },
-            self.custom_headers,
+            expand_header_templates(self.custom_headers),
         )
 
     def _build_payload(

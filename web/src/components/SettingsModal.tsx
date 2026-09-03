@@ -467,7 +467,7 @@ export default function SettingsModal({
                     <textarea
                       className="form-input"
                       rows={3}
-                      placeholder={"X-Title: My App\nHTTP-Referer: https://myapp.dev"}
+                      placeholder={"X-Title: My App\nx-opencode-session: {conversation_id}"}
                       value={headersText[activeProvider] ?? ""}
                       onChange={(e) =>
                         setHeadersText((prev) => ({ ...prev, [activeProvider]: e.target.value }))
@@ -477,6 +477,11 @@ export default function SettingsModal({
                     <small>
                       格式 <code>Key: Value</code> 或 <code>Key=Value</code>（按第一个分隔符切分，值可含冒号）；
                       支持任意多个，可覆盖默认 Authorization 头；<code>#</code> 开头的行忽略。
+                      <br />
+                      值支持模板变量，发送请求时自动替换：
+                      <code>{"{session_id}"}</code> <code>{"{conversation_id}"}</code>{" "}
+                      <code>{"{workspace}"}</code> <code>{"{model}"}</code> <code>{"{provider}"}</code>；
+                      其中 <code>{"{conversation_id}"}</code> 会按（会话 × 供应商）自动生成稳定 ID 并持久化。
                     </small>
                   </div>
 

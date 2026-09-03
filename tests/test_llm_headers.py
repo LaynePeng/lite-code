@@ -5,8 +5,9 @@ import httpx
 import pytest
 
 from litecode.app import AgentApp
+from litecode.core.types import header_context
 from litecode.llm.anthropic import AnthropicAdapter
-from litecode.llm.base import clean_custom_headers, merge_headers
+from litecode.llm.base import clean_custom_headers, expand_header_templates, merge_headers
 from litecode.llm.openai_compat import OpenAICompatAdapter
 from litecode.llm.registry import LLMRegistry
 
@@ -181,3 +182,85 @@ def test_app_update_llm_config_ignores_invalid_headers(tmp_path):
 
     app.update_llm_config(providers={"deepseek": {"custom_headers": "invalid"}})
     assert app.llm_registry.providers["deepseek"]["custom_headers"] == {"X-Test": "old"}
+
+
+# ---------------------------------------------------------------- 模板变量展开
+
+def test_expand_header_templates_known_vars():
+    ctx = {
+        "session_id": "session_abc",
+        "conversation_id": "conv123",
+        "workspace": "/proj",
+        "model": "deepseek-v4-flash",
+        "provider": "custom_opencode",
+    }
+    headers = {
+        "X-Session": "{session_id}",
+        "X-Conversation": "{conversation_id}",
+        "X-Workspace": "{workspace}",
+        "X-Model": "{model}",
+        "X-Provider": "{provider}",
+    }
+    assert expand_header_templates(headers, context=ctx) == {
+        "X-Session": "session_abc",
+        "X-Conversation": "conv123",
+        "X-Workspace": "/proj",
+        "X-Model": "deepseek-v4-flash",
+        "X-Provider": "custom_opencode",
+    }
+
+
+def test_expand_header_templates_empty_context_drops_template_header():
+    # 无会话上下文（如测试连接）→ {conversation_id} 展开为空 → 该头被丢弃
+    result = expand_header_templates(
+        {"X-Session": "{conversation_id}", "X-Static": "keep"},
+        context={},
+    )
+    assert "X-Session" not in result
+    assert result["X-Static"] == "keep"
+
+
+def test_expand_header_templates_static_headers_untouched():
+    # 无模板的静态头原样保留，即使 context 为空
+    assert expand_header_templates(
+        {"X-Title": "My App", "Authorization": "Bearer xxx"},
+        context={},
+    ) == {"X-Title": "My App", "Authorization": "Bearer xxx"}
+
+
+def test_expand_header_templates_uses_header_context_var():
+    token = header_context.set({
+        "session_id": "sess_ctx", "conversation_id": "conv_ctx",
+    })
+    try:
+        result = expand_header_templates({
+            "X-Session": "{session_id}",
+            "X-C": "{conversation_id}",
+        })
+    finally:
+        header_context.reset(token)
+    assert result == {"X-Session": "sess_ctx", "X-C": "conv_ctx"}
+
+
+async def test_openai_request_expands_session_template(monkeypatch):
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(dict(request.headers))
+        return _sse_ok(request)
+
+    adapter = OpenAICompatAdapter(
+        api_key="sk-test",
+        custom_headers={"x-opencode-session": "{conversation_id}", "X-Static": "s"},
+    )
+    monkeypatch.setattr(
+        adapter, "_get_client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    )
+    token = header_context.set({"conversation_id": "conv-e2e", "session_id": "s1"})
+    try:
+        content, _, _ = await adapter.chat_stream([], [])
+    finally:
+        header_context.reset(token)
+    assert content == "hi"
+    assert seen.get("x-opencode-session") == "conv-e2e"
+    assert seen.get("x-static") == "s"

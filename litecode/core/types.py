@@ -1,6 +1,7 @@
 """核心类型定义（对应课程第10课（插件架构） types.ts）。"""
 from __future__ import annotations
 
+import contextvars
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
@@ -8,6 +9,13 @@ from typing import Any, Callable, Dict, List, Optional
 # ---------------------------------------------------------------- 消息类型
 
 Role = str  # "system" | "user" | "assistant" | "tool"
+
+# 当前任务/会话的请求头模板上下文（custom_headers 的 {var} 插值数据源）。
+# 由 AgentLoop.run_task 在每个任务开始时设置；适配器 _headers() 读取后展开模板。
+# 键：session_id / conversation_id / workspace / model / provider（值均为 str）。
+header_context: contextvars.ContextVar[Dict[str, str]] = contextvars.ContextVar(
+    "header_context", default={}
+)
 
 
 @dataclass

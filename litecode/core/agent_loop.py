@@ -24,7 +24,7 @@ from .state_tracker import AgentStateTracker, AgentStatus
 from .system_prompt import SystemPromptBuilder
 from .token_counter import TokenCounter
 from .truncator import truncate_tool_output
-from .types import Message, ToolCall, ToolDefinition
+from .types import Message, ToolCall, ToolDefinition, header_context
 from ..tools.todos import current_session_id
 
 logger = logging.getLogger("litecode.agentloop")
@@ -94,6 +94,30 @@ class AgentLoop:
     def _check_abort(self) -> bool:
         return bool(self.abort_event and self.abort_event.is_set())
 
+    def _build_header_context(self) -> Dict[str, str]:
+        """构造 custom_headers 模板展开所需上下文（每任务开始时调用一次）。
+
+        conversation_id 仅在供应商 custom_headers 配置了 {conversation_id} 模板时
+        惰性生成（经 session_store 按 (会话 × 供应商) 落盘复用），
+        避免给所有任务额外写会话元数据。
+        """
+        provider = getattr(self.adapter, "provider_id", "") or ""
+        ctx: Dict[str, str] = {
+            "session_id": self.kernel.session_id,
+            "workspace": self.workspace or "",
+            "model": getattr(self.adapter, "model", "") or "",
+            "provider": provider,
+        }
+        wants_conversation = any(
+            "{conversation_id}" in (v or "")
+            for v in getattr(self.adapter, "custom_headers", {}).values()
+        )
+        if wants_conversation and self.session_store is not None:
+            ctx["conversation_id"] = self.session_store.get_or_create_conversation_id(
+                self.kernel.session_id, provider
+            )
+        return ctx
+
     # ------------------------------------------------------------------ 主循环
 
     async def run_task(
@@ -107,6 +131,8 @@ class AgentLoop:
         tools = tools if tools is not None else self.registry.get_tools()
         # 工具处理器（todo_write 等）经 ContextVar 知道当前会话
         current_session_id.set(self.kernel.session_id)
+        # custom_headers 模板展开上下文（适配器 _headers() 读取，见 llm/base.py）
+        header_context.set(self._build_header_context())
         self.state = AgentStateTracker()
         self.state.status = AgentStatus.RUNNING
 

@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import tempfile
+import uuid
 from typing import Any, Dict, List, Optional
 
 from .types import Message
@@ -117,3 +118,27 @@ class SessionStore:
         metadata = {**snapshot.metadata, **updates}
         self.save(session_id, snapshot.messages, metadata)
         return self.load(session_id)
+
+    def get_or_create_conversation_id(self, session_id: str, provider_id: str) -> str:
+        """按 (会话 × 供应商) 惰性生成/复用 opaque 会话标识（用于 custom_headers 的 {conversation_id}）。
+
+        同一会话对同一供应商始终返回同一个 UUID（跨重启稳定）；
+        不同供应商各自独立，避免第三方通过同一 ID 关联多个网关的行为。
+        仅在使用该模板的会话上才会调用，因此不会给所有会话写入元数据。
+        """
+        if not session_id or not provider_id:
+            return ""
+        snapshot = self.load(session_id)
+        if snapshot is None:
+            return ""
+        ids = snapshot.metadata.get("conversation_ids")
+        if not isinstance(ids, dict):
+            ids = {}
+        existing = ids.get(provider_id)
+        if isinstance(existing, str) and existing:
+            return existing
+        new_id = uuid.uuid4().hex
+        metadata = dict(snapshot.metadata)
+        metadata["conversation_ids"] = {**ids, provider_id: new_id}
+        self.save(session_id, snapshot.messages, metadata)
+        return new_id

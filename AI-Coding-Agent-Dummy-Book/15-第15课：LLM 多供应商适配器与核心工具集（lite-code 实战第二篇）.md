@@ -243,6 +243,22 @@ def _headers(self) -> Dict[str, str]:
 
 `custom_headers` 经 `clean_custom_headers` 清洗（仅保留 `str: str`、去空键空值）后才进入适配器——配置层校验失守时这是最终防线。注册表的 `build_adapter` 与 `to_config` 均透传该字段，因此 `chat_stream` 与「测试连接」共用 `_headers()`，设置界面填完头点测试即可验证真实生效。设置界面用多行文本编辑（每行 `Key: Value` 或 `Key=Value`，按第一个分隔符切分，值里可以再含冒号——URL 就常见）。保存和测试连接都会直接读取当前文本框内容，不依赖失焦；清空文本并保存会明确清除旧 Header。
 
+**Custom Headers 支持会话模板变量**：值中可以嵌入 `{session_id}`、`{conversation_id}`、`{workspace}`、`{model}`、`{provider}` 五个占位符，发送请求前由适配器替换为当前任务的对应值（`expand_header_templates`）。典型场景是网关级服务要求"每个会话一个稳定标识"以配合 prompt 缓存——例如 OpenCode Go 要求 `x-opencode-session: <会话 ID>`，只需在 Custom Headers 里写 `x-opencode-session: {conversation_id}` 即可：
+
+```python
+# llm/base.py（核心）：值中 {var} 在发送前替换，无会话上下文时该头自动丢弃
+HEADER_TEMPLATE_KEYS = ("session_id", "conversation_id", "workspace", "model", "provider")
+
+def expand_header_templates(headers, context=None):
+    ctx = context if context is not None else dict(header_context.get())
+    for key, value in clean_custom_headers(headers).items():
+        for name in HEADER_TEMPLATE_KEYS:
+            value = value.replace("{" + name + "}", ctx.get(name, ""))
+        # 模板展开后为空（如测试连接无会话）→ 丢弃，避免把空头发给服务端
+```
+
+其中 `{conversation_id}` 由 `SessionStore.get_or_create_conversation_id` 按 **(会话 × 供应商)** 组合惰性生成 UUID 并写入会话 metadata——同一会话对同一供应商跨重启稳定复用，不同供应商各持一个独立 ID，避免第三方通过同一标识关联用户在不同网关的行为。模板展开读取 `header_context` ContextVar，由 `AgentLoop.run_task` 在每个任务开始时填充（与 todo 工具的 `current_session_id` 同一机制），因此全局复用的适配器单例也能在每个请求上拿到正确的会话值。
+
 #### 4.5 推理强度控制（reasoning_effort）
 
 推理模型（OpenAI o 系列、DeepSeek R1、Anthropic 扩展思考、Kimi K2、GLM-4.6 等）允许用户控制"思考深度"：回答前花多少 Token 推理。`lite-code` 把它抽象为统一的 `reasoning_effort` 配置（关闭/低/中/高/最大），不同供应商以不同方式落地。

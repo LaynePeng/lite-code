@@ -21,6 +21,7 @@ from .base import (
     LLMError,
     clean_custom_headers,
     decode_utf8_incremental,
+    expand_header_templates,
     merge_headers,
 )
 
@@ -80,7 +81,7 @@ class AnthropicAdapter(BaseLLMAdapter):
                 "x-api-key": self.api_key,
                 "anthropic-version": "2023-06-01",
             },
-            self.custom_headers,
+            expand_header_templates(self.custom_headers),
         )
 
     @staticmethod

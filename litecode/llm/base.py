@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..core.events import TypedEventBus
-from ..core.types import Message, ToolCall, ToolDefinition
+from ..core.types import Message, ToolCall, ToolDefinition, header_context
 
 
 def decode_utf8_incremental(buffer: bytes, chunk: bytes) -> Tuple[str, bytes]:
@@ -35,6 +35,38 @@ def clean_custom_headers(raw: Optional[Any]) -> Dict[str, str]:
         if key and value:
             cleaned[key] = value
     return cleaned
+
+
+# custom_headers 支持的内置模板变量（值在发送前展开）
+HEADER_TEMPLATE_KEYS = ("session_id", "conversation_id", "workspace", "model", "provider")
+
+
+def expand_header_templates(
+    headers: Optional[Any], context: Optional[Dict[str, str]] = None
+) -> Dict[str, str]:
+    """展开 custom_headers 中的 {var} 模板（var ∈ HEADER_TEMPLATE_KEYS）。
+
+    - 无模板的静态头原样保留；
+    - 展开后为空值的头被丢弃（如无会话上下文时 {conversation_id} → 空，
+      避免把空 header 发给服务端）。
+    context 缺省时读取当前任务的 header_context（AgentLoop.run_task 设置）。
+    """
+    cleaned = clean_custom_headers(headers)
+    if not cleaned:
+        return {}
+    ctx = context if context is not None else dict(header_context.get())
+    out: Dict[str, str] = {}
+    for key, value in cleaned.items():
+        had_template = False
+        for name in HEADER_TEMPLATE_KEYS:
+            token = "{" + name + "}"
+            if token in value:
+                had_template = True
+                value = value.replace(token, ctx.get(name, ""))
+        if had_template and not value.strip():
+            continue
+        out[key] = value.strip() if had_template else value
+    return out
 
 
 def merge_headers(defaults: Dict[str, str], custom: Optional[Any]) -> Dict[str, str]:
