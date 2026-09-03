@@ -9,7 +9,7 @@
 ## 功能
 
 - **20 个内置工具**：文件读写、Ripgrep 搜索、Tree-sitter AST 大纲、Search-Replace / Unified Diff 精确编辑、受限 Shell、Git 五件套、代码审查、子 Agent 编排、Web 抓取、`load_skill` 技能加载；MCP 工具按配置动态注册
-- **多 LLM 供应商**：DeepSeek / OpenAI / Kimi / 通义千问 / 智谱 GLM / Anthropic Claude / 自定义 OpenAI 兼容实例；上下文窗口经 models.dev 元数据自动解析（内置表兜底，断网可用）
+- **多 LLM 供应商**：DeepSeek / OpenAI / Kimi / 通义千问 / 智谱 GLM / Anthropic Claude / 自定义 OpenAI 兼容实例；上下文窗口经 models.dev 元数据自动解析（内置表兜底，断网可用）；**推理强度控制（reasoning_effort：关闭/低/中/高/最大）**
 - **安全防御**：三级风险模型（SAFE / MEDIUM / HIGH）+ 动态黑白名单热加载 + Web 审批卡（Human-in-the-Loop）；MCP 外部工具默认需用户确认
 - **Agent 增强**：JSON 自愈、死循环检测、输出截断落盘（上下文只放句柄）、Token 预算与策略 B 两阶段上下文压缩
 - **Prompt 缓存**：断点标注 + 稳定前缀设计；右侧面板实时显示命中率、窗口占用（≥90% 红色警示并自动压缩）与压缩统计

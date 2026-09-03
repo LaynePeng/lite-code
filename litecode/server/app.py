@@ -33,6 +33,7 @@ class ChatRequest(BaseModel):
     prompt: str
     task_id: Optional[str] = None
     agent_id: Optional[str] = None
+    reasoning_effort: Optional[str] = None
 
 
 class CompactRequest(BaseModel):
@@ -726,7 +727,8 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
             # 会话已有任务在跑：本次输入作为补充指令排队，下一回合注入对话
             handle.queue_input(prompt)
             return {"task_id": handle.task_id, "queued": True}
-        handle = tasks.start(session_id, prompt, agent_id=payload.agent_id)
+        handle = tasks.start(session_id, prompt, agent_id=payload.agent_id,
+                               reasoning_effort=payload.reasoning_effort)
         return {"task_id": handle.task_id}
 
     @fast_app.get("/api/tasks/{task_id}/events")

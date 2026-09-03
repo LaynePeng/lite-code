@@ -2335,6 +2335,136 @@ body.resizing-row * { cursor: row-resize !important; user-select: none !importan
   accent-color: var(--accent);
 }
 
+/* ---------------- 模型输入 + 推理强度（reasoning effort） ---------------- */
+
+.model-input-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-input-group .form-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.reasoning-popover {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.reasoning-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 9px 12px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text-1);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.reasoning-trigger:hover {
+  border-color: var(--accent);
+}
+
+.reasoning-trigger.reasoning-unsupported {
+  border-color: rgba(210, 153, 34, 0.55);
+  color: #d29922;
+}
+
+/* 推理强度档位颜色 */
+.reasoning-trigger.reasoning-effort-off {
+  color: var(--text-2);
+  font-weight: 500;
+}
+.reasoning-trigger.reasoning-effort-low {
+  color: #3fb950;
+  font-weight: 600;
+}
+.reasoning-trigger.reasoning-effort-medium {
+  color: #58a6ff;
+  font-weight: 600;
+}
+.reasoning-trigger.reasoning-effort-high {
+  color: #bc8cff;
+  font-weight: 600;
+}
+.reasoning-trigger.reasoning-effort-max {
+  color: #f0883e;
+  font-weight: 700;
+}
+
+/* agent-bar 紧凑版推理按钮 */
+.reasoning-quick-trigger {
+  padding: 2px 8px;
+  height: 28px;
+  font-size: 12px;
+  border-radius: 5px;
+  letter-spacing: 0.3px;
+}
+
+/* 向上弹出的滑轨面板 */
+.reasoning-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);   /* 向上弹出 */
+  right: 0;
+  z-index: 30;
+  min-width: 190px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.28);
+  padding: 6px;
+}
+
+.reasoning-track {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.reasoning-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-1);
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  transition: background 0.12s;
+}
+
+.reasoning-option:hover {
+  background: rgba(79, 140, 255, 0.10);
+}
+
+.reasoning-option.active {
+  background: rgba(79, 140, 255, 0.18);
+  box-shadow: inset 0 0 0 1px rgba(79, 140, 255, 0.45);
+}
+
+.reasoning-option-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-0);
+}
+
+.reasoning-option-desc {
+  font-size: 11px;
+  color: var(--text-2);
+}
+
 .form-actions {
   display: flex;
   gap: 12px;

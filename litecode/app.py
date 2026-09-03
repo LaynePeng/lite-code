@@ -241,7 +241,7 @@ class AgentApp:
                     self.llm_registry.providers[pid] = {
                         "name": settings.get("name") or pid, "api_key": "",
                         "base_url": "", "model": "", "models": [], "temperature": 0.2,
-                        "custom_headers": {},
+                        "reasoning_effort": "", "custom_headers": {},
                     }
                 current = self.llm_registry.providers[pid]
                 # 跳过脱敏 api_key（含 … 或 **** 视为未修改）
@@ -582,10 +582,11 @@ class AgentApp:
         return registry
 
     def create_loop(self, kernel: Kernel, registry: ToolRegistry, agent_id: Optional[str] = None,
-                    model_override: Optional[Dict[str, str]] = None) -> AgentLoop:
+                    model_override: Optional[Dict[str, str]] = None,
+                    reasoning_effort_override: Optional[str] = None) -> AgentLoop:
         profile = self.get_agent(agent_id)
         adapter = self.adapter
-        if model_override or profile.model or profile.temperature is not None:
+        if model_override or profile.model or profile.temperature is not None or reasoning_effort_override:
             overrides: Dict[str, Any] = {}
             provider_id = model_override.get("provider") if model_override else None
             if model_override and model_override.get("model"):
@@ -594,6 +595,8 @@ class AgentApp:
                 overrides["model"] = profile.model
             if profile.temperature is not None:
                 overrides["temperature"] = profile.temperature
+            if reasoning_effort_override:
+                overrides["reasoning_effort"] = reasoning_effort_override
             adapter = self.llm_registry.build_adapter(provider_id=provider_id, overrides=overrides)
         # 上下文压缩：策略 B（保留最近 N 轮完整细节），预算 = min(token_budget, 90%×窗口)
         token_budget = int(self.config.get("token_budget", 48000))

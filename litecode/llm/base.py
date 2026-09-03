@@ -77,10 +77,17 @@ class BaseLLMAdapter:
     流式输出通过事件总线以 "llm:stream" 事件实时广播。
     usage 为模型返回的 token 统计（准确值），无返回时可为 None：
       {prompt_tokens, completion_tokens, prompt_cache_hit_tokens}
+
+    reasoning_effort：推理强度控制（"low" / "medium" / "high"，空串表示关闭）。
+    不同供应商以不同方式实现：OpenAI 兼容接口透传 reasoning_effort 字段，
+    Anthropic 映射为 thinking 的 budget_tokens。
     """
 
     name = "base"
     provider_id = ""
+
+    def __init__(self, reasoning_effort: str = "", **kwargs) -> None:
+        self.reasoning_effort = (reasoning_effort or "").strip().lower()
 
     async def chat_stream(
         self,

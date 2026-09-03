@@ -75,9 +75,10 @@ export const api = {
       method: "POST", body: JSON.stringify({ servers }),
     }),
 
-  chat: (sessionId: string, prompt: string, agentId?: string) => {
+  chat: (sessionId: string, prompt: string, agentId?: string, reasoningEffort?: string) => {
     const body: Record<string, unknown> = { session_id: sessionId, prompt };
     if (agentId && agentId !== "build") body.agent_id = agentId;
+    if (reasoningEffort) body.reasoning_effort = reasoningEffort;
     return req<{ task_id: string; queued?: boolean }>("/api/chat", {
       method: "POST", body: JSON.stringify(body),
     });

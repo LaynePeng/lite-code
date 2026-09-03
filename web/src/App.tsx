@@ -81,6 +81,7 @@ export default function App() {
   const [success, setSuccess] = useState<string | null>(null);
   const [treeRevision, setTreeRevision] = useState(0);
   const [draftModels, setDraftModels] = useState<Record<string, SessionModel | null>>({});
+  const [draftReasoning, setDraftReasoning] = useState<Record<string, string>>({});
   const [mcpServers, setMcpServers] = useState<MCPServerStatus[]>([]);
   const [registeredTools, setRegisteredTools] = useState<{ name: string; description: string }[]>([]);
 
@@ -925,6 +926,9 @@ export default function App() {
       const selectedModel = activeSessionId
         ? currentChat.modelOverride ?? null
         : (activeTabId ? draftModels[activeTabId] ?? null : null);
+      const reasoningEffort = activeSessionId
+        ? (currentChat.reasoningEffort ?? "")
+        : (activeTabId ? draftReasoning[activeTabId] ?? "" : "");
       let createdSession = false;
       if (!sid) {
         // 当前 tab 尚无 session（newChatTab 的占位），首次发送时创建并绑定到该 tab
@@ -986,7 +990,7 @@ export default function App() {
 
       try {
         pushLog("➤ 提交任务…");
-        const resp = await api.chat(sid, prompt, currentAgent);
+        const resp = await api.chat(sid, prompt, currentAgent, reasoningEffort);
         if (resp.queued) {
           // 后端确认入队：当前任务继续跑，不覆盖 taskIds/SSE 连接
           pushLog("➥ 补充指令已入队，将在当前任务下一回合生效");
@@ -1173,6 +1177,11 @@ export default function App() {
               providerMeta={providerMeta}
               sessionModel={activeSessionId ? currentChat.modelOverride ?? null : (draftModels[activeTabId] ?? null)}
               onSessionModelChange={(model) => void setSessionModel(model)}
+              reasoningEffort={activeSessionId ? (currentChat.reasoningEffort ?? "") : (activeTabId ? draftReasoning[activeTabId] ?? "" : "")}
+              onReasoningEffortChange={(v) => {
+                if (activeSessionId) patchChat(activeSessionId, { reasoningEffort: v });
+                else if (activeTabId) setDraftReasoning((p) => ({ ...p, [activeTabId]: v }));
+              }}
             />
             <button className="debug-toggle" onClick={() => setShowDebug(!showDebug)} title="调试日志">
               {showDebug ? "隐藏日志" : "日志"}

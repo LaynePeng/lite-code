@@ -243,6 +243,60 @@ def _headers(self) -> Dict[str, str]:
 
 `custom_headers` 经 `clean_custom_headers` 清洗（仅保留 `str: str`、去空键空值）后才进入适配器——配置层校验失守时这是最终防线。注册表的 `build_adapter` 与 `to_config` 均透传该字段，因此 `chat_stream` 与「测试连接」共用 `_headers()`，设置界面填完头点测试即可验证真实生效。设置界面用多行文本编辑（每行 `Key: Value` 或 `Key=Value`，按第一个分隔符切分，值里可以再含冒号——URL 就常见）。保存和测试连接都会直接读取当前文本框内容，不依赖失焦；清空文本并保存会明确清除旧 Header。
 
+#### 4.5 推理强度控制（reasoning_effort）
+
+推理模型（OpenAI o 系列、DeepSeek R1、Anthropic 扩展思考、Kimi K2、GLM-4.6 等）允许用户控制"思考深度"：回答前花多少 Token 推理。`lite-code` 把它抽象为统一的 `reasoning_effort` 配置（关闭/低/中/高/最大），不同供应商以不同方式落地。
+
+**OpenAI 兼容接口**：直接透传 `reasoning_effort` 字段；**启用时省略 `temperature`**——推理模型通常不接受 temperature，同时传会报 400：
+
+```python
+# llm/openai_compat.py（核心）
+def _build_payload(self, messages, tools):
+    payload = {
+        "model": self.model,
+        "messages": [m.to_dict() for m in messages],
+        "stream": True,
+        "stream_options": {"include_usage": True},
+    }
+    if self.reasoning_effort:
+        # 推理模型：透传 reasoning_effort，省略 temperature
+        payload["reasoning_effort"] = self.reasoning_effort
+    else:
+        payload["temperature"] = self.temperature
+    ...
+```
+
+**Anthropic**：没有 `reasoning_effort` 字段，用扩展思考（extended thinking）实现，映射为 `thinking.budget_tokens`：
+
+```python
+# llm/anthropic.py（核心）
+_THINKING_BUDGETS = {"low": 2048, "medium": 8192, "high": 32000, "max": 64000}
+
+def _build_payload(self, messages, tools, system, enable_cache=True):
+    payload = {"model": self.model, "max_tokens": self.max_tokens, "stream": True, ...}
+    if self.reasoning_effort:
+        budget = self._THINKING_BUDGETS.get(self.reasoning_effort, 8192)
+        payload["thinking"] = {"type": "enabled", "budget_tokens": budget}
+        # max_tokens 必须大于 budget_tokens，否则自动抬高
+        if payload["max_tokens"] <= budget:
+            payload["max_tokens"] = budget + 4096
+    else:
+        payload["temperature"] = self.temperature
+    ...
+```
+
+**流式思考内容**：推理模型的思考过程也会以流式增量返回（OpenAI 兼容接口叫 `reasoning_content`/`thinking`，Anthropic 叫 `thinking_delta`），适配器把它们与正文一起转发给 UI——用户能看到"模型在思考什么"，而不是干等首 Token：
+
+```python
+# openai_compat.py：推理增量
+stream_content = delta.get("content") or delta.get("reasoning_content") or delta.get("reasoning") or delta.get("thinking")
+# anthropic.py：thinking_delta
+elif delta.get("type") == "thinking_delta":
+    full_content += delta.get("thinking", "")
+```
+
+**能力探测**：不是所有模型都支持推理控制。`PROVIDER_META` 为每个供应商维护 `reasoning_models` 列表，`provider_meta()` 返回 `reasoning_supported`（当前模型是否在列表中）+ `reasoning_models`（完整列表），前端据此提示用户"当前模型可能不支持推理"。自定义模型无法枚举，用户仍可手动开启尝试——失败时后端会返回明确的 400 错误。
+
 #### 5. 模型元数据服务 (`litecode/llm/model_meta.py`)
 
 上下文窗口长度（`context_window`）是后续实战两处关键计算的输入——上下文压缩阈值与「上下文情况」面板的窗口占用率。它随模型而异（DeepSeek V4 是 1M，Kimi K2 是 262K，GLM-4-Long 也是 1M）。各厂商的 `/models` 接口并不返回上下文长度，业界标准做法（OpenCode 同款）是使用社区模型元数据库 **models.dev**：

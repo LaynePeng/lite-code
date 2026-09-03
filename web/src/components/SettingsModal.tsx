@@ -112,6 +112,7 @@ export default function SettingsModal({
   const [mcpStatus, setMcpStatus] = useState<MCPServerStatus[]>([]);
   const [mcpSaving, setMcpSaving] = useState(false);
   const [mcpResult, setMcpResult] = useState<string | null>(null);
+  const [reasoningOpen, setReasoningOpen] = useState(false);
 
   // 自定义 Header 的编辑文本（每行 "Key: Value" 或 "Key=Value"），blur 时解析提交
   const [headersText, setHeadersText] = useState<Record<string, string>>({});
@@ -245,11 +246,24 @@ export default function SettingsModal({
   const availableModels = (currentEdit.models as string[] | undefined) ?? providerMeta?.models ?? [];
   const isCustom = activeProvider.startsWith("custom_");
 
+  // 推理强度中文标签
+  const reasoningLabel = (v?: string) => {
+    switch (v) {
+      case "low": return "低";
+      case "medium": return "中";
+      case "high": return "高";
+      case "max": return "最大";
+      default: return "关";
+    }
+  };
+  const reasoningSupported = providerMeta?.reasoning_supported ?? false;
+  const reasoningModels = providerMeta?.reasoning_models ?? [];
+
   const addCustomProvider = () => {
     const id = `custom_${Date.now()}`;
     const next: LLMProviderSettings = {
       api_key: "", has_key: false, base_url: "", model: "", models: [],
-      temperature: 0.2, name: "自定义供应商", custom_headers: {},
+      temperature: 0.2, reasoning_effort: "", name: "自定义供应商", custom_headers: {},
     };
     setProviders((prev) => [...prev, {
       id, name: next.name || id, kind: "openai", models: [], default_base_url: "",
@@ -278,6 +292,7 @@ export default function SettingsModal({
       if (e?.base_url) overrides.base_url = e.base_url;
       if (e?.model) overrides.model = e.model;
       if (e?.temperature) overrides.temperature = e.temperature;
+      if (e?.reasoning_effort) overrides.reasoning_effort = e.reasoning_effort;
       // 测试连接带上当前编辑的自定义 Header（含未 blur 的文本框内容）
       const liveText = headersText[activeProvider];
       if (liveText !== undefined) {
@@ -481,6 +496,46 @@ export default function SettingsModal({
                           <option key={m} value={m} />
                         ))}
                       </datalist>
+                      <div className="reasoning-popover">
+                        <button
+                          className={`reasoning-trigger reasoning-effort-${(currentEdit.reasoning_effort as string) || "off"} ${!reasoningSupported ? "reasoning-unsupported" : ""}`}
+                          onClick={() => setReasoningOpen(!reasoningOpen)}
+                          title={
+                            reasoningSupported
+                              ? `推理强度: ${reasoningLabel(currentEdit.reasoning_effort)}`
+                              : `当前模型可能不支持推理（列表: ${reasoningModels.join(", ") || "未知"}; 可手动尝试）`
+                          }
+                          type="button"
+                        >
+                          {reasoningLabel(currentEdit.reasoning_effort)}
+                        </button>
+                        {reasoningOpen && (
+                          <div className="reasoning-menu">
+                            <div className="reasoning-track">
+                              {[
+                                { value: "", label: "关闭", desc: "常规回答" },
+                                { value: "low", label: "低", desc: "轻量推理" },
+                                { value: "medium", label: "中", desc: "平衡速度与深度" },
+                                { value: "high", label: "高", desc: "深度推理" },
+                                { value: "max", label: "最大", desc: "极限推理（Token 消耗大）" },
+                              ].map((item) => (
+                                <button
+                                  key={item.value}
+                                  className={`reasoning-option ${currentEdit.reasoning_effort === item.value ? "active" : ""}`}
+                                  onClick={() => {
+                                    update(activeProvider, "reasoning_effort", item.value);
+                                    setReasoningOpen(false);
+                                  }}
+                                  type="button"
+                                >
+                                  <span className="reasoning-option-label">{item.label}</span>
+                                  <span className="reasoning-option-desc">{item.desc}</span>
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   </div>
 

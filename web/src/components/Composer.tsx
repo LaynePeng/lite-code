@@ -14,6 +14,8 @@ export default function Composer({
   providerMeta,
   sessionModel,
   onSessionModelChange,
+  reasoningEffort = "",
+  onReasoningEffortChange,
 }: {
   disabled?: boolean;
   running: boolean;
@@ -27,13 +29,27 @@ export default function Composer({
   providerMeta?: LLMProviderMeta[];
   sessionModel: SessionModel | null;
   onSessionModelChange: (model: SessionModel | null) => void;
+  reasoningEffort?: string;
+  onReasoningEffortChange?: (v: string) => void;
 }) {
   const [text, setText] = useState("");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [commands, setCommands] = useState<CommandInfo[]>([]);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
   const [selIdx, setSelIdx] = useState(0);
+  const [reasoningOpen, setReasoningOpen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // 推理强度中文标签
+  const reasoningLabel = (v: string) => {
+    switch (v) {
+      case "low": return "低";
+      case "medium": return "中";
+      case "high": return "高";
+      case "max": return "最大";
+      default: return "关";
+    }
+  };
 
   // 打开面板时懒加载命令与技能列表
   useEffect(() => {
@@ -149,6 +165,44 @@ export default function Composer({
               ))
             )}
           </select>
+          {onReasoningEffortChange && (
+            <div className="reasoning-popover reasoning-quick">
+              <button
+                type="button"
+                className={`reasoning-trigger reasoning-quick-trigger reasoning-effort-${reasoningEffort || "off"}`}
+                onClick={() => setReasoningOpen(!reasoningOpen)}
+                title="推理强度：当前会话生效"
+              >
+                {reasoningLabel(reasoningEffort)}
+              </button>
+              {reasoningOpen && (
+                <div className="reasoning-menu">
+                  <div className="reasoning-track">
+                    {[
+                      { value: "", label: "关闭", desc: "常规回答" },
+                      { value: "low", label: "低", desc: "轻量推理" },
+                      { value: "medium", label: "中", desc: "平衡速度与深度" },
+                      { value: "high", label: "高", desc: "深度推理" },
+                      { value: "max", label: "最大", desc: "极限推理（Token 消耗大）" },
+                    ].map((item) => (
+                      <button
+                        key={item.value}
+                        className={`reasoning-option ${reasoningEffort === item.value ? "active" : ""}`}
+                        onClick={() => {
+                          onReasoningEffortChange(item.value);
+                          setReasoningOpen(false);
+                        }}
+                        type="button"
+                      >
+                        <span className="reasoning-option-label">{item.label}</span>
+                        <span className="reasoning-option-desc">{item.desc}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
       <div className="composer">

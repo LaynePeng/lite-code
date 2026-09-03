@@ -26,6 +26,8 @@ PROVIDER_META: Dict[str, Dict[str, Any]] = {
             "deepseek-v4-pro": 1_000_000,
             "deepseek-v4-flash-vision-exp": 1_000_000,
         },
+        # 支持 reasoning_effort 的模型（官方 R1 系列 / 兼容推理模型）
+        "reasoning_models": ["deepseek-reasoner"],
     },
     "openai": {
         "name": "OpenAI",
@@ -42,6 +44,8 @@ PROVIDER_META: Dict[str, Dict[str, Any]] = {
             "gpt-4.1-mini": 1_047_576,
             "o3-mini": 200_000,
         },
+        # 支持 reasoning_effort 的模型（o 系列推理模型）
+        "reasoning_models": ["o3-mini", "o3", "o4-mini", "o1", "o1-mini", "o1-preview", "gpt-5", "gpt-5-mini"],
     },
     "kimi": {
         "name": "Kimi (Moonshot)",
@@ -57,6 +61,8 @@ PROVIDER_META: Dict[str, Dict[str, Any]] = {
             "moonshot-v1-128k": 131_072,
             "kimi-k2-0711-preview": 262_144,
         },
+        # 支持原生推理的模型（K2 系列）
+        "reasoning_models": ["kimi-k2-0711-preview", "kimi-k2-turbo-preview"],
     },
     "qwen": {
         "name": "通义千问 (DashScope)",
@@ -72,6 +78,8 @@ PROVIDER_META: Dict[str, Dict[str, Any]] = {
             "qwen-turbo": 131_072,
             "qwen-long": 1_000_000,
         },
+        # 支持 thinking/reasoning 的模型（Qwen3 系列）
+        "reasoning_models": ["qwen3-max", "qwen3-plus", "qwen3-235b-a22b", "qwq-plus", "qwq-32b"],
     },
     "glm": {
         "name": "智谱 GLM",
@@ -87,6 +95,8 @@ PROVIDER_META: Dict[str, Dict[str, Any]] = {
             "glm-4-air": 131_072,
             "glm-4-long": 1_000_000,
         },
+        # 支持 thinking 的模型（GLM-4.5 / GLM-4.6 系列）
+        "reasoning_models": ["glm-4.5", "glm-4.5-air", "glm-4.6"],
     },
     "anthropic": {
         "name": "Anthropic Claude",
@@ -97,6 +107,11 @@ PROVIDER_META: Dict[str, Dict[str, Any]] = {
                    "claude-3-5-sonnet-20241022", "claude-opus-4-20250514"],
         "env_key": "ANTHROPIC_API_KEY",
         "context_window": 200_000,
+        # Anthropic 所有 Claude 3.7+/4 系列都支持扩展思考（extended thinking）
+        "reasoning_models": [
+            "claude-sonnet-4-20250514", "claude-opus-4-20250514",
+            "claude-3-7-sonnet-20250219", "claude-3-5-sonnet-20241022",
+        ],
     },
     "custom": {
         "name": "自定义 (OpenAI 兼容)",
@@ -148,6 +163,7 @@ class LLMRegistry:
                 "model": meta["default_model"],
                 "models": list(meta.get("models", [])),
                 "temperature": 0.2,
+                "reasoning_effort": "",
             }
             for pid, meta in PROVIDER_META.items()
         }
@@ -194,6 +210,7 @@ class LLMRegistry:
                     "model": "",
                     "models": [],
                     "temperature": 0.2,
+                    "reasoning_effort": "",
                     "custom_headers": {},
                 }
             # 跳过脱敏 / 空的 api_key，防止用「sk-c…1f74」这种脱敏值覆盖真实 key
@@ -230,6 +247,7 @@ class LLMRegistry:
                 "model": p.get("model", ""),
                 "models": p.get("models", []),
                 "temperature": p.get("temperature", 0.2),
+                "reasoning_effort": p.get("reasoning_effort", ""),
                 "context_window": p.get("context_window"),
                 "custom_headers": p.get("custom_headers") or {},
             }
@@ -244,6 +262,8 @@ class LLMRegistry:
                 "kind": "openai", "default_base_url": "", "models": [],
             })
             p = self.providers.get(pid, {})
+            reasoning_models = meta.get("reasoning_models", [])
+            current_model = p.get("model", "")
             out.append({
                 "id": pid,
                 "name": meta["name"],
@@ -251,8 +271,10 @@ class LLMRegistry:
                 "models": p.get("models") or meta.get("models", []),
                 "default_base_url": meta["default_base_url"],
                 "has_key": bool(p.get("api_key")),
-                "model": p.get("model", ""),
-                "context_window": self.get_context_window(pid, p.get("model")),
+                "model": current_model,
+                "context_window": self.get_context_window(pid, current_model),
+                "reasoning_models": list(reasoning_models),
+                "reasoning_supported": current_model in reasoning_models,
             })
         return out
 
@@ -323,6 +345,7 @@ class LLMRegistry:
             provider_id=pid,
             enable_cache=bool(settings.get("enable_cache", True)),
             custom_headers=settings.get("custom_headers") or {},
+            reasoning_effort=str(settings.get("reasoning_effort", "") or ""),
         )
         if meta["kind"] == "anthropic":
             return AnthropicAdapter(**common)

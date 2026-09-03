@@ -220,7 +220,8 @@ class TaskManager:
         self.app = app
         self.tasks: Dict[str, TaskHandle] = {}
 
-    def start(self, session_id: str, prompt: str, agent_id: Optional[str] = None) -> TaskHandle:
+    def start(self, session_id: str, prompt: str, agent_id: Optional[str] = None,
+              reasoning_effort: Optional[str] = None) -> TaskHandle:
         task_id = uuid.uuid4().hex[:12]
         # 按 Agent 配置裁剪工具集（build 全量 / plan 只读 / 自定义）
         registry = self.app.create_agent_registry(agent_id or "build")
@@ -234,7 +235,8 @@ class TaskManager:
         if not isinstance(model_override, dict):
             model_override = None
         loop = self.app.create_loop(kernel, registry, agent_id=agent_id,
-                                    model_override=model_override)
+                                    model_override=model_override,
+                                    reasoning_effort_override=reasoning_effort)
         loop.parallel_tool_calls = str(self.app.config.get("parallel_tool_calls", "auto")).lower()
 
         handle = TaskHandle(task_id, kernel, registry, loop, self.app)

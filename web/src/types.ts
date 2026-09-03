@@ -154,6 +154,10 @@ export interface LLMProviderMeta {
   default_base_url: string;
   has_key: boolean;
   model: string;
+  /** 支持 reasoning_effort 的模型列表（provider_meta 返回） */
+  reasoning_models?: string[];
+  /** 当前选中模型是否支持推理控制 */
+  reasoning_supported?: boolean;
 }
 
 export interface LLMProviderSettings {
@@ -164,6 +168,8 @@ export interface LLMProviderSettings {
   models: string[];
   name?: string;
   temperature: number;
+  /** 推理强度控制：""（关闭）/ "low" / "medium" / "high" */
+  reasoning_effort?: string;
   context_window?: number | null;
   custom_headers?: Record<string, string>;
 }
@@ -335,6 +341,8 @@ export interface ChatSessionState {
   todos: TodoItem[];
   /** 待回答的提问（ask_user 工具） */
   pendingQuestions?: { id: string; question: string; options: string[] }[];
+  /** 当前会话的推理强度（""=关闭 / "low" / "medium" / "high" / "max"） */
+  reasoningEffort?: string;
 }
 
 // ---------------------------------------------------------------- Skills 管理与命令

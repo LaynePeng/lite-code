@@ -42,6 +42,7 @@ class AnthropicAdapter(BaseLLMAdapter):
         provider_id: str = "anthropic",
         enable_cache: bool = True,
         custom_headers: Optional[Dict[str, str]] = None,
+        reasoning_effort: str = "",
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -53,6 +54,9 @@ class AnthropicAdapter(BaseLLMAdapter):
         self.enable_cache = enable_cache
         # 自定义请求头：清洗后叠加在默认头之上（可覆盖 x-api-key / anthropic-version）
         self.custom_headers = clean_custom_headers(custom_headers)
+        # 推理强度（"low"/"medium"/"high"）：映射为 thinking budget_tokens；
+        # 启用时省略 temperature（Anthropic API 限制）
+        self.reasoning_effort = (reasoning_effort or "").strip().lower()
         self._client: Optional[httpx.AsyncClient] = None
 
     def _get_client(self) -> httpx.AsyncClient:
@@ -112,6 +116,9 @@ class AnthropicAdapter(BaseLLMAdapter):
                 out.append({"role": "user", "content": m.content or ""})
         return out
 
+    # 推理强度 → thinking budget_tokens 映射
+    _THINKING_BUDGETS = {"low": 2048, "medium": 8192, "high": 32000, "max": 64000}
+
     def _build_payload(
         self,
         messages: List[Message],
@@ -122,10 +129,18 @@ class AnthropicAdapter(BaseLLMAdapter):
         payload: Dict[str, Any] = {
             "model": self.model,
             "max_tokens": self.max_tokens,
-            "temperature": self.temperature,
             "stream": True,
             "messages": self._to_anthropic_messages(messages),
         }
+        if self.reasoning_effort:
+            # 扩展思考：映射 budget_tokens；启用时省略 temperature（API 限制）
+            budget = self._THINKING_BUDGETS.get(self.reasoning_effort, 8192)
+            payload["thinking"] = {"type": "enabled", "budget_tokens": budget}
+            # max_tokens 必须大于 budget_tokens（Anthropic 校验），否则自动抬高
+            if payload["max_tokens"] <= budget:
+                payload["max_tokens"] = budget + 4096
+        else:
+            payload["temperature"] = self.temperature
         if system:
             if enable_cache:
                 payload["system"] = [
@@ -264,6 +279,12 @@ class AnthropicAdapter(BaseLLMAdapter):
                         full_content += text
                         if events:
                             await events.emit("llm:stream", {"chunk": text})
+                    elif delta.get("type") == "thinking_delta":
+                        # 扩展思考内容：转发给 UI（与 OpenAI 的 reasoning_content 对齐）
+                        thinking = delta.get("thinking", "")
+                        full_content += thinking
+                        if events:
+                            await events.emit("llm:stream", {"chunk": thinking})
                     elif delta.get("type") == "input_json_delta" and current_tool:
                         current_tool.arguments += delta.get("partial_json", "")
                 elif ev_type == "content_block_stop":

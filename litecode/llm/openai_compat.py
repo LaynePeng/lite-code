@@ -42,6 +42,7 @@ class OpenAICompatAdapter(BaseLLMAdapter):
         provider_id: str = "deepseek",
         enable_cache: bool = True,
         custom_headers: Optional[Dict[str, str]] = None,
+        reasoning_effort: str = "",
     ) -> None:
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")
@@ -52,6 +53,9 @@ class OpenAICompatAdapter(BaseLLMAdapter):
         self.enable_cache = enable_cache
         # 自定义请求头：清洗后叠加在默认头之上（可覆盖 Authorization，适配网关自定义鉴权）
         self.custom_headers = clean_custom_headers(custom_headers)
+        # 推理强度（"low"/"medium"/"high"）：透传 reasoning_effort 字段；
+        # 启用时省略 temperature（多数推理模型不接受 temperature）
+        self.reasoning_effort = (reasoning_effort or "").strip().lower()
         self._client: Optional[httpx.AsyncClient] = None
 
     def _get_client(self) -> httpx.AsyncClient:
@@ -84,9 +88,13 @@ class OpenAICompatAdapter(BaseLLMAdapter):
             "model": self.model,
             "messages": [m.to_dict() for m in messages],
             "stream": True,
-            "temperature": self.temperature,
             "stream_options": {"include_usage": True},
         }
+        if self.reasoning_effort:
+            # 推理模型：透传 reasoning_effort，省略 temperature
+            payload["reasoning_effort"] = self.reasoning_effort
+        else:
+            payload["temperature"] = self.temperature
         if tools:
             payload["tools"] = [
                 {"type": "function", "function": t.__dict__} for t in tools

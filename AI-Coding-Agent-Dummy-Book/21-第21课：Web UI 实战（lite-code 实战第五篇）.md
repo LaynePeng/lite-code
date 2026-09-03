@@ -483,6 +483,7 @@ const patchChat = (sessionId: string, patch: Partial<ChatSessionState>) => {
 - 模型下拉选择 + 自定义输入（`<datalist>`）
 - 新增多个自定义供应商，每个实例独立保存名称、Key、URL 和模型列表
 - Temperature 滑块
+- **推理强度（reasoning_effort）滑轨**：关闭 / 低 / 中 / 高 / 最大（模型旁按钮，向上弹出）
 - **自定义 Header 多行编辑**（支持 `Key: Value` 或 `Key=Value`，可配置多个请求头）
 - **上下文长度 tokens 输入**（留空自动：models.dev 同步 / 内置表兜底）
 - 测试连接按钮（真实 API 调用）
@@ -514,6 +515,54 @@ return <div className="modal-overlay">
 ```
 
 **上下文长度手动覆盖**：每个供应商可手填 `context_window`，留空则自动解析（`LLMRegistry.get_context_window` 四级优先级：① 手动覆盖 → ② models.dev → ③ 内置表 → ④ 128K 默认，见第 15 课 §5）。另有全局配置 `context_full_turns`（默认 2）控制策略 B 裁剪时保留的最近完整轮数——即第 3 课的 `keep_recent_full_turns`，在 `.lite-code/config.json` 的根级配置即可调。
+
+**推理强度（reasoning_effort）的两处入口**：设置弹窗与主输入框都能调，原理是同一个——模型旁一个显示当前档位的按钮，点击向上弹出滑轨（关闭 / 低 / 中 / 高 / 最大）。
+
+**① 设置弹窗（模型输入框旁）**：按钮直接显示当前档位（如"中"），不同档位有不同颜色与字重——关闭=灰、低=绿、中=蓝、高=紫、最大=橙加粗，一眼可辨当前状态。点击按钮向上弹出滑轨面板（`bottom: calc(100% + 8px)`，不遮挡下方表单），每档带简短描述：
+
+```tsx
+// SettingsModal.tsx（核心）
+<button
+  className={`reasoning-trigger reasoning-effort-${effort || "off"}`}
+  onClick={() => setReasoningOpen(!reasoningOpen)}
+>
+  {reasoningLabel(effort)}
+</button>
+{reasoningOpen && (
+  <div className="reasoning-menu">
+    {[
+      { value: "", label: "关闭", desc: "常规回答" },
+      { value: "low", label: "低", desc: "轻量推理" },
+      { value: "medium", label: "中", desc: "平衡速度与深度" },
+      { value: "high", label: "高", desc: "深度推理" },
+      { value: "max", label: "最大", desc: "极限推理（Token 消耗大）" },
+    ].map((item) => (
+      <button
+        key={item.value}
+        className={`reasoning-option ${effort === item.value ? "active" : ""}`}
+        onClick={() => { update(activeProvider, "reasoning_effort", item.value); setReasoningOpen(false); }}
+      >
+        <span className="reasoning-option-label">{item.label}</span>
+        <span className="reasoning-option-desc">{item.desc}</span>
+      </button>
+    ))}
+  </div>
+)}
+```
+
+**模型不支持推理时的提示**：`provider_meta` 返回 `reasoning_supported`（当前模型是否在供应商的 `reasoning_models` 列表里），不支持的模型按钮显示黄色边框，`title` 提示"当前模型可能不支持推理，可手动尝试"。自定义模型无法枚举，用户仍可开启——后端会返回明确的 400 错误兜底。
+
+**② 主输入框（Composer agent-bar）快速设置**：Agent 选择栏的模型下拉旁，放一个紧凑版同款按钮（`reasoning-quick-trigger`，高度与模型下拉一致）。**每次发送时把当前档位透传给 `/api/chat`**，作为本次任务的 `reasoning_effort` override——它覆盖设置弹窗里的供应商默认值，但只在当前会话生效：
+
+```typescript
+// App.tsx send()（核心）
+const reasoningEffort = activeSessionId
+  ? (currentChat.reasoningEffort ?? "")          // 已有会话：读会话状态
+  : (activeTabId ? draftReasoning[activeTabId] ?? "" : ""); // 新会话草稿：读 draft
+const resp = await api.chat(sid, prompt, currentAgent, reasoningEffort);
+```
+
+后端链路：`ChatRequest.reasoning_effort` → `tasks.start(reasoning_effort=...)` → `create_loop(reasoning_effort_override=...)` → `build_adapter(overrides={reasoning_effort})` → 适配器构造时带上（见第 15 课 §4.5）。**会话级状态**：已有会话存 `ChatSessionState.reasoningEffort`，新会话草稿存 `draftReasoning[tabId]`——与模型选择（`modelOverride` / `draftModels`）完全同构，切换会话不串档。
 
 #### 5. Web 侧稳定性加固
 
