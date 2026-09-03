@@ -51,6 +51,31 @@ export default function Composer({
     }
   };
 
+  // ------------------------------------------------------------ 生效值计算
+  // 模型下拉显示「当前对话实际生效的模型/effort」：
+  // 会话级 override 优先，否则回退到全局 provider 配置（与后端 create_loop 语义一致）
+  const allProviders = providerMeta && providerMeta.length > 0
+    ? providerMeta
+    : (llmConfig ? Object.entries(llmConfig.providers).map(([id, provider]) => ({
+        id, name: provider.name || id, models: provider.models, has_key: provider.has_key,
+        kind: "openai" as const, default_base_url: "", model: provider.model,
+      })) : []);
+  const effProviderId = sessionModel?.provider ?? llmConfig?.active ?? "";
+  const effProviderMeta = allProviders.find((p) => p.id === effProviderId);
+  const effProviderName = effProviderMeta?.name || effProviderId;
+  const effProviderCfg = llmConfig?.providers?.[effProviderId];
+  const globalModel = effProviderCfg?.model ?? "";
+  // provider 级默认 effort（设置弹窗配的，config.json providers[pid].reasoning_effort）
+  const providerEffort = effProviderCfg?.reasoning_effort ?? "";
+  // 会话级 override：""=跟随 provider 默认，"off"=显式关闭，档位=具体值
+  const hasEffortOverride = reasoningEffort !== undefined && reasoningEffort !== "";
+  const displayEffort = hasEffortOverride ? reasoningEffort : (providerEffort || "off");
+  // 生效模型：override 或全局 provider 默认
+  const effModel = sessionModel?.model ?? globalModel;
+  const effSelectValue = `${effProviderId}\n${effModel}`;
+  const globalSelectValue = `${llmConfig?.active ?? ""}\n${globalModel}`;
+  const isDefaultModel = !sessionModel;
+
   // 打开面板时懒加载命令与技能列表
   useEffect(() => {
     if (!paletteOpen) return;
@@ -141,26 +166,37 @@ export default function Composer({
           <span className="agent-bar-label">模型:</span>
           <select
             className="model-select"
-            value={sessionModel ? `${sessionModel.provider}\n${sessionModel.model}` : "__default__"}
+            value={isDefaultModel ? "__global__" : effSelectValue}
             onChange={(e) => {
-              if (e.target.value === "__default__") {
+              const v = e.target.value;
+              if (!v) return;
+              if (v === globalSelectValue || v === "__global__") {
+                // 选回全局默认 → 清除会话 override
                 onSessionModelChange(null);
                 return;
               }
-              const [provider, model] = e.target.value.split("\n");
+              const [provider, model] = v.split("\n");
               onSessionModelChange({ provider, model });
             }}
             disabled={disabled || running}
-            title="只影响当前会话，正在运行的任务不会切换"
+            title={isDefaultModel ? `当前使用全局默认模型（${effProviderName} / ${effModel}），选择可切换为会话专用` : `当前会话模型：${effProviderName} / ${effModel}；选中“全局默认”可恢复`}
           >
-            <option value="__default__">系统默认</option>
-            {(providerMeta ?? (llmConfig ? Object.entries(llmConfig.providers).map(([id, provider]) => ({
-              id, name: provider.name || id, models: provider.models, has_key: provider.has_key,
-              kind: "openai" as const, default_base_url: "", model: provider.model,
-            })) : [])).map((provider) =>
+            {/* 始终提供「全局默认」入口：显示实际生效的默认模型名，不再是抽象占位 */}
+            <option value="__global__">
+              {llmConfig?.active ? `${allProviders.find((p) => p.id === llmConfig.active)?.name || llmConfig.active} / ${llmConfig.providers[llmConfig.active]?.model || "未配置"}` : "未配置全局模型"}
+              {isDefaultModel ? "" : "（默认）"}
+            </option>
+            {!isDefaultModel && sessionModel && !(sessionModel.model === globalModel && sessionModel.provider === llmConfig?.active) && (
+              // 会话 override 的模型不在任何 provider 列表时，补一项避免 select 空白
+              <option value={`${sessionModel.provider}\n${sessionModel.model}`}>
+                {sessionModel.provider} / {sessionModel.model}（会话）
+              </option>
+            )}
+            {allProviders.map((provider) =>
               provider.has_key && (provider.models ?? []).map((model) => (
                 <option key={`${provider.id}:${model}`} value={`${provider.id}\n${model}`}>
                   {provider.name || provider.id} / {model}
+                  {model === globalModel && provider.id === llmConfig?.active ? "（默认）" : ""}
                 </option>
               ))
             )}
@@ -169,17 +205,33 @@ export default function Composer({
             <div className="reasoning-popover reasoning-quick">
               <button
                 type="button"
-                className={`reasoning-trigger reasoning-quick-trigger reasoning-effort-${reasoningEffort || "off"}`}
+                className={`reasoning-trigger reasoning-quick-trigger reasoning-effort-${displayEffort === "off" ? "off" : displayEffort}`}
                 onClick={() => setReasoningOpen(!reasoningOpen)}
-                title="推理强度：当前会话生效"
+                title={
+                  hasEffortOverride
+                    ? `推理强度：${reasoningLabel(reasoningEffort)}（会话级）`
+                    : providerEffort
+                      ? `推理强度：${reasoningLabel(providerEffort)}（供应商默认，${effProviderName} 设置中配置）`
+                      : "推理强度：关闭（未配置）"
+                }
               >
-                {reasoningLabel(reasoningEffort)}
+                {reasoningLabel(displayEffort)}
               </button>
               {reasoningOpen && (
                 <div className="reasoning-menu">
                   <div className="reasoning-track">
+                    {providerEffort && (
+                      <button
+                        className={`reasoning-option ${!hasEffortOverride ? "active" : ""}`}
+                        onClick={() => { onReasoningEffortChange(""); setReasoningOpen(false); }}
+                        type="button"
+                      >
+                        <span className="reasoning-option-label">跟随全局 · {reasoningLabel(providerEffort)}</span>
+                        <span className="reasoning-option-desc">使用供应商默认（{effProviderName} 设置中配置）</span>
+                      </button>
+                    )}
                     {[
-                      { value: "", label: "关闭", desc: "常规回答" },
+                      { value: "off", label: "关闭", desc: "常规回答（本会话）" },
                       { value: "low", label: "低", desc: "轻量推理" },
                       { value: "medium", label: "中", desc: "平衡速度与深度" },
                       { value: "high", label: "高", desc: "深度推理" },
@@ -187,11 +239,8 @@ export default function Composer({
                     ].map((item) => (
                       <button
                         key={item.value}
-                        className={`reasoning-option ${reasoningEffort === item.value ? "active" : ""}`}
-                        onClick={() => {
-                          onReasoningEffortChange(item.value);
-                          setReasoningOpen(false);
-                        }}
+                        className={`reasoning-option ${hasEffortOverride && reasoningEffort === item.value ? "active" : ""}`}
+                        onClick={() => { onReasoningEffortChange(item.value); setReasoningOpen(false); }}
                         type="button"
                       >
                         <span className="reasoning-option-label">{item.label}</span>

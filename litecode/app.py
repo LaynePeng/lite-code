@@ -586,7 +586,13 @@ class AgentApp:
                     reasoning_effort_override: Optional[str] = None) -> AgentLoop:
         profile = self.get_agent(agent_id)
         adapter = self.adapter
-        if model_override or profile.model or profile.temperature is not None or reasoning_effort_override:
+        # reasoning_effort override 语义："off" = 显式关闭（覆盖 provider 默认）；
+        # 空串/None = 未指定 → 跟随 provider 配置
+        eff_override = reasoning_effort_override
+        if eff_override == "off":
+            eff_override = ""
+        has_eff_override = reasoning_effort_override is not None
+        if model_override or profile.model or profile.temperature is not None or has_eff_override:
             overrides: Dict[str, Any] = {}
             provider_id = model_override.get("provider") if model_override else None
             if model_override and model_override.get("model"):
@@ -595,8 +601,8 @@ class AgentApp:
                 overrides["model"] = profile.model
             if profile.temperature is not None:
                 overrides["temperature"] = profile.temperature
-            if reasoning_effort_override:
-                overrides["reasoning_effort"] = reasoning_effort_override
+            if has_eff_override:
+                overrides["reasoning_effort"] = eff_override
             adapter = self.llm_registry.build_adapter(provider_id=provider_id, overrides=overrides)
         # 上下文压缩：策略 B（保留最近 N 轮完整细节），预算 = min(token_budget, 90%×窗口)
         token_budget = int(self.config.get("token_budget", 48000))
