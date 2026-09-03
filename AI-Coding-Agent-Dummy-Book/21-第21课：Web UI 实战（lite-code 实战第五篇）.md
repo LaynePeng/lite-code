@@ -491,7 +491,24 @@ const patchChat = (sessionId: string, patch: Partial<ChatSessionState>) => {
 
 配置持久化在 `.lite-code/config.json` 的 `"llm"` 段。设置弹窗内部维护编辑态，点击保存后由后端写盘并重建适配器；只有保存成功后新的配置才用于后续任务。Header 文本在测试和保存时都会即时解析，因此用户无需先让输入框失焦；清空 Header 文本并保存会删除此前保存的自定义 Header。
 
-**当前会话的模型切换**：全局配置中的 active 供应商和模型仍然是默认值。聊天 Tab 可以在输入区选择已经配置的供应商和模型，选择只保存到当前会话；其他会话、文件 Tab 和全局默认配置不受影响。没有单独选择模型的会话始终跟随系统默认，选择“系统默认”则清除当前会话的覆盖。正在运行的任务保持原模型，新的模型选择从下一条消息开始生效。
+**当前会话的模型切换**：全局配置中的 active 供应商和模型仍然是默认值。聊天 Tab 可以在输入区选择已经配置的供应商和模型，选择只保存到当前会话；其他会话、文件 Tab 和全局默认配置不受影响。正在运行的任务保持原模型，新的模型选择从下一条消息开始生效。
+
+**模型下拉显示“实际生效”的模型**：下拉框的第一项不再是抽象的“系统默认”占位符，而是直接显示全局默认的真实模型名（如 `DeepSeek / deepseek-v4-flash（默认）`），每个供应商列表中等于全局默认的模型项也会追加“（默认）”后缀。当会话设置了模型 override 时，下拉框直接选中该项而不是回落到占位符——**用户看到的选项就是后端正在使用的模型**，显示与事实一致。计算逻辑与会话模型 override 完全同构：
+
+```tsx
+// Composer.tsx：生效模型 = 会话 override 优先，否则回退全局 provider 默认
+const effProviderId = sessionModel?.provider ?? llmConfig?.active ?? "";
+const globalModel = llmConfig?.providers?.[effProviderId]?.model ?? "";
+const effModel = sessionModel?.model ?? globalModel;
+const isDefaultModel = !sessionModel;   // 是否跟随全局默认
+```
+
+两个边界处理值得注意：
+
+- **选回全局默认 = 清除 override**：`onChange` 里判断选中值等于全局默认组合（或 `__global__` 占位值）时调用 `onSessionModelChange(null)`，会话恢复跟随全局配置——而不是把全局模型存成一份“多余”的 override；
+- **override 模型不在任何供应商列表时补一个选项**：会话创建后用户可能修改了供应商配置（删掉模型或换 Key），override 的模型在下拉列表中找不到对应 `<option>`，`<select>` 会显示空白。此时按 `sessionModel` 现值补一项“（会话）”标记的 option，保证显示不空白、用户也能看懂这个模型从哪来。
+
+首次发送还有个**显示与事实一致**的坑：创建会话后必须把后端确认的 override 写回会话状态（`api.setSessionModel`），否则 Composer 读 `currentChat.modelOverride` 拿到 `undefined` 会回退显示全局默认——而实际后端一直在用 override 模型执行任务，界面显示与真实行为不符。
 
 **设置弹窗的编辑态与关闭策略**：配置表单通常包含 API 请求、密码字段和多个动态模型条目，不能把异步请求的完成回调直接当成弹窗关闭信号。保存成功时应保留弹窗并显示结果，让用户继续检查或切换供应商；保存失败时也应保留当前编辑态并显示错误，避免用户重新输入配置。遮罩层适合阻止背景交互，不应默认承担关闭弹窗的行为；关闭应由明确的关闭按钮触发。这样可以避免 React 组件卸载导致未保存编辑丢失，也能让异步保存的状态反馈始终在当前上下文中可见。
 
@@ -561,6 +578,39 @@ const reasoningEffort = activeSessionId
   : (activeTabId ? draftReasoning[activeTabId] ?? "" : ""); // 新会话草稿：读 draft
 const resp = await api.chat(sid, prompt, currentAgent, reasoningEffort);
 ```
+
+**按钮显示“实际生效”的档位**：与模型下拉同理，按钮不是显示会话是否设置过 override，而是显示**当前对话真正生效的推理强度**——会话级 override 优先，否则回退到设置弹窗配置的供应商默认（都未配置则显示“关”）：
+
+```tsx
+// Composer.tsx：生效档位 = 会话 override 优先，否则回退供应商默认
+const providerEffort = effProviderCfg?.reasoning_effort ?? "";   // 设置弹窗配置的默认
+const hasEffortOverride = reasoningEffort !== undefined && reasoningEffort !== "";
+const displayEffort = hasEffortOverride ? reasoningEffort : (providerEffort || "off");
+```
+
+tooltip 明确标注档位来源：会话级显示“推理强度：中（会话级）”，回退时显示“推理强度：中（供应商默认，DeepSeek 设置中配置）”——用户能分清“我本会话设的”和“全局配置生效的”。菜单顶部还有一个**“跟随全局 · X”**入口（仅供应商默认已配置时出现），选择它清除会话 override、恢复跟随设置弹窗的默认值。
+
+**override 的三态语义**：“关闭”这一档有歧义——是“没设置”还是“显式关闭推理”？`lite-code` 用三个状态严格区分，链路上每一环都要保持语义不丢：
+
+| 会话状态 | API 请求 | `create_loop` 处理 | 实际效果 |
+| --- | --- | --- | --- |
+| `undefined` / `""`（跟随全局） | 不传该字段 | 无 override | 用供应商默认（设置弹窗配置） |
+| `"off"`（显式关闭） | `reasoning_effort: "off"` | 转为空串加入 overrides | 本会话关闭推理，**覆盖**供应商默认 |
+| `"low"` / `"medium"` / `"high"` / `"max"` | 传具体档位 | 直接加入 overrides | 本会话用该档位 |
+
+```typescript
+// api.ts：空串不发送 → 后端收到 None → 跟随供应商默认
+if (reasoningEffort) body.reasoning_effort = reasoningEffort;
+```
+
+```python
+# app.py create_loop（核心）："off" 是显式关闭，None 才是"未指定"
+if reasoning_effort_override == "off":
+    reasoning_effort_override = ""      # 空串覆盖 provider 默认 → 适配器侧关闭推理
+has_eff_override = reasoning_effort_override is not None   # None = 跟随 provider 配置
+```
+
+注意上表第一行的关键设计：**空串（`""`）在前端语义是“跟随全局”，在后端适配器语义是“关闭推理”**——靠 `api.ts` 的真值判断（空串不发字段）和 `create_loop` 的 `"off"` 转换把两个语义域拼接起来。任何一环直接透传空串，“跟随全局”就会退化成“显式关闭”，用户在设置弹窗配的供应商默认会被静默吞掉。
 
 后端链路：`ChatRequest.reasoning_effort` → `tasks.start(reasoning_effort=...)` → `create_loop(reasoning_effort_override=...)` → `build_adapter(overrides={reasoning_effort})` → 适配器构造时带上（见第 15 课 §4.5）。**会话级状态**：已有会话存 `ChatSessionState.reasoningEffort`，新会话草稿存 `draftReasoning[tabId]`——与模型选择（`modelOverride` / `draftModels`）完全同构，切换会话不串档。
 
@@ -675,7 +725,7 @@ async def _stream():
 1. **FastAPI 服务层**：REST + SSE 双通道、路径越界防护、"先打开项目"的显式状态、SSE 背压与终止事件优先级；
 2. **React Web UI**：ref 缓冲区解决高频流式渲染、有序工作项时间线、真实目录树 + git 状态徽标、多 Tab 工作台；
 3. **上下文可观测性**：`context:stats` 从 AgentLoop 到面板的完整数据链路，让 Token 治理可排查；
-4. **多 LLM 配置**：七类供应商 + 自定义实例、会话级模型覆盖、编辑态保护；
+4. **多 LLM 配置**：七类供应商 + 自定义实例、会话级模型覆盖、编辑态保护；主界面显示实际生效的模型与推理档位（会话 override 优先，回退供应商默认），`reasoning_effort` 三态语义（跟随全局 / 显式关闭 / 具体档位）在前后端链路严格不丢；
 5. **稳定性加固**：请求超时、卡死检测、ErrorBoundary、SSE 自动重连。
 
 至此 `lite-code` 已经可以通过 `python -m litecode serve` 在浏览器中使用。下一课我们将开启 **第23课：Electron 桌面应用（lite-code 实战第六篇）** —— 用 Electron 包裹 Web UI，实现多窗口项目工作区、真实终端和一键打包发布！

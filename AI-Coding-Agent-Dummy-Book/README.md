@@ -11,7 +11,7 @@
 - Skills 系统与权限治理、MCP 协议、插件架构（微内核 / 依赖注入）
 - 多 Agent 协作、Build/Plan 双默认 Agent 与用户自定义 Agent 机制
 - 多 LLM 供应商接入、FastAPI 服务、React UI、Electron 桌面打包
-- 支持系统默认模型与当前会话独立切换模型
+- 支持全局默认模型与当前会话独立切换模型，主界面显示实际生效的模型与推理档位
 - stdio MCP Client、动态工具发现与工具调用
 - Electron 真实终端（macOS 使用 shell，Windows 使用 PowerShell）与多窗口项目工作区
 - 支持项目根目录 `AGENTS.md` 和 `Claude.md` 指令文件
