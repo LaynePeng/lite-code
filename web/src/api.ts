@@ -39,7 +39,7 @@ export const api = {
   },
   createSession: (name?: string) =>
     req<{ session_id: string }>("/api/sessions", { method: "POST", body: JSON.stringify(name ? { name } : {}) }),
-  getSession: (id: string) => req<{ messages: import("./types").Msg[] }>(`/api/sessions/${id}`),
+  getSession: (id: string) => req<{ messages: import("./types").Msg[]; metadata?: Record<string, unknown> }>(`/api/sessions/${id}`),
   sessionModel: (id: string) => req<import("./types").SessionModelResponse>(`/api/sessions/${id}/model`),
   setSessionModel: (id: string, model: import("./types").SessionModel | null) =>
     req<import("./types").SessionModelResponse>(`/api/sessions/${id}/model`, {
@@ -84,6 +84,10 @@ export const api = {
   approve: (approvalId: string, approved: boolean) =>
     req<{ ok: boolean }>("/api/approve", {
       method: "POST", body: JSON.stringify({ approval_id: approvalId, approved }),
+    }),
+  answerQuestion: (questionId: string, answer: string) =>
+    req<{ ok: boolean; answer: string }>("/api/question", {
+      method: "POST", body: JSON.stringify({ question_id: questionId, answer }),
     }),
 
   llmProviders: () => req<LLMProviderMeta[]>("/api/llm/providers"),

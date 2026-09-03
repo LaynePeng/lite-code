@@ -19,7 +19,7 @@ EVENT_FORWARD = {
     "tool:after_execute", "approval:request", "approval:resolved", "task:start",
     "task:done", "task:error", "stats:update", "subagent:completed",
     "context:stats", "subagent:started", "subagent:progress", "skill:loaded",
-    "todo:updated",
+    "todo:updated", "question:request", "question:resolved",
 }
 
 
@@ -83,6 +83,28 @@ class TaskHandle:
             if event_name in EVENT_FORWARD:
                 self._forward_event({"type": event_name, "data": payload})
 
+        # 子 Agent 完成归档：写入会话 metadata（跨页面刷新/重启恢复）
+        async def _persist_subagent_completed(payload: Any) -> None:
+            try:
+                snapshot = self.app.session_store.load(self.kernel.session_id)
+                if snapshot is None:
+                    return
+                records = list((snapshot.metadata or {}).get("subagent_records") or [])
+                records.append({
+                    "subagentId": payload.get("subagentId") or "",
+                    "role": payload.get("role") or "general",
+                    "task": payload.get("task") or "",
+                    "tokens": payload.get("tokens_used") or 0,
+                    "turns": payload.get("turns") or 0,
+                    "summary": payload.get("summary") or "",
+                    "status": "completed",
+                })
+                # 最多保留 20 条；update_metadata 会合并到现有 metadata
+                self.app.session_store.update_metadata(self.kernel.session_id, {"subagent_records": records[-20:]})
+            except Exception:
+                logger.debug("[Task %s] 子 Agent 归档落盘失败", self.task_id, exc_info=True)
+
+        self.kernel.events.on("subagent:completed", _persist_subagent_completed)
         self.kernel.events.on("llm:stream", lambda p: _listener("llm:stream", p))
         for name in EVENT_FORWARD - {"llm:stream"}:
             self.kernel.events.on(name, lambda p, n=name: _listener(n, p))

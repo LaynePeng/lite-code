@@ -46,6 +46,7 @@ const EMPTY_CHAT: ChatSessionState = {
   subAgentRecords: [],
   stalled: false,
   todos: [],
+  pendingQuestions: [],
 };
 
 export default function App() {
@@ -336,7 +337,21 @@ export default function App() {
       openSessionTab(sid, info?.title || sid);
       if (!chatStatesRef.current[sid]) {
         const snap = await api.getSession(sid);
-        patchChat(sid, { ...EMPTY_CHAT, messages: snap?.messages ?? [] });
+        const initial: Partial<ChatSessionState> = { messages: snap?.messages ?? [] };
+        // 从会话 metadata 恢复子 Agent 归档卡片（跨页面刷新保留）
+        if (snap?.metadata?.subagent_records) {
+          initial.subAgentRecords = (snap.metadata.subagent_records as any[]).map((r) => ({
+            subagentId: r.subagentId ?? "",
+            role: r.role ?? "general",
+            task: r.task ?? "",
+            turn: r.turns ?? 0,
+            steps: [],
+            status: "done" as const,
+            summary: r.summary ?? "",
+            tokens: r.tokens ?? 0,
+          }));
+        }
+        patchChat(sid, { ...EMPTY_CHAT, ...initial });
         try {
           // 并行拉取模型覆盖、上下文统计与 TODO 看板，一次 patch 消除两次 patch 之间的显示闪烁
           const [model, ctx, todos] = await Promise.all([
@@ -628,6 +643,23 @@ export default function App() {
           });
           break;
         }
+        case "question:request": {
+          const cur = getChat(sid);
+          patchChat(sid, {
+            pendingQuestions: [
+              ...(cur.pendingQuestions ?? []).filter((q) => q.id !== ev.data.id),
+              { id: ev.data.id, question: ev.data.question, options: ev.data.options ?? [] },
+            ],
+          });
+          break;
+        }
+        case "question:resolved": {
+          const cur = getChat(sid);
+          patchChat(sid, {
+            pendingQuestions: (cur.pendingQuestions ?? []).filter((q) => q.id !== ev.data.id),
+          });
+          break;
+        }
         case "stats:update": {
           patchChat(sid, { stats: ev.data });
           break;
@@ -752,6 +784,13 @@ export default function App() {
             if (evData.subagentId && sa.subagentId && evData.subagentId !== sa.subagentId) return item;
             if (evData.kind === "llm:turn_start") {
               return { ...item, card: { ...card, subagent: { ...sa, turn: evData.turn ?? sa.turn + 1 } } };
+            }
+            if (evData.kind === "llm:stream") {
+              // 子 Agent 流式文本：累积显示（节流后按批次追加）
+              return {
+                ...item,
+                card: { ...card, subagent: { ...sa, streaming_text: (sa.streaming_text ?? "") + (evData.text ?? "") } },
+              };
             }
             if (evData.kind === "tool:before_execute") {
               const step: SubAgentStep = {
@@ -1009,6 +1048,21 @@ export default function App() {
     [currentChat.pendingApprovals, patchActiveChat]
   );
 
+  const answerQuestion = useCallback(
+    async (questionId: string, answer: string) => {
+      // 先本地移除（快速反馈），再通知后端 resolve
+      patchActiveChat({
+        pendingQuestions: (currentChat.pendingQuestions ?? []).filter((q) => q.id !== questionId),
+      });
+      try {
+        await api.answerQuestion(questionId, answer);
+      } catch {
+        /* ignore */
+      }
+    },
+    [currentChat.pendingQuestions, patchActiveChat]
+  );
+
   const activeSessionTitle = useMemo(() => {
     if (!activeSessionId) return "";
     return sessions.find((s) => s.session_id === activeSessionId)?.title ?? "新会话";
@@ -1098,11 +1152,13 @@ export default function App() {
               running={currentChat.running}
               turn={currentChat.turn}
               pendingApprovals={currentChat.pendingApprovals}
+              pendingQuestions={currentChat.pendingQuestions ?? []}
               subAgentRecords={currentChat.subAgentRecords}
               skillLoaded={currentChat.skillLoaded}
               onSend={(p) => void send(p)}
               onStop={stop}
               onApprove={(id, a) => void approve(id, a)}
+              onAnswerQuestion={(id, answer) => void answerQuestion(id, answer)}
             />
             <Composer
               running={currentChat.running}

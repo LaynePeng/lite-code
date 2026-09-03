@@ -18,6 +18,8 @@ from .mcp import MCPManager
 from .security.approval import ApprovalGate
 from .security.guard import SecurityGuard
 from .security.plugin import SecurityPlugin
+from .security.question import QuestionGate
+from .tools.ask import QuestionPlugin
 from .tools.plugin import (
     ASTPlugin,
     CodebasePlugin,
@@ -95,6 +97,7 @@ class AgentApp:
         # 安全组件（先于配置加载，供默认配置落盘引用）
         self.guard = SecurityGuard()
         self.approval_gate = ApprovalGate(timeout_seconds=600)
+        self.question_gate = QuestionGate(timeout_seconds=600)
         self.llm_registry = LLMRegistry(config_dir=self.config_dir)
         self.agent_registry = AgentRegistry()
         self._context_session_stats: Dict[str, Dict[str, Any]] = {}
@@ -347,6 +350,7 @@ class AgentApp:
             SubAgentPlugin(self),
             SkillsPlugin(self.workspace),
             self.todo_plugin,
+            QuestionPlugin(self.question_gate),
         ]
 
     @staticmethod
@@ -406,6 +410,12 @@ class AgentApp:
 
                 registry.set_handler(
                     "spawn_sub_agent", make_sub_agent_handler(self, kernel.events)
+                )
+            if registry.has("ask_user"):
+                from .tools.ask import make_ask_user_handler
+
+                registry.set_handler(
+                    "ask_user", make_ask_user_handler(self.question_gate, kernel.events)
                 )
         else:
             kernel.register_service(TOOLS_SERVICE, ToolRegistry())

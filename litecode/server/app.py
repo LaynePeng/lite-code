@@ -75,6 +75,11 @@ class SessionModelRequest(BaseModel):
     model: Optional[str] = None
 
 
+class QuestionAnswerRequest(BaseModel):
+    question_id: str
+    answer: str
+
+
 class LLMConfigRequest(BaseModel):
     active: Optional[str] = None
     providers: Optional[Dict[str, Dict[str, Any]]] = None
@@ -778,6 +783,14 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
         if not ok:
             raise HTTPException(status_code=404, detail="审批请求不存在或已处理")
         return {"ok": True, "approved": payload.approved}
+
+    @fast_app.post("/api/question")
+    async def answer_question(payload: QuestionAnswerRequest, request: Request):
+        _check_auth(request)
+        ok = app.question_gate.resolve(payload.question_id, payload.answer, by="user")
+        if not ok:
+            raise HTTPException(status_code=404, detail="问题不存在或已回答")
+        return {"ok": True, "answer": payload.answer}
 
     # ------------------------------------------------------------ 静态前端
 

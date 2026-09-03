@@ -192,19 +192,23 @@ export type SSEEvent =
   | { type: "subagent:completed"; data: SubAgentCompletedData }
   | { type: "skill:loaded"; data: { names: string[] } }
   | { type: "chat:queued"; data: { text: string; count: number } }
-  | { type: "todo:updated"; data: { todos: TodoItem[] } };
+  | { type: "todo:updated"; data: { todos: TodoItem[] } }
+  | { type: "question:request"; data: { id: string; question: string; options: string[] } }
+  | { type: "question:resolved"; data: { id: string; answer: string } };
 
 // 子 Agent 实时进度事件（命名空间转发自隔离 kernel）
 export interface SubAgentProgressEvent {
   subagentId: string;
   role: string;
   callId: string | null;
-  kind: "llm:turn_start" | "tool:before_execute" | "tool:after_execute";
+  kind: "llm:turn_start" | "tool:before_execute" | "tool:after_execute" | "llm:stream";
   turn?: number;
   tool?: string;
   brief?: string;
   status?: string;
   durationMs?: number;
+  /** llm:stream 时携带的文本块 */
+  text?: string;
 }
 
 export interface SubAgentCompletedData {
@@ -234,6 +238,8 @@ export interface SubAgentProgress {
   status: "running" | "done" | "error";
   summary?: string;
   tokens?: number;
+  /** 子 Agent 实时流式文本（llm:stream 累积） */
+  streaming_text?: string;
 }
 
 // Electron 注入的原生能力（浏览器模式下不存在）
@@ -327,6 +333,8 @@ export interface ChatSessionState {
   skillLoaded?: string[];
   // 任务 TODO 清单（todo_write 工具推送，任务结束后保留展示）
   todos: TodoItem[];
+  /** 待回答的提问（ask_user 工具） */
+  pendingQuestions?: { id: string; question: string; options: string[] }[];
 }
 
 // ---------------------------------------------------------------- Skills 管理与命令

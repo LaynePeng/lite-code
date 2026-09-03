@@ -35,7 +35,7 @@ current_tool_call: contextvars.ContextVar[Optional[str]] = contextvars.ContextVa
     "current_tool_call", default=None
 )
 
-# 写类工具：同轮出现时整轮退化为串行（顺序依赖风险，如 write A + read A）
+# 写类工具：auto 模式下写类工具串行执行、只读工具并行执行（顺序依赖风险，如 write A + read A）
 WRITE_TOOLS = frozenset({
     "write_file", "apply_search_replace", "apply_unified_diff",
     "execute_command", "git_commit", "git_push",
@@ -276,12 +276,9 @@ class AgentLoop:
                     self.state.status = AgentStatus.SUCCESS
                     return await self._finish(content or "(空回复)", messages, stats, store_snapshot)
 
-                # G. 派发执行工具（只读轮并行 / 含写类或 never 时串行；结果按原序回填）
-                if self._should_parallelize(tool_calls):
-                    results = await asyncio.gather(
-                        *[self._execute_tool_call(c, stats) for c in tool_calls]
-                    )
-                else:
+                # G. 派发执行工具（精细并行化：写类串行、只读并行；结果按原序回填）
+                if self.parallel_tool_calls == "never" or len(tool_calls) <= 1:
+                    # 全串行：逐个执行，每步可中止
                     results = []
                     for call in tool_calls:
                         if self._check_abort():
@@ -289,6 +286,30 @@ class AgentLoop:
                                 "[Stopped]: 已由用户手动停止。", messages, stats, store_snapshot
                             )
                         results.append(await self._execute_tool_call(call, stats))
+                elif self.parallel_tool_calls == "always":
+                    # 全并行
+                    results = await asyncio.gather(
+                        *[self._execute_tool_call(c, stats) for c in tool_calls]
+                    )
+                else:
+                    # auto 精细并行：写类工具串行 + 只读工具并行
+                    write_indices = [i for i, c in enumerate(tool_calls) if c.name in WRITE_TOOLS]
+                    read_indices = [i for i, c in enumerate(tool_calls) if c.name not in WRITE_TOOLS]
+                    results = [None] * len(tool_calls)
+                    # 写类工具逐个执行（保持顺序依赖）
+                    for i in write_indices:
+                        if self._check_abort():
+                            return await self._finish(
+                                "[Stopped]: 已由用户手动停止。", messages, stats, store_snapshot
+                            )
+                        results[i] = await self._execute_tool_call(tool_calls[i], stats)
+                    # 只读工具并行执行
+                    if read_indices:
+                        read_results = await asyncio.gather(
+                            *[self._execute_tool_call(tool_calls[i], stats) for i in read_indices]
+                        )
+                        for i, r in zip(read_indices, read_results):
+                            results[i] = r
                 if self._check_abort():
                     return await self._finish("[Stopped]: 已由用户手动停止。", messages, stats, store_snapshot)
 

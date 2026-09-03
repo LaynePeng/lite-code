@@ -75,7 +75,8 @@ class SubAgentRunner:
 
         registry = self.app.build_registry(
             allowed=allowed,
-            exclude=["spawn_sub_agent"],  # 子 Agent 不再嵌套派生，防止失控
+            # 子 Agent 不再嵌套派生（防止失控）；ask_user 交互通道未转发，暂不开放
+            exclude=["spawn_sub_agent", "ask_user"],
             permissions=permissions,
         )
         sub_id = f"sub_{uuid.uuid4().hex[:8]}"
