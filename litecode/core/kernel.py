@@ -1,4 +1,4 @@
-"""内核 Kernel（对应课程第12课 DSHKernel / 第10课 Hook 阶段挂载）。"""
+"""内核 Kernel（对应课程第10课（插件架构））。"""
 from __future__ import annotations
 
 import logging

@@ -72,7 +72,7 @@ class PayloadBuilder:
 [强制交付要求(共享)] → [Agent 角色段(分歧!)] → [环境信息(共享)] → [工具清单(分歧)] → [规则/指令(共享)]
 ```
 
-Plan 切到 Build 时，缓存从"角色段"开始失效——但两个 Agent 的**工具清单本来就不同**，工具区之后的历史反正全部 miss；把分歧段尽量前置（紧跟最后的硬共享头），反而不是新增损失。反过来，如果把 Agent 身份塞到 Prompt 末尾或消息流里，表面上"前缀更稳"，实际上工具区已经分歧、后面全 miss，Agent 身份还会在历史里产生重复注入。**缓存友好的本质不是"一切都不变"，而是"把不变的部分排在前面，让分歧点尽可能晚、尽可能只出现一次"**（双 Agent 的完整实现见第 15 课）。
+Plan 切到 Build 时，缓存从"角色段"开始失效——但两个 Agent 的**工具清单本来就不同**，工具区之后的历史反正全部 miss；把分歧段尽量前置（紧跟最后的硬共享头），反而不是新增损失。反过来，如果把 Agent 身份塞到 Prompt 末尾或消息流里，表面上"前缀更稳"，实际上工具区已经分歧、后面全 miss，Agent 身份还会在历史里产生重复注入。**缓存友好的本质不是"一切都不变"，而是"把不变的部分排在前面，让分歧点尽可能晚、尽可能只出现一次"**（双 Agent 的完整实现见第 12 课）。
 
 #### 4. 在 Harness 中接入缓存
 
@@ -111,7 +111,7 @@ def _build_payload(self, messages, tools, system, enable_cache=True):
 "stream_options": {"include_usage": True}   # 流末帧返回 usage
 ```
 
-> **重要**：`cache_control` 是 Anthropic Messages API 专属字段，OpenAI 兼容接口一律静默忽略——往 system 消息上标注它既无效又污染载荷。命中数据必须靠 `include_usage` 返回的 usage 统计（提取逻辑到第 17 课适配器篇再实现）。如果供应商没有返回缓存字段，界面中的 0 只能表示“没有可观测数据”，不能据此断定缓存未命中。
+> **重要**：`cache_control` 是 Anthropic Messages API 专属字段，OpenAI 兼容接口一律静默忽略——往 system 消息上标注它既无效又污染载荷。命中数据必须靠 `include_usage` 返回的 usage 统计（提取逻辑到第 15 课适配器篇再实现）。如果供应商没有返回缓存字段，界面中的 0 只能表示“没有可观测数据”，不能据此断定缓存未命中。
 
 #### 5. 缓存感知的 Token 预算管理
 
@@ -132,9 +132,9 @@ def _estimate_cost(self, stats) -> float:
             + stats.get("output_tokens", 0) / 1e6 * output_price)
 ```
 
-两个要点：**① hit/miss 直接来自 usage 的真实拆分**（口径差异见第 17 课——OpenAI 兼容的 `prompt_tokens` 已含命中需做减法，Anthropic 的 `input_tokens` 不含 `cache_read` 天然就是 miss），miss + hit 即真实总输入，直接分段计价即可；**② 无 usage 的估算轮次**（首次调用前的 TokenCounter 兜底）没有命中数据，回退按 input 全价——宁可略高估也不低估。
+两个要点：**① hit/miss 直接来自 usage 的真实拆分**（口径差异见第 15 课——OpenAI 兼容的 `prompt_tokens` 已含命中需做减法，Anthropic 的 `input_tokens` 不含 `cache_read` 天然就是 miss），miss + hit 即真实总输入，直接分段计价即可；**② 无 usage 的估算轮次**（首次调用前的 TokenCounter 兜底）没有命中数据，回退按 input 全价——宁可略高估也不低估。
 
-**价格本身从哪来**：静态配置一份全局价是错的——不同模型价格差几十倍（DeepSeek flash 输入 $0.14/M vs GPT-4o $2.5/M），且缓存折扣各家不同（Anthropic 0.1x、OpenAI 0.5x、DeepSeek flash 命中 $0.028）。正确做法是**从 models.dev 取 per-model 定价**（它的元数据里每个模型自带 `cost: {input, output, cache_read}`，见第 17 课元数据服务），按当前任务实际使用的模型解析；该模型无数据（自定义实例）时才回退 config 静态价，`cache_hit_per_mtok` 缺省按 input 的 10% 折算。
+**价格本身从哪来**：静态配置一份全局价是错的——不同模型价格差几十倍（DeepSeek flash 输入 $0.14/M vs GPT-4o $2.5/M），且缓存折扣各家不同（Anthropic 0.1x、OpenAI 0.5x、DeepSeek flash 命中 $0.028）。正确做法是**从 models.dev 取 per-model 定价**（它的元数据里每个模型自带 `cost: {input, output, cache_read}`，见第 15 课元数据服务），按当前任务实际使用的模型解析；该模型无数据（自定义实例）时才回退 config 静态价，`cache_hit_per_mtok` 缺省按 input 的 10% 折算。
 
 **重要**：调整 Token 预算策略时，**不能破坏缓存断点**。例如：
 - 裁剪历史消息时，只能裁剪**缓存断点之后**的消息；
@@ -189,7 +189,7 @@ if usage:
         stats["cache_miss_tokens"] += max(0, prompt - hit)
 ```
 
-**口径差异**：OpenAI 兼容接口的 `prompt_tokens` 已包含缓存命中部分，所以 `miss = prompt - hit`；而 Anthropic 的 `input_tokens` **不含** `cache_read_input_tokens`（命中部分在 message_delta 事件里单独返回，第 17 课适配器篇会展开），所以 `miss = input_tokens`。两家不能共用同一公式。
+**口径差异**：OpenAI 兼容接口的 `prompt_tokens` 已包含缓存命中部分，所以 `miss = prompt - hit`；而 Anthropic 的 `input_tokens` **不含** `cache_read_input_tokens`（命中部分在 message_delta 事件里单独返回，第 15 课适配器篇会展开），所以 `miss = input_tokens`。两家不能共用同一公式。
 
 命中率 = `cache_hit_tokens / (cache_hit_tokens + cache_miss_tokens)`。这个指标同时回答三个问题：
 
@@ -238,7 +238,7 @@ content, _, _ = await adapter.chat_stream(
 > *Keeping the conversation's own system prompt, tools, and message prefix in front of it makes the auxiliary call a genuine prefix of the last routed request, so the provider's KV cache is reused instead of invalidated.*
 > （把对话自身的 system、tools 和消息前缀放在辅助指令前面，使辅助调用成为上一次请求的真前缀——供应商的 KV 缓存被复用，而不是失效。）
 
-**通用原则**：Harness 里**每一次** LLM 调用（主循环、压缩、标题、子 Agent）都要问一句——"这个请求的前缀，是否是某个已发送请求的逐字节延续？"如果不是，考虑能不能改成"复用已有前缀 + 追加指令"的形状。lite-code 的完整实现（含防误发工具调用的回退）见第 18 课。
+**通用原则**：Harness 里**每一次** LLM 调用（主循环、压缩、标题、子 Agent）都要问一句——"这个请求的前缀，是否是某个已发送请求的逐字节延续？"如果不是，考虑能不能改成"复用已有前缀 + 追加指令"的形状。lite-code 的完整实现（含防误发工具调用的回退）见第 16 课。
 
 #### 本课小结
 

@@ -1,4 +1,4 @@
-"""安全卫士测试（对应第15课：三级风险 + 动态黑白名单 + 路径拦截）。"""
+"""安全卫士测试（对应第18课（安全沙箱实战）：三级风险 + 动态黑白名单 + 路径拦截）。"""
 import pytest
 
 from litecode.security.guard import SecurityGuard, ThreatLevel

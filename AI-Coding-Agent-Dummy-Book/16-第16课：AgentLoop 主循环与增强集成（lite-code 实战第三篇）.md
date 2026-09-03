@@ -263,7 +263,7 @@ class SystemPromptBuilder:
 
 > **与第 3 课的关系**：这里采用**任务级静态 System Prompt + 工具按需获取动态状态**。`git_status` 等工具返回的信息比预埋快照新鲜，同时稳定的 System 前缀能够保持缓存命中（详见第 3 课「设计决策」与第 4 课「稳定前缀」）。
 
-> **最终版本的追加段**：真实 `litecode/core/system_prompt.py` 的骨架之上还拼接了三段——开头的「强制交付要求」（第 22 课会讲它的来历）与末尾的「项目指令」（`AGENTS.md`/`CLAUDE.md`）、「可用技能索引」。追加段都放在**末尾**（或位于稳定骨架之前但内容任务内恒定），保证任务内 System Prompt 仍然逐字节不变，缓存前缀不受影响（设计细节见第 10 课）。
+> **最终版本的追加段**：真实 `litecode/core/system_prompt.py` 的骨架之上还拼接了三段——开头的「强制交付要求」（第 24 课会讲它的来历）与末尾的「项目指令」（`AGENTS.md`/`CLAUDE.md`）、「可用技能索引」。追加段都放在**末尾**（或位于稳定骨架之前但内容任务内恒定），保证任务内 System Prompt 仍然逐字节不变，缓存前缀不受影响（设计细节见第 8 课）。
 
 #### 4. AgentLoop 主循环代码 (`litecode/core/agent_loop.py`)
 
@@ -488,11 +488,11 @@ class AgentLoop:
         })
 ```
 
-**会话累计的差分口径（第 20 课 TaskHandle 消费侧的坑）**：`context:stats` 每轮推送的 task 段是**任务内累计全量**（stats 字典跨轮持续 `+=`），消费方若直接累加进会话累计，多轮任务会把同一笔账重复入账——第 N 轮累计的是 N 倍全量。正确做法是**差分**：`增量 = 本次全量 − 上次快照`，任务结束时清零快照。这类"推送全量、消费方求累计"的管道都要过一遍这个检查。
+**会话累计的差分口径（第 21 课 TaskHandle 消费侧的坑）**：`context:stats` 每轮推送的 task 段是**任务内累计全量**（stats 字典跨轮持续 `+=`），消费方若直接累加进会话累计，多轮任务会把同一笔账重复入账——第 N 轮累计的是 N 倍全量。正确做法是**差分**：`增量 = 本次全量 − 上次快照`，任务结束时清零快照。这类"推送全量、消费方求累计"的管道都要过一遍这个检查。
 
-**空响应自愈（D3）与 max_steps=100**：真实使用中发现，模型（尤其长任务后期）偶尔返回**既无 content 也无 tool_calls 的空响应**——它恰好落入"无工具调用即收敛"的夹缝，任务会安静地"正常结束"，用户只看到工具跑完却没有结论。对策是显式识别 + 有限重试：注入一条 user 消息把模型"摇醒"（上下文里出现失败说明，模型有信息自我纠正），连续 3 次仍为空则以 `FAILED_MAX_TURNS` 终止并写入明确错误。`max_steps` 默认也从 25 提高到 100——25 步对"读目录树 + 逐个读文件 + 逐个修改 + 跑测试"的真实多文件任务远远不够（配置迁移的坑见第 22 课）。这两个值的取值逻辑是同一个思想：**上限是保险丝，不是目标；宁可偶尔熔断，不可中途断电**。
+**空响应自愈（D3）与 max_steps=100**：真实使用中发现，模型（尤其长任务后期）偶尔返回**既无 content 也无 tool_calls 的空响应**——它恰好落入"无工具调用即收敛"的夹缝，任务会安静地"正常结束"，用户只看到工具跑完却没有结论。对策是显式识别 + 有限重试：注入一条 user 消息把模型"摇醒"（上下文里出现失败说明，模型有信息自我纠正），连续 3 次仍为空则以 `FAILED_MAX_TURNS` 终止并写入明确错误。`max_steps` 默认也从 25 提高到 100——25 步对"读目录树 + 逐个读文件 + 逐个修改 + 跑测试"的真实多文件任务远远不够（配置迁移的坑见第 24 课）。这两个值的取值逻辑是同一个思想：**上限是保险丝，不是目标；宁可偶尔熔断，不可中途断电**。
 
-**成本估算的定价解析（装配层）**：第 4 课 §5 推导了分段计价公式，价格的解析在 `create_loop` 装配时完成——按当前 adapter 的模型从 models.dev 取 per-model 三价（`get_model_pricing`，见第 17 课），覆盖 config 静态价；模型切换后下一个任务的 loop 自然拿到新价格：
+**成本估算的定价解析（装配层）**：第 4 课 §5 推导了分段计价公式，价格的解析在 `create_loop` 装配时完成——按当前 adapter 的模型从 models.dev 取 per-model 三价（`get_model_pricing`，见第 15 课），覆盖 config 静态价；模型切换后下一个任务的 loop 自然拿到新价格：
 
 ```python
 # app.py create_loop（核心）
@@ -508,7 +508,7 @@ loop = AgentLoop(..., pricing=pricing, ...)
 
 #### 5. 子 Agent 编排 (`litecode/orchestration/sub_agent.py`)
 
-对应第 14 课的子 Agent 编排，在 lite-code 中真实实现：创建独立 Kernel 和 AgentLoop，工具集按角色裁剪（explorer/read-only 不赋予写文件权限）：
+对应第 11 课的子 Agent 编排，在 lite-code 中真实实现：创建独立 Kernel 和 AgentLoop，工具集按角色裁剪（explorer/read-only 不赋予写文件权限）：
 
 ```python
 class SubAgentRunner:
@@ -524,7 +524,7 @@ class SubAgentRunner:
             context_manager=ContextManager(max_allowed_tokens=24000),
             max_steps=max_steps,
             context_window=self.app.llm_registry.get_context_window(self.app.llm_registry.active),
-            # 四级解析：手动覆盖 → models.dev → 内置表 → 128K（详见第 17 课 §5）
+            # 四级解析：手动覆盖 → models.dev → 内置表 → 128K（详见第 15 课 §5）
         )
         summary, _ = await loop.run_task(
             prompt=f"请完成以下子任务：\n{task_description}\n完成后只输出结论。",
@@ -546,10 +546,10 @@ class SubAgentRunner:
 1. 掌握了完整的 **Think-Act-Observe 状态机** 控制逻辑；
 2. 集成了第 2 课所有防御：**JSON 自愈**、**死循环 Hash 检测**、**输出截断**（截断结果落盘，上下文只放句柄），并新增**工具调用原子对修复**（恢复历史后 + 每次调用 LLM 前各跑一遍，残缺/无主/空 id 链一律不出站）；
 3. 集成了第 3 课所有增强：**Token 预算估算**、**策略 B 两阶段滑动裁剪**（保护 system 与 tool 原子对、保留最近 K 轮、`max(预算下限, 90% × 模型窗口)` 有效上限）、**LLM 摘要化压缩**（opencode 风格：旧轮次摘要替换、最近轮次原样保留，前缀只失效一次；摘要调用本身按第 4 课 §8 的前缀对齐发出，缓存不被打穿）、**静态 System Prompt**（任务内构建一次，稳定前缀）；
-4. 实现了 **beforeTool 安全管道**（SecurityPlugin 的接入点，插件本体在第 19 课实现）；
+4. 实现了 **beforeTool 安全管道**（SecurityPlugin 的接入点，插件本体在第 18 课实现）；
 5. 实现了 **估算兜底 + 真实 usage 回填**（第 4 课）：由适配器统一各供应商的缓存字段为 `prompt_cache_hit_tokens`，并对 Anthropic 与 OpenAI 兼容接口使用不同的 miss 口径；无缓存字段时标记为不可观测；
 6. 实现了 **上下文可观测性**：`context:stats` 事件把压缩次数、压缩节省 Token、命中率、窗口占用比例推给「上下文情况」面板；
 7. 主循环回收后自动**会话落盘**，防止中途异常崩溃丢状态；
 8. 子 Agent 编排**真实化**：上下文隔离、只读工具裁剪、Token 归集。
 
-下一次我们将开启 **第19课：安全沙箱与高危拦截实战 (`lite-code` 实战第四篇)** —— 给 `lite-code` 加入动态黑白名单、三级风险控制、Web 审批卡与提权确认机制！
+下一次我们将开启 **第18课：安全沙箱与高危拦截实战（lite-code 实战第四篇）** —— 给 `lite-code` 加入动态黑白名单、三级风险控制、Web 审批卡与提权确认机制！

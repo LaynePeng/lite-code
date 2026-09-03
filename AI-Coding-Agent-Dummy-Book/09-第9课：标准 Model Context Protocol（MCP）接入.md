@@ -199,7 +199,7 @@ class MCPManager:
 
 **① 工具名前缀 `mcp_<server>_<tool>`**：不同 MCP Server 可能暴露同名工具（两个 Server 都有 `query`），直接用原始名注册会互相覆盖，还可能与内置工具撞名。`server 名 + 工具名`的组合全局唯一，`-` 替换为 `_` 则保证名字能安全地进入 LLM 的 function calling 字母表。
 
-**② 注册即裁剪**：`register_tools` 接收 `allowed`/`exclude` 参数，与内置工具走同一套 Agent 工具裁剪（第 15 课 Build/Plan）——MCP 工具不是法外之地，Plan Agent 的只读约束对它同样生效。
+**② 注册即裁剪**：`register_tools` 接收 `allowed`/`exclude` 参数，与内置工具走同一套 Agent 工具裁剪（第 12 课 Build/Plan）——MCP 工具不是法外之地，Plan Agent 的只读约束对它同样生效。
 
 #### 4. 在 Harness 主控制循环中集成 MCP 工具
 
@@ -235,7 +235,7 @@ async def close(self) -> None:
     await self.mcp_manager.close()      # Core 关闭时终止所有 MCP Server 子进程
 ```
 
-**安全边界：外部进程提供的工具必须过审批**。内置工具的行为是我们审计过的，而 MCP Server 是任意外部进程——它的"query"工具完全可能在背后读写文件系统。因此在安全插件的拦截管道里，所有 `mcp_*` 工具默认视为需要用户确认的操作（详见第 19 课的三级风险模型），用户批准后调用才会放行。MCP 工具与内置工具共用超时控制、事件流与 SSE 工具卡片，在 Web UI 上的体验完全一致。
+**安全边界：外部进程提供的工具必须过审批**。内置工具的行为是我们审计过的，而 MCP Server 是任意外部进程——它的"query"工具完全可能在背后读写文件系统。因此在安全插件的拦截管道里，所有 `mcp_*` 工具默认视为需要用户确认的操作（详见第 18 课的三级风险模型），用户批准后调用才会放行。MCP 工具与内置工具共用超时控制、事件流与 SSE 工具卡片，在 Web UI 上的体验完全一致。
 
 ### 本课小结
 
@@ -246,4 +246,4 @@ async def close(self) -> None:
 3. 实现了**配置驱动**的 MCP 管理中心：动态 Server 发现、`mcp_<server>_<tool>` 命名防冲突、按 Agent 裁剪注册、统一安全销毁；
 4. 确立了 MCP 工具的**安全边界**：外部进程提供的工具默认需要用户审批，与内置工具共用同一套安全管道。
 
-下一次我们将正式开启 **第12课：Cordis 插件内核设计（Spatiotemporal Composability）** —— 探索高级 Harness 是如何通过"时空解耦"与可重写轨迹实现 Agent 行为解耦的！
+下一次我们将正式开启 **第10课：插件架构：内核设计与依赖注入** —— 探索高级 Harness 是如何通过"时空解耦"与可重写轨迹实现 Agent 行为解耦的！

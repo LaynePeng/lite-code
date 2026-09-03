@@ -4,7 +4,7 @@
 
 > 版本号单一事实源：`litecode/__init__.py` 的 `__version__`，构建时自动同步到 npm/安装包，页内不再标注具体版本。
 
-📖 配套教程：[《AI Code Agent 手把手》](https://laynepeng.gitbook.io/ai-code-agent-shou-ba-shou)——22 课从零搭建本项目的完整教程（本仓库 `AI-Coding-Agent-Dummy-Book/` 目录）。
+📖 配套教程：[《AI Code Agent 手把手》](https://laynepeng.gitbook.io/ai-code-agent-shou-ba-shou)——24 课从零搭建本项目的完整教程（本仓库 `AI-Coding-Agent-Dummy-Book/` 目录）。
 
 ## 功能
 
@@ -88,12 +88,12 @@ npm start      # 生产模式：构建前端 → 自动拉起 Core → 窗口
 
 ## 教程
 
-完整的 22 课从零搭建教程在 `AI-Coding-Agent-Dummy-Book/` 目录：
+完整的 24 课从零搭建教程在 `AI-Coding-Agent-Dummy-Book/` 目录：
 
 - 第 1-5 课：LLM 接口封装 / Agent 循环 / Token 预算 / Prompt 缓存 / Token 节省策略
-- 第 6-11 课：代码感知 / Tree-sitter AST / 沙箱隔离 / 精确编辑 / 项目指令与 Skills / MCP 协议
-- 第 12-15 课：Cordis 微内核 / 中间件 / 子 Agent 编排 / Agent 类型与自定义机制
-- 第 16-22 课：手写实战（Python Core → 多 LLM → AgentLoop → 安全 → Web UI → Electron → 工程实践）
+- 第 6-9 课：代码理解 / 安全代码操作 / Skills 系统与权限治理 / MCP 协议
+- 第 10-13 课：插件架构 / 多 Agent 协作 / Agent 类型 / 知识篇综合复盘
+- 第 14-24 课：手写实战（Core → 多 LLM → AgentLoop → 并行扩展 → 安全 → ask_user → TODO → Web UI → 会话管理 → Electron → 工程实践）
 
 📖 在线阅读：[https://laynepeng.gitbook.io/ai-code-agent-shou-ba-shou](https://laynepeng.gitbook.io/ai-code-agent-shou-ba-shou)
 

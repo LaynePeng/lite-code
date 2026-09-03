@@ -1,4 +1,4 @@
-"""安全卫士（对应课程第15课 SecurityGuard，增强：动态黑白名单热加载）。
+"""安全卫士（对应课程第18课（安全沙箱实战） SecurityGuard，增强：动态黑白名单热加载）。
 
 防御体系（Defense-in-Depth）：
 - Layer 1: 敏感路径检查（/etc/shadow、.env、~/.ssh 等）

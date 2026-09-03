@@ -1,4 +1,4 @@
-"""精确代码编辑工具（对应课程第7课）：
+"""精确代码编辑工具（对应课程第7课（安全代码操作））：
 
 1. apply_search_replace - Search-and-Replace 块匹配器（精确匹配 → 模糊行匹配 + 缩进保持）
 2. apply_unified_diff   - Unified Diff 补丁应用器（锚点自适应偏移）

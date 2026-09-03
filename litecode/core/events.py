@@ -1,4 +1,4 @@
-"""强类型异步事件总线（对应课程第12课 TypedEventEmitter，asyncio 版）。"""
+"""强类型异步事件总线（对应课程第10课（插件架构） TypedEventEmitter，asyncio 版）。"""
 from __future__ import annotations
 
 import asyncio

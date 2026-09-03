@@ -194,4 +194,4 @@ sub_kernel.events.on("tool:before_execute",
 
 至此，**模块三：核心架构** 的前半部分（微内核与子 Agent 编排）已全部完结！
 
-下一步我们将开启 **第15课：Agent 类型与自定义机制（Build/Plan 与用户扩展）** —— 参考 OpenCode，为 Harness 内置 Build/Plan 两种默认 Agent，并开放用户自定义 Agent 的配置通道！
+下一步我们将开启 **第12课：Agent 类型与自定义机制** —— 参考 OpenCode，为 Harness 内置 Build/Plan 两种默认 Agent，并开放用户自定义 Agent 的配置通道！

@@ -22,17 +22,17 @@ lite-code/
 │   │   ├── state_tracker.py    # 死循环检测（第2课）
 │   │   ├── json_repair.py      # JSON 容错（第2课）
 │   │   ├── truncator.py        # 输出截断（第2课）
-│   │   └── agent_loop.py       # AgentLoop 主循环（第18课）
-│   ├── llm/                    # LLM 多供应商适配层（第17课）
-│   ├── tools/                  # 20 个内置工具 + 工具插件（第17课）
-│   ├── mcp/                    # stdio MCP Client 与管理器（第11课）
-│   ├── security/               # 安全沙箱（第19课）
-│   ├── server/                 # FastAPI 服务 + SSE（第20课）
-│   ├── orchestration/          # 子 Agent 编排（第14课）
+│   │   └── agent_loop.py       # AgentLoop 主循环（第16课）
+│   ├── llm/                    # LLM 多供应商适配层（第15课）
+│   ├── tools/                  # 20 个内置工具 + 工具插件（第15课）
+│   ├── mcp/                    # stdio MCP Client 与管理器（第9课）
+│   ├── security/               # 安全沙箱（第18课）
+│   ├── server/                 # FastAPI 服务 + SSE（第21课）
+│   ├── orchestration/          # 子 Agent 编排（第11课）
 │   ├── app.py                  # 装配层
 │   └── cli.py                  # 启动入口
-├── web/                        # React 前端（第20课）
-└── electron/                   # Electron 桌面外壳（第21课）
+├── web/                        # React 前端（第21课）
+└── electron/                   # Electron 桌面外壳（第23课）
 ```
 
 #### 2. 定义核心类型 (`litecode/core/types.py`)
@@ -92,7 +92,7 @@ class Context:
 **关键点**：
 1. `ToolCall.arguments` 是模型返回的**逐字增长的 JSON 字符串碎片**，绝不能在中途 `json.loads`，必须等整个 Turn 的流接收完毕再解析（第1课结论）；
 2. `Message.to_dict()` 保证序列化后与 OpenAI/DeepSeek 接口格式完全一致；
-3. `Context.services` 是**依赖注入容器**（第 12 课 Cordis 思想），插件可在内核上挂载自己的服务。
+3. `Context.services` 是**依赖注入容器**（第 10 课 Cordis 思想），插件可在内核上挂载自己的服务。
 
 #### 3. 手写强类型异步事件总线 (`litecode/core/events.py`)
 
@@ -140,11 +140,11 @@ class TypedEventBus:
                     "[EventBus] Listener error on event %s", event)
 ```
 
-**增强点**：相比课程第 12 课的同步 EventEmitter，这里用 asyncio 实现，`emit` 会 **await 每个异步监听器**。这保证了「事件→SSE 推送→UI 渲染」的严格顺序，是后面 Web 端流式输出的基础。
+**增强点**：相比课程第 10 课的同步 EventEmitter，这里用 asyncio 实现，`emit` 会 **await 每个异步监听器**。这保证了「事件→SSE 推送→UI 渲染」的严格顺序，是后面 Web 端流式输出的基础。
 
 #### 4. 手写洋葱模型中间件管道 (`litecode/core/pipeline.py`)
 
-对应课程第 13 课的 `Pipeline` 管道，支持同步/异步中间件，`next()` 可携带更新后的数据继续传递：
+对应课程第 10 课的 `Pipeline` 管道，支持同步/异步中间件，`next()` 可携带更新后的数据继续传递：
 
 ```python
 # litecode/core/pipeline.py
@@ -180,11 +180,11 @@ class Pipeline:
         return await dispatch(0, initial_data)
 ```
 
-中间件签名固定为 `(ctx, data, next)`，`next(data)` 向下传递，返回 `data` 给上层——这就是第 13 课讲的**洋葱模型**：请求进入 → 逐层预处理 → 核心处理 → 逐层返回修饰。
+中间件签名固定为 `(ctx, data, next)`，`next(data)` 向下传递，返回 `data` 给上层——这就是第 10 课讲的**洋葱模型**：请求进入 → 逐层预处理 → 核心处理 → 逐层返回修饰。
 
 #### 5. 手写插件内核 (`litecode/core/kernel.py`)
 
-内核只负责维持 Context、事件总线与三阶段拦截管道，业务能力全部外包给插件（第 12 课「空间解耦」）：
+内核只负责维持 Context、事件总线与三阶段拦截管道，业务能力全部外包给插件（第 10 课「空间解耦」）：
 
 ```python
 # litecode/core/kernel.py
@@ -327,4 +327,4 @@ print(k.ctx.messages[0].to_dict())   # {'role': 'user', 'content': 'hello'}
 3. 实现了包含 **`Pipeline` 洋葱模型** 与 **`Context` 容器** 的 `Kernel`；
 4. 编写了具备**原子写盘**与列表/删除能力的 **`SessionStore`**。
 
-下一次我们将开启 **第17课：LLM 多供应商适配器与核心工具集 (`lite-code` 实战第二篇)** —— 手写 httpx SSE 流式解析、多 LLM 供应商注册表，以及文件/搜索/AST/编辑/Shell/Git/审查等全套工具！
+下一次我们将开启 **第15课：LLM 多供应商适配器与核心工具集（lite-code 实战第二篇）** —— 手写 httpx SSE 流式解析、多 LLM 供应商注册表，以及文件/搜索/AST/编辑/Shell/Git/审查等全套工具！

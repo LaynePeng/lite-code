@@ -1,4 +1,4 @@
-"""代码库感知工具（对应课程第4课）：Ripgrep 高速搜索 + gitignore 过滤文件树。"""
+"""代码库感知工具（对应课程第6课（代码理解））：Ripgrep 高速搜索 + gitignore 过滤文件树。"""
 from __future__ import annotations
 
 import asyncio

@@ -1,4 +1,4 @@
-"""安全中间件插件（对应课程第15课 SecurityPlugin，Web 审批版）。
+"""安全中间件插件（对应课程第18课（安全沙箱实战） SecurityPlugin，Web 审批版）。
 
 挂载到 Kernel.beforeTool 管道：
 - 文件/编辑工具 → 敏感路径检查（HIGH 阻断）

@@ -1,4 +1,4 @@
-"""受限本地 Shell 沙箱（对应课程第6课 LocalProcessSandbox 增强版）。
+"""受限本地 Shell 沙箱（对应课程第7课（安全代码操作） LocalProcessSandbox 增强版）。
 
 - asyncio subprocess + 硬超时（超时 SIGKILL）
 - 敏感环境变量擦除（防 API Key 泄漏给子进程）

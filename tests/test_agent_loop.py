@@ -1,4 +1,4 @@
-"""AgentLoop 主循环测试（第14课 + 第2课增强：自愈/死循环/截断/停止/会话落盘）。"""
+"""AgentLoop 主循环测试（第16课（实战 AgentLoop）+ 第2课增强：自愈/死循环/截断/停止/会话落盘）。"""
 import asyncio
 import os
 

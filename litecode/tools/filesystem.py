@@ -1,4 +1,4 @@
-"""文件系统工具（对应课程第13课 FileSystemPlugin 增强版）。
+"""文件系统工具（对应课程第6课（代码理解） FileSystemPlugin 增强版）。
 
 增强：带行号范围读取、list_dir、gitignore 感知文件树（pathspec）。
 所有操作限定在 workspace 根目录内（防目录穿越）。

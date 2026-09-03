@@ -1,4 +1,4 @@
-"""编辑器工具测试（对应第7课：Search-Replace 模糊退避 + Unified Diff 锚点偏移）。"""
+"""编辑器工具测试（对应第7课（安全代码操作）：Search-Replace 模糊退避 + Unified Diff 锚点偏移）。"""
 import asyncio
 import os
 

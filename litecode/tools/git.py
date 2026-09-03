@@ -1,4 +1,4 @@
-"""Git 自动化工具（对应课程第16课总结提出的增强插件：Git 自动化）。
+"""Git 自动化工具（对应课程第14课（实战 Core）总结提出的增强插件：Git 自动化）。
 
 只读操作直通；写操作（commit）需要显式 message；破坏性操作
 （push --force / reset --hard / branch -D）由 SecurityGuard 判定为中危 → 人工确认。

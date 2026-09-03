@@ -1,4 +1,4 @@
-"""AST 语义工具（对应课程第5课）：Tree-sitter 符号大纲提取 + 骨架上下文压缩。"""
+"""AST 语义工具（对应课程第6课（代码理解））：Tree-sitter 符号大纲提取 + 骨架上下文压缩。"""
 from __future__ import annotations
 
 import asyncio

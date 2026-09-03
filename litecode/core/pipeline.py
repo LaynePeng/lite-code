@@ -1,4 +1,4 @@
-"""洋葱模型中间件管道（对应课程第10课 PipelineManager / 第12课 Pipeline）。"""
+"""洋葱模型中间件管道（对应课程第8课 Skills / 第10课插件架构）。"""
 from __future__ import annotations
 
 import asyncio

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "./api";
 import AboutModal from "./components/AboutModal";
-import ChatView from "./components/ChatView";
+import ChatView, { QuestionBar } from "./components/ChatView";
 import Composer from "./components/Composer";
 import FileViewer from "./components/FileViewer";
 import ProjectPicker from "./components/ProjectPicker";
@@ -1152,12 +1152,14 @@ export default function App() {
               running={currentChat.running}
               turn={currentChat.turn}
               pendingApprovals={currentChat.pendingApprovals}
-              pendingQuestions={currentChat.pendingQuestions ?? []}
               subAgentRecords={currentChat.subAgentRecords}
               skillLoaded={currentChat.skillLoaded}
               onSend={(p) => void send(p)}
               onStop={stop}
               onApprove={(id, a) => void approve(id, a)}
+            />
+            <QuestionBar
+              pendingQuestions={currentChat.pendingQuestions ?? []}
               onAnswerQuestion={(id, answer) => void answerQuestion(id, answer)}
             />
             <Composer

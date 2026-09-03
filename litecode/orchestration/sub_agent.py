@@ -1,9 +1,9 @@
-"""子 Agent 编排（对应课程第11/14课 SubAgentRunner 真实化）。
+"""子 Agent 编排（对应课程第11课 SubAgentRunner 真实化）。
 
 上下文隔离：子 Agent 拥有独立 Kernel 与消息链；工具集按角色裁剪；
 结果压缩：最终产出汇总为精简报告 + Token 消耗归集到父级事件。
 
-第14课增强：角色来源扩展为 AgentRegistry —— 用户自定义的 subagent
+第11课增强：角色来源扩展为 AgentRegistry —— 用户自定义的 subagent
 （mode="subagent"）也能被 spawn_sub_agent 直接派生使用。
 """
 from __future__ import annotations

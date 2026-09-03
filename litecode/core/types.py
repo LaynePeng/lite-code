@@ -1,4 +1,4 @@
-"""核心类型定义（对应课程第12课 types.ts）。"""
+"""核心类型定义（对应课程第10课（插件架构） types.ts）。"""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

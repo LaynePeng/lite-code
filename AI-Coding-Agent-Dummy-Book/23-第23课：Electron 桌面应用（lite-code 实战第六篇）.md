@@ -82,7 +82,7 @@ new BrowserWindow({
 
 安全基线：`sandbox: true` + `contextIsolation: true` + `nodeIntegration: false`，渲染进程没有任何 Node 能力，桌面功能全部通过 preload 桥（下一节）以白名单 IPC 暴露。远程模式支持 Bearer Token 注入（`session.webRequest.onBeforeSendHeaders`）。
 
-**应用菜单与自定义 About**：Electron 默认的应用菜单里，「关于」走的是 macOS 原生面板——版本信息、图标样式都不受我们控制。生产级应用通常自定义整个菜单模板（`Menu.buildFromTemplate`），把 About 菜单项的 `click` 改为向渲染进程发 IPC，弹出**设计版关于对话框**（品牌图标、版本徽标、GitHub/教程链接，见第 20 课 AboutModal）：
+**应用菜单与自定义 About**：Electron 默认的应用菜单里，「关于」走的是 macOS 原生面板——版本信息、图标样式都不受我们控制。生产级应用通常自定义整个菜单模板（`Menu.buildFromTemplate`），把 About 菜单项的 `click` 改为向渲染进程发 IPC，弹出**设计版关于对话框**（品牌图标、版本徽标、GitHub/教程链接，见第 21 课 AboutModal）：
 
 ```javascript
 // electron/main.js（核心）
@@ -170,7 +170,7 @@ async function hotSwitchWorkspace(instance, workspace) {
 
 **为什么不加单实例锁？** `app.requestSingleInstanceLock()` 是 Electron 应用的常见默认——第二个实例唤醒已有窗口。但多项目工作流要求每次启动都是新窗口新 Core，所以 `lite-code` 刻意不调用它。代价是用户手动双击图标会开出多个空窗口，换来的是「从 Finder 拖文件夹到图标 → 直接开一个绑定该项目的窗口」这类工作流的可能。
 
-**配置共享**：所有窗口的 Core 都用 `--config-dir ~/.lite-code` 启动，共享同一份模型、安全规则与 Agent 配置——在 A 窗口配置的 API Key，B 窗口立即可用（后端配置热加载，第 17 课）。会话历史则按 workspace 隔离（第 20 课 SessionStore），互不干扰。
+**配置共享**：所有窗口的 Core 都用 `--config-dir ~/.lite-code` 启动，共享同一份模型、安全规则与 Agent 配置——在 A 窗口配置的 API Key，B 窗口立即可用（后端配置热加载，第 15 课）。会话历史则按 workspace 隔离（第 21 课 SessionStore），互不干扰。
 
 #### 3. 真实终端：node-pty + xterm.js
 
@@ -435,4 +435,4 @@ release/
 4. **启动体验**：加载页先行、崩溃自愈、异步回调中的存活校验、退出回收链；
 5. **打包发布**：PyInstaller `--onedir`、node-pty asarUnpack、Windows 指纹增量构建、DMG 产物。
 
-至此，`lite-code` 已经是一个可以分发给别人安装使用的完整桌面应用。但它离"生产可用"还差最后一课——真实用户使用中暴露的那些工程问题。下一课我们将开启 **第22课：工程实践与踩坑（lite-code实战终章）** —— 复盘开发过程中真实踩过的坑，并为整套课程画上句号！
+至此，`lite-code` 已经是一个可以分发给别人安装使用的完整桌面应用。但它离"生产可用"还差最后一课——真实用户使用中暴露的那些工程问题。下一课我们将开启 **第24课：工程实践与踩坑（lite-code 实战终章）** —— 复盘开发过程中真实踩过的坑，并为整套课程画上句号！

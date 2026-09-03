@@ -1,4 +1,4 @@
-"""会话持久化（对应课程第12课 SessionStore，增强：列表/删除/备份安全写盘）。"""
+"""会话持久化（对应课程第10课（插件架构） SessionStore，增强：列表/删除/备份安全写盘）。"""
 from __future__ import annotations
 
 import json

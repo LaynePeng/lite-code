@@ -1,4 +1,4 @@
-"""AgentLoop 主循环状态机（对应课程第14课 + 第2/3课全部增强）。
+"""AgentLoop 主循环状态机（对应课程第16课（实战 AgentLoop）+ 第2/3课全部增强）。
 
 完整 Think-Act-Observe 闭环：
 LLM 调用(带动态 System Prompt / Token 预算裁剪 / beforeLLM 管道)

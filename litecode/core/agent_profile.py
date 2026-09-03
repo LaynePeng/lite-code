@@ -1,4 +1,4 @@
-"""Agent 类型与注册机制（对应课程第14课，参考 OpenCode Agent 设计）。
+"""Agent 类型与注册机制（对应课程第11课（多Agent协作）或第12课（Agent类型），参考 OpenCode Agent 设计）。
 
 OpenCode 内置两种 primary agent：
 - build：默认，拥有全部工具，负责实际的开发工作；

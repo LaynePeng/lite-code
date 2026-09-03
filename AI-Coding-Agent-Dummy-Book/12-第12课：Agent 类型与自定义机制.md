@@ -227,7 +227,7 @@ system_prompt = SystemPromptBuilder.build(
 
 #### 7. 与子 Agent 编排打通
 
-第 14 课的 `SubAgentRunner` 现在也接入 AgentRegistry：用户自定义的 `subagent` 也能被 `spawn_sub_agent` 直接派生。
+第 11 课的 `SubAgentRunner` 现在也接入 AgentRegistry：用户自定义的 `subagent` 也能被 `spawn_sub_agent` 直接派生。
 
 ```python
 # orchestration/sub_agent.py
@@ -261,4 +261,4 @@ async def run_task(self, task_description, role="general", ...):
 4. 学会了 **permissions 双保险**（工具白名单 + 权限 deny）；
 5. 让 `SubAgentRunner` 支持用户自定义的 subagent 角色。
 
-至此，**模块三：核心架构** 全部完结。下一步我们将进入 **模块四：手写实战**，从零构建完整的桌面 Code Agent 应用。在实战第一篇（第 16 课）中，我们会把前 15 课学到的全部机制整合进一个可运行的工程。
+至此，**模块三：核心架构** 全部完结。下一步我们将进入 **模块四：手写实战**，从零构建完整的桌面 Code Agent 应用。在实战第一篇（第 14 课）中，我们会把前 15 课学到的全部机制整合进一个可运行的工程。

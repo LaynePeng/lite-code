@@ -45,7 +45,7 @@ export default function AboutModal({ onClose, serverVersion }: { onClose: () => 
             <a href={GITHUB_URL} target="_blank" rel="noreferrer"><GitHubIcon />GitHub 仓库</a>
             <a href={`${GITHUB_URL}/releases`} target="_blank" rel="noreferrer">📦 版本发布</a>
             <a href={`${GITHUB_URL}/issues`} target="_blank" rel="noreferrer">💬 问题反馈</a>
-            <a href={TUTORIAL_URL} target="_blank" rel="noreferrer">📖 配套教程（22 课）</a>
+            <a href={TUTORIAL_URL} target="_blank" rel="noreferrer">📖 配套教程（24 课）</a>
           </div>
 
           <div className="about-actions">

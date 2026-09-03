@@ -1685,6 +1685,48 @@ body.resizing-row * { cursor: row-resize !important; user-select: none !importan
   cursor: not-allowed;
 }
 
+/* 非阻塞提问条：显示在输入区上方（Agent 选择之上），不遮挡对话、可滚动查看上下文 */
+.question-bar {
+  margin: 0 max(24px, calc((100% - 820px) / 2)) 0;
+  padding: 12px 16px;
+  background: var(--bg-1);
+  border: 1px solid rgba(210, 153, 34, 0.45);
+  border-radius: 12px;
+  box-shadow: 0 -2px 16px rgba(0, 0, 0, 0.12);
+  z-index: 5;
+}
+
+.question-bar-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+  margin-bottom: 10px;
+}
+
+.question-bar-icon {
+  font-size: 16px;
+}
+
+.question-bar .question-tabs {
+  justify-content: flex-start;
+  margin-bottom: 10px;
+}
+
+.question-bar .question-text {
+  max-height: 120px;
+}
+
+.question-bar .question-options {
+  margin-bottom: 12px;
+}
+
+.question-bar .question-custom-row .form-input {
+  background: var(--bg-0);
+}
+
 /* 停止按钮 */
 .stop-bar {
   position: absolute;

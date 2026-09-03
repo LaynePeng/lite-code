@@ -195,7 +195,7 @@ def start(self, session_id, prompt, agent_id=None):
     ...
 ```
 
-这样「第二轮」的上下文 = 第一轮完整历史 + 新问题，system + tools 前缀保持不变——多轮对话间的缓存命中也能延续（第 4 课稳定前缀 + 第 18 课静态 System Prompt）。
+这样「第二轮」的上下文 = 第一轮完整历史 + 新问题，system + tools 前缀保持不变——多轮对话间的缓存命中也能延续（第 4 课稳定前缀 + 第 16 课静态 System Prompt）。
 
 #### 3. React 前端（Web UI）
 
@@ -268,7 +268,7 @@ UI 采用以下交互约定：
 └───────────────────────┘  └─────────────────────┘
 ```
 
-工具卡片默认收起（仅显示工具名与状态），点击展开查看参数与结果；文件修改类（`[Patch Success]` 回执）卡片默认展开并渲染 opencode 风格 diff（见第 9 课）。
+工具卡片默认收起（仅显示工具名与状态），点击展开查看参数与结果；文件修改类（`[Patch Success]` 回执）卡片默认展开并渲染 opencode 风格 diff（见第 7 课）。
 
 **统计为什么并入上下文面板**：早期的侧边栏有独立「统计」页签（输入/输出 tokens、工具调用、安全拦截、预估成本 + 已注册工具），但它展示的与上下文面板同源同口径（都来自 AgentLoop 的 stats）——拆两处既重复又割裂。最终形态：数字指标全部并入「上下文」Tab 的本次调用/会话累计两段，已注册工具独立成「工具」Tab（它属于"能力清单"而非统计），侧边栏腾出的位置给了**终端**（终端从右面板底部迁到侧边栏 Tab，每窗口一个实例，生命周期跟随窗口——打开项目/关窗时自动回收）。
 
@@ -296,7 +296,7 @@ function buildTurns(messages) {
 
 **后端新端点**：配套新增 `/api/agents` 返回 Agent 列表、`/api/workspace` 运行时切换工作区、`/api/fs/list` 浏览任意目录。
 
-**MCP 工具**：最终项目通过 `litecode/mcp/` 提供 stdio MCP Client（第 11 课详细讲解实现）。配置持久化在 `~/.lite-code/config.json` 的 `mcp_servers` 段，也可以直接在**设置弹窗的 MCP 区块**可视化编辑（无需手改 JSON）：
+**MCP 工具**：最终项目通过 `litecode/mcp/` 提供 stdio MCP Client（第 9 课详细讲解实现）。配置持久化在 `~/.lite-code/config.json` 的 `mcp_servers` 段，也可以直接在**设置弹窗的 MCP 区块**可视化编辑（无需手改 JSON）：
 
 ```json
 {
@@ -314,9 +314,9 @@ MCP 设置界面提供：服务器卡片（名称/命令/参数/启用开关/删
 
 Core 启动时完成 MCP 初始化握手并调用 `tools/list`，外部工具以 `mcp_<server>_<tool>` 名称加入 ToolRegistry；调用时通过 `tools/call` 转发。MCP 工具与内置工具共用 Agent 的工具裁剪、安全审查、超时和事件流，不绕过现有安全边界。Core 关闭时终止 MCP Server 子进程。
 
-**项目指令文件与 Skills**：最终项目按第 10 课的设计实现了完整机制——Core 启动任务时读取 workspace 根目录的 `AGENTS.md` / `Claude.md` / `CLAUDE.md` 注入 System Prompt；Skills 索引（名称 + 描述）常驻 System Prompt，`load_skill` 工具按需加载 `SKILL.md` 全文。两者都拼接在 System Prompt 末尾，保持缓存前缀稳定。
+**项目指令文件与 Skills**：最终项目按第 8 课的设计实现了完整机制——Core 启动任务时读取 workspace 根目录的 `AGENTS.md` / `Claude.md` / `CLAUDE.md` 注入 System Prompt；Skills 索引（名称 + 描述）常驻 System Prompt，`load_skill` 工具按需加载 `SKILL.md` 全文。两者都拼接在 System Prompt 末尾，保持缓存前缀稳定。
 
-**工具结果的 Diff 展示**：编辑工具（第 9 课）成功回执现在是 `[Patch Success]: 已更新 <path> (+N -M)` 摘要 + Unified Diff 正文。前端用 `UnifiedDiff` 组件做 opencode 风格的**行级 diff 渲染**——在一个文件视图里同时显示插入（绿底）和删除（红底）的行，带新旧行号、hunk 分隔条：
+**工具结果的 Diff 展示**：编辑工具（第 7 课）成功回执现在是 `[Patch Success]: 已更新 <path> (+N -M)` 摘要 + Unified Diff 正文。前端用 `UnifiedDiff` 组件做 opencode 风格的**行级 diff 渲染**——在一个文件视图里同时显示插入（绿底）和删除（红底）的行，带新旧行号、hunk 分隔条：
 
 ```tsx
 // UnifiedDiff.tsx —— 解析 unified diff → 行级交错视图
@@ -353,7 +353,7 @@ export default function UnifiedDiff({ diff }: { diff: string }) {
 
 #### 3.6 上下文可观测性：`context:stats` 数据链路
 
-「上下文情况」面板的数据不是前端瞎猜的，而是 AgentLoop 每轮把真实统计通过事件总线推出来的（见第 18 课的 `_emit_context_stats`）。完整链路：
+「上下文情况」面板的数据不是前端瞎猜的，而是 AgentLoop 每轮把真实统计通过事件总线推出来的（见第 16 课的 `_emit_context_stats`）。完整链路：
 
 ```
 AgentLoop._emit_context_stats()
@@ -366,7 +366,7 @@ SSE /api/tasks/{id}/events  →  data: {"type":"context:stats", ...}
 前端 ToolPanel 接收 → 更新「上下文情况」面板
 ```
 
-后端侧（第 18 课已实现）每轮推送：模型名、上下文窗口大小、本轮 `prompt_tokens`、累计 `cache_hit_tokens / cache_miss_tokens / cache_hit_rate`、压缩次数、压缩节省 Token、窗口占用比例 `usage_ratio`，以及任务内的**工具调用次数、安全拦截次数、缓存感知的预估成本**（定价来自 models.dev per-model 数据，见第 4 课 §5 与第 17 课）。`TaskHandle` 在转发前还会把任务内统计**按差分口径**合并进会话级累计（`session` 段）——task 段是任务内累计全量、每轮重发，直接累加会重复入账，必须减去上次快照；任务结束时快照清零，下个任务从 0 重新起算。因此面板同时展示"本次调用"与"会话累计"两个视角，两段各有工具调用、安全拦截与预估成本。
+后端侧（第 16 课已实现）每轮推送：模型名、上下文窗口大小、本轮 `prompt_tokens`、累计 `cache_hit_tokens / cache_miss_tokens / cache_hit_rate`、压缩次数、压缩节省 Token、窗口占用比例 `usage_ratio`，以及任务内的**工具调用次数、安全拦截次数、缓存感知的预估成本**（定价来自 models.dev per-model 数据，见第 4 课 §5 与第 15 课）。`TaskHandle` 在转发前还会把任务内统计**按差分口径**合并进会话级累计（`session` 段）——task 段是任务内累计全量、每轮重发，直接累加会重复入账，必须减去上次快照；任务结束时快照清零，下个任务从 0 重新起算。因此面板同时展示"本次调用"与"会话累计"两个视角，两段各有工具调用、安全拦截与预估成本。
 
 前端 `App.tsx` 的 SSE 处理只需加一个 case：
 
@@ -513,7 +513,7 @@ return <div className="modal-overlay">
 </div>;
 ```
 
-**上下文长度手动覆盖**：每个供应商可手填 `context_window`，留空则自动解析（`LLMRegistry.get_context_window` 四级优先级：① 手动覆盖 → ② models.dev → ③ 内置表 → ④ 128K 默认，见第 17 课 §5）。另有全局配置 `context_full_turns`（默认 2）控制策略 B 裁剪时保留的最近完整轮数——即第 3 课的 `keep_recent_full_turns`，在 `.lite-code/config.json` 的根级配置即可调。
+**上下文长度手动覆盖**：每个供应商可手填 `context_window`，留空则自动解析（`LLMRegistry.get_context_window` 四级优先级：① 手动覆盖 → ② models.dev → ③ 内置表 → ④ 128K 默认，见第 15 课 §5）。另有全局配置 `context_full_turns`（默认 2）控制策略 B 裁剪时保留的最近完整轮数——即第 3 课的 `keep_recent_full_turns`，在 `.lite-code/config.json` 的根级配置即可调。
 
 #### 5. Web 侧稳定性加固
 
@@ -629,4 +629,4 @@ async def _stream():
 4. **多 LLM 配置**：七类供应商 + 自定义实例、会话级模型覆盖、编辑态保护；
 5. **稳定性加固**：请求超时、卡死检测、ErrorBoundary、SSE 自动重连。
 
-至此 `lite-code` 已经可以通过 `python -m litecode serve` 在浏览器中使用。下一课我们将开启 **第21课：Electron 桌面应用** —— 用 Electron 包裹 Web UI，实现多窗口项目工作区、真实终端和一键打包发布！
+至此 `lite-code` 已经可以通过 `python -m litecode serve` 在浏览器中使用。下一课我们将开启 **第23课：Electron 桌面应用（lite-code 实战第六篇）** —— 用 Electron 包裹 Web UI，实现多窗口项目工作区、真实终端和一键打包发布！

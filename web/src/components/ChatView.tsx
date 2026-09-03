@@ -300,13 +300,11 @@ export default function ChatView({
   running,
   turn,
   pendingApprovals,
-  pendingQuestions,
   subAgentRecords,
   skillLoaded,
   onSend,
   onStop,
   onApprove,
-  onAnswerQuestion,
 }: {
   sessionId: string;
   sessionTitle: string;
@@ -315,20 +313,17 @@ export default function ChatView({
   running: boolean;
   turn: number;
   pendingApprovals: { id: string; action: string; reason: string }[];
-  pendingQuestions: { id: string; question: string; options: string[] }[];
   subAgentRecords: SubAgentProgress[];
   skillLoaded?: string[];
   onSend: (prompt: string) => void;
   onStop: () => void;
   onApprove: (approvalId: string, approved: boolean) => void;
-  onAnswerQuestion: (questionId: string, answer: string) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const turns = useMemo(() => buildTurns(messages), [messages]);
-  const [activeQuestionIdx, setActiveQuestionIdx] = useState(0);
-  const [customAnswer, setCustomAnswer] = useState("");
+  // 提问条状态已移至独立的 QuestionBar 组件
 
   // 用户手动上翻浏览历史时暂停自动跟随；滚回底部附近自动恢复
   useEffect(() => {
@@ -428,71 +423,87 @@ export default function ChatView({
         </div>
       ))}
 
-      {pendingQuestions.length > 0 && (
-        <div className="approval-overlay">
-          <div className="approval-card">
-            <div className="approval-icon">❓</div>
-            <h3>Agent 需要你的回答</h3>
-            {pendingQuestions.length > 1 && (
-              <div className="question-tabs">
-                {pendingQuestions.map((q, i) => (
-                  <button
-                    key={q.id}
-                    className={`question-tab ${i === activeQuestionIdx ? "active" : ""}`}
-                    onClick={() => { setActiveQuestionIdx(i); setCustomAnswer(""); }}
-                  >
-                    问题 {i + 1}
-                  </button>
-                ))}
-              </div>
-            )}
-            {pendingQuestions.length > 0 && activeQuestionIdx < pendingQuestions.length && (
-              <div className="question-card" key={pendingQuestions[activeQuestionIdx].id}>
-                <p className="question-text">{pendingQuestions[activeQuestionIdx].question}</p>
-                {pendingQuestions[activeQuestionIdx].options.length > 0 && (
-                  <div className="question-options">
-                    {pendingQuestions[activeQuestionIdx].options.map((opt, i) => (
-                      <button
-                        key={i}
-                        className="btn-option"
-                        onClick={() => onAnswerQuestion(pendingQuestions[activeQuestionIdx].id, opt)}
-                      >
-                        {opt}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <div className="question-custom-row">
-                  <input
-                    className="form-input"
-                    placeholder="输入自定义回答…"
-                    value={customAnswer}
-                    onChange={(e) => setCustomAnswer(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && customAnswer.trim()) {
-                        onAnswerQuestion(pendingQuestions[activeQuestionIdx].id, customAnswer.trim());
-                        setCustomAnswer("");
-                      }
-                    }}
-                  />
-                  <button
-                    className="btn-approve"
-                    disabled={!customAnswer.trim()}
-                    onClick={() => {
-                      if (customAnswer.trim()) {
-                        onAnswerQuestion(pendingQuestions[activeQuestionIdx].id, customAnswer.trim());
-                        setCustomAnswer("");
-                      }
-                    }}
-                  >
-                    提交回答
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
+      </div>
+  );
+}
+
+// ---------------------------------------------------------------- 非阻塞提问条
+
+export function QuestionBar({
+  pendingQuestions,
+  onAnswerQuestion,
+}: {
+  pendingQuestions: { id: string; question: string; options: string[] }[];
+  onAnswerQuestion: (questionId: string, answer: string) => void;
+}) {
+  const [activeQuestionIdx, setActiveQuestionIdx] = useState(0);
+  const [customAnswer, setCustomAnswer] = useState("");
+
+  if (pendingQuestions.length === 0) return null;
+
+  const active = pendingQuestions[activeQuestionIdx] ?? pendingQuestions[0];
+
+  return (
+    <div className="question-bar">
+      <div className="question-bar-header">
+        <span className="question-bar-icon">❓</span>
+        <span>Agent 需要你的回答</span>
+      </div>
+      {pendingQuestions.length > 1 && (
+        <div className="question-tabs">
+          {pendingQuestions.map((q, i) => (
+            <button
+              key={q.id}
+              className={`question-tab ${i === activeQuestionIdx ? "active" : ""}`}
+              onClick={() => { setActiveQuestionIdx(i); setCustomAnswer(""); }}
+            >
+              问题 {i + 1}
+            </button>
+          ))}
         </div>
       )}
+      <div className="question-card">
+        <p className="question-text">{active.question}</p>
+        {active.options.length > 0 && (
+          <div className="question-options">
+            {active.options.map((opt, i) => (
+              <button
+                key={i}
+                className="btn-option"
+                onClick={() => onAnswerQuestion(active.id, opt)}
+              >
+                {opt}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="question-custom-row">
+          <input
+            className="form-input"
+            placeholder="输入自定义回答…"
+            value={customAnswer}
+            onChange={(e) => setCustomAnswer(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && customAnswer.trim()) {
+                onAnswerQuestion(active.id, customAnswer.trim());
+                setCustomAnswer("");
+              }
+            }}
+          />
+          <button
+            className="btn-approve"
+            disabled={!customAnswer.trim()}
+            onClick={() => {
+              if (customAnswer.trim()) {
+                onAnswerQuestion(active.id, customAnswer.trim());
+                setCustomAnswer("");
+              }
+            }}
+          >
+            提交回答
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
