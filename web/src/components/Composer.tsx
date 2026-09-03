@@ -75,6 +75,18 @@ export default function Composer({
   const effSelectValue = `${effProviderId}\n${effModel}`;
   const globalSelectValue = `${llmConfig?.active ?? ""}\n${globalModel}`;
   const isDefaultModel = !sessionModel;
+  // 会话 override 的 (provider, model) 是否已被下方「已配置 Key 的供应商模型列表」覆盖：
+  // 已覆盖 → 不需要兜底项（否则与正常 option value 重复且排在前面，浏览器会选中兜底项，
+  //          显示内部 ID 如 custom_xxx 而不是供应商显示名）；
+  // 未覆盖（供应商被删 / Key 被清除 / 模型列表变更）→ 补一项避免 <select> 空白。
+  const hasProviderOption = (pid: string, mid: string) =>
+    allProviders.some((p) => p.id === pid && p.has_key && (p.models ?? []).includes(mid));
+  const showFallbackOption = !isDefaultModel && !!sessionModel &&
+    !(sessionModel.model === globalModel && sessionModel.provider === llmConfig?.active) &&
+    !hasProviderOption(sessionModel.provider, sessionModel.model);
+  // 兜底项文案优先使用供应商显示名（自定义供应商配置的 name），查不到才退化为内部 ID
+  const fallbackProviderName =
+    allProviders.find((p) => p.id === sessionModel?.provider)?.name || sessionModel?.provider || "";
 
   // 打开面板时懒加载命令与技能列表
   useEffect(() => {
@@ -186,10 +198,11 @@ export default function Composer({
               {llmConfig?.active ? `${allProviders.find((p) => p.id === llmConfig.active)?.name || llmConfig.active} / ${llmConfig.providers[llmConfig.active]?.model || "未配置"}` : "未配置全局模型"}
               {isDefaultModel ? "" : "（默认）"}
             </option>
-            {!isDefaultModel && sessionModel && !(sessionModel.model === globalModel && sessionModel.provider === llmConfig?.active) && (
-              // 会话 override 的模型不在任何 provider 列表时，补一项避免 select 空白
+            {showFallbackOption && sessionModel && (
+              // 会话 override 确实不在任何已配置的 provider 模型列表里（供应商被删/模型列表变更）
+              // 才补这一项避免 select 空白；文案用供应商显示名而非内部 ID（如 custom_xxx）
               <option value={`${sessionModel.provider}\n${sessionModel.model}`}>
-                {sessionModel.provider} / {sessionModel.model}（会话）
+                {fallbackProviderName} / {sessionModel.model}（会话）
               </option>
             )}
             {allProviders.map((provider) =>

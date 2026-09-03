@@ -9,6 +9,8 @@ import shutil
 import subprocess
 from typing import Any, Dict, List, Optional
 
+from .. import __version__
+
 logger = logging.getLogger("litecode.mcp")
 
 
@@ -58,7 +60,7 @@ class MCPClient:
         await self.request("initialize", {
             "protocolVersion": "2025-03-26",
             "capabilities": {},
-            "clientInfo": {"name": "lite-code", "version": "0.14.0"},
+            "clientInfo": {"name": "lite-code", "version": __version__},
         })
         await self.notify("notifications/initialized", {})
 

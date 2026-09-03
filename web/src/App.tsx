@@ -204,6 +204,16 @@ export default function App() {
     patchActiveChat({ error: msg });
   }
 
+  // 渲染进程直接通过 HTTP 切换工作区（双击历史会话 / Web 目录选择器）后，
+  // 同步 Electron 主进程的窗口 workspace——终端启动的 cwd 与「请先打开项目」判定都在主进程。
+  const notifyElectronWorkspace = useCallback((ws: string) => {
+    try {
+      window.liteCode?.workspaceChanged?.(ws);
+    } catch {
+      /* 浏览器模式无 bridge，忽略 */
+    }
+  }, []);
+
   const setSessionModel = useCallback(async (model: SessionModel | null) => {
     if (!activeSessionId) {
       if (activeTabId) setDraftModels((prev) => ({ ...prev, [activeTabId]: model }));
@@ -394,6 +404,7 @@ export default function App() {
           const res = await api.setWorkspace(targetWs);
           if (res.ok) {
             setStatus((prev) => (prev ? { ...prev, workspace: res.workspace } : prev));
+            notifyElectronWorkspace(res.workspace);
             pushLog(`📂 已切换到项目: ${res.workspace}`);
             closeStream();
             setChatStates({});
@@ -407,7 +418,7 @@ export default function App() {
       }
       await selectSession(sid);
     },
-    [sessions, status?.workspace, selectSession, closeStream, refreshSessions, pushLog]
+    [sessions, status?.workspace, selectSession, closeStream, refreshSessions, pushLog, notifyElectronWorkspace]
   );
 
   const deleteSession = useCallback(
@@ -481,6 +492,7 @@ export default function App() {
         const res = await api.setWorkspace(path);
         if (res.ok) {
           setStatus((prev) => (prev ? { ...prev, workspace: res.workspace } : prev));
+          notifyElectronWorkspace(res.workspace);
           changeSidebarTab("files");
           setSuccess(`已切换到项目: ${res.workspace}`);
           pushLog(`📂 已切换到项目: ${res.workspace}`);
@@ -497,7 +509,7 @@ export default function App() {
         setErrorPublic((e as Error).message);
       }
     },
-    [pushLog, refreshSessions, closeStream, newChatTab, patchActiveChat, changeSidebarTab]
+    [pushLog, refreshSessions, closeStream, newChatTab, patchActiveChat, changeSidebarTab, notifyElectronWorkspace]
   );
 
   // 首次启动：打开一个占位会话 tab

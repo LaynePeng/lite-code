@@ -506,7 +506,20 @@ const isDefaultModel = !sessionModel;   // 是否跟随全局默认
 两个边界处理值得注意：
 
 - **选回全局默认 = 清除 override**：`onChange` 里判断选中值等于全局默认组合（或 `__global__` 占位值）时调用 `onSessionModelChange(null)`，会话恢复跟随全局配置——而不是把全局模型存成一份“多余”的 override；
-- **override 模型不在任何供应商列表时补一个选项**：会话创建后用户可能修改了供应商配置（删掉模型或换 Key），override 的模型在下拉列表中找不到对应 `<option>`，`<select>` 会显示空白。此时按 `sessionModel` 现值补一项“（会话）”标记的 option，保证显示不空白、用户也能看懂这个模型从哪来。
+- **override 模型不在任何供应商列表时才补一个选项**：会话创建后用户可能修改了供应商配置（删掉模型或换 Key），override 的模型在下拉列表中找不到对应 `<option>`，`<select>` 会显示空白——只有此时才按 `sessionModel` 现值补一项“（会话）”标记的 option。**条件必须精确**：v0.14.1 之前这段写成“只要不是全局默认就补”，导致 override 明明已被下方供应商 option 覆盖时仍插入一个 value 相同的兜底项；由于兜底项排在正常项**前面**，浏览器 `<select>` 按 value 匹配选中最靠前的一个，界面就显示兜底项的裸供应商 ID（自定义实例形如 `custom_<时间戳>`）而不是配置的显示名。修复后同时收紧渲染条件与文案：
+
+```tsx
+// Composer.tsx：只有 override 的 (provider, model) 确实不在任何
+// 「已配置 Key 的供应商模型列表」里，才补兜底项避免 <select> 空白
+const hasProviderOption = (pid: string, mid: string) =>
+  allProviders.some((p) => p.id === pid && p.has_key && (p.models ?? []).includes(mid));
+const showFallbackOption = !isDefaultModel && !!sessionModel &&
+  !(sessionModel.model === globalModel && sessionModel.provider === llmConfig?.active) &&
+  !hasProviderOption(sessionModel.provider, sessionModel.model);
+// 兜底文案优先用供应商显示名（自定义供应商配置的 name），查不到才退化为内部 ID
+const fallbackProviderName =
+  allProviders.find((p) => p.id === sessionModel?.provider)?.name || sessionModel?.provider || "";
+```
 
 首次发送还有个**显示与事实一致**的坑：创建会话后必须把后端确认的 override 写回会话状态（`api.setSessionModel`），否则 Composer 读 `currentChat.modelOverride` 拿到 `undefined` 会回退显示全局默认——而实际后端一直在用 override 模型执行任务，界面显示与真实行为不符。
 

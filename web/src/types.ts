@@ -254,6 +254,8 @@ export interface LiteCodeBridge {
   version: string;
   openProject: () => Promise<{ ok: boolean; url?: string; workspace?: string; error?: string }>;
   openProjectNewWindow: () => Promise<{ ok: boolean; url?: string; workspace?: string; error?: string }>;
+  /** 渲染进程通过 HTTP 切换工作区成功后，同步 Electron 主进程的窗口 workspace（终端 cwd 依赖它） */
+  workspaceChanged: (workspace: string) => void;
   terminalStart: (cols?: number, rows?: number) => Promise<{ ok: boolean; error?: string }>;
   terminalInput: (data: string) => void;
   terminalResize: (cols: number, rows: number) => void;

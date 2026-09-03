@@ -325,6 +325,20 @@ function stopTerminal(id) {
   }
 }
 
+// 渲染进程可能不经「打开项目」对话框、直接通过 HTTP /api/workspace 切换工作区
+// （如双击历史会话切到其关联项目）。此时 Electron 主进程的 instance.workspace
+// 不会自动更新，而终端启动依赖它作为 cwd / 空值判定，会造成
+// 「文件树已是新项目、终端却提示请先打开项目（或 cd 进旧项目）」的不一致。
+// 渲染进程在 setWorkspace 成功后主动通知主进程同步，并顺带停掉旧目录里的终端。
+ipcMain.on("workspace-changed", (event, workspace) => {
+  const instance = localInstances.get(event.sender.id);
+  if (!instance || typeof workspace !== "string" || !workspace) return;
+  const previous = instance.workspace;
+  instance.workspace = workspace;
+  stopTerminal(event.sender.id);
+  writeLog("log", `渲染进程同步工作区 → ${workspace}${previous && previous !== workspace ? `（原 ${previous}）` : ""}`);
+});
+
 ipcMain.handle("terminal-start", (event, cols = 100, rows = 24) => {
   const instance = localInstances.get(event.sender.id);
   if (!instance?.workspace) return { ok: false, error: "请先打开项目" };

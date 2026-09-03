@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld("liteCode", {
    */
   openProject: () => ipcRenderer.invoke("open-project"),
   openProjectNewWindow: () => ipcRenderer.invoke("open-project-new-window"),
+  workspaceChanged: (workspace) => ipcRenderer.send("workspace-changed", workspace),
   terminalStart: (cols, rows) => ipcRenderer.invoke("terminal-start", cols, rows),
   terminalInput: (data) => ipcRenderer.send("terminal-input", data),
   terminalResize: (cols, rows) => ipcRenderer.send("terminal-resize", cols, rows),
