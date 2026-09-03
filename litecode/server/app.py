@@ -523,10 +523,15 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
     # ------------------------------------------------------------ 工具与工作区
 
     @fast_app.get("/api/tools")
-    async def list_tools(request: Request):
+    async def list_tools(request: Request, agent_id: str = ""):
         _check_auth(request)
         _require_workspace()
-        registry = app.build_registry()
+        # 按 Agent 裁剪工具集：前端「工具」Tab 展示当前 Agent 可用工具，随 Agent 切换刷新
+        registry = (
+            app.create_agent_registry(agent_id)
+            if agent_id
+            else app.build_registry()
+        )
         return [
             {"name": t.name, "description": t.description, "parameters": t.parameters}
             for t in registry.get_tools()

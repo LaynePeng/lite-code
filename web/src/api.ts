@@ -50,7 +50,10 @@ export const api = {
   cleanupSessions: () =>
     req<{ ok: boolean; deleted: number }>("/api/sessions/cleanup", { method: "DELETE" }),
 
-  tools: () => req<ToolDef[]>("/api/tools"),
+  tools: (agentId?: string) => {
+    const url = agentId ? `/api/tools?agent_id=${encodeURIComponent(agentId)}` : "/api/tools";
+    return req<ToolDef[]>(url);
+  },
   workspaceTree: (path?: string) =>
     req<TreeResponse>(`/api/workspace/tree-json${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   fsList: (path?: string) =>

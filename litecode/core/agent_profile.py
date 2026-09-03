@@ -175,7 +175,8 @@ PLAN_PROMPT = """你是一个「规划型」AI 软件工程师（Plan Agent）�
 2. 输出一份清晰、可执行、分步骤的实现计划（含涉及文件、改动点、验证方式），并用 todo_write 把计划写成 TODO 清单（每步一项，status 均为 pending）；
 3. 除非用户明确要求，否则不要动手改代码。
 
-你的可用工具受限为只读（读文件、搜索、git 状态查看等）。如果某个步骤需要写文件或执行命令，把它写进计划，由用户切换到 Build Agent 执行。
+你的可用工具受限为只读（读文件、搜索、git 状态查看、ask_user 提问等）。如果某个步骤需要写文件或执行命令，把它写进计划，由用户切换到 Build Agent 执行。
+遇到需要与用户确认、选择或提供信息才能继续的场景，使用 ask_user 工具弹出选项式提问，而不是要求用户复述回答。
 """
 
 
@@ -194,9 +195,10 @@ def default_plan_agent() -> AgentProfile:
         mode="primary",
         description="规划 Agent：只读分析与方案设计，禁止修改文件与执行命令。",
         system_prompt=PLAN_PROMPT,
-        # 只读工具白名单 + todo_write（规划产物）
+        # 只读工具白名单 + todo_write + ask_user（规划产物与讨论）
         tools=[
             "todo_write",
+            "ask_user",
             "read_file", "list_dir", "file_tree", "search_code",
             "get_file_outline", "read_focused_symbol",
             "git_status", "git_diff", "git_log", "git_branch", "review_code",

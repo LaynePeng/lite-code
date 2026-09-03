@@ -172,8 +172,8 @@ export default function App() {
     try {
       const [st, cfg, ag, llm, providers, mcp, tools] = await Promise.all([
         api.status(), api.config(), api.agents(), api.llmConfig(), api.llmProviders(), api.mcpStatus(),
-        // 工具列表依赖 workspace，未就绪时报 409；静默降级为空列表，避免整组 Promise 失败
-        api.tools().catch(() => [] as { name: string; description: string }[]),
+        // 工具列表按当前 Agent 裁剪；workspace 未就绪时报 409，静默降级为空列表
+        api.tools(currentAgent).catch(() => [] as { name: string; description: string }[]),
       ]);
       setStatus(st);
       setConfig(cfg);
@@ -188,16 +188,16 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [refreshSessions]);
+  }, [refreshSessions, currentAgent]);
 
-  // 已注册工具（右面板「工具」Tab）；workspace 就绪后拉取
+  // 已注册工具（右面板「工具」Tab）：workspace 就绪且 Agent 切换时刷新
   useEffect(() => {
     if (status?.workspace) {
-      api.tools().then(setRegisteredTools).catch(() => {});
+      api.tools(currentAgent).then(setRegisteredTools).catch(() => {});
     } else {
       setRegisteredTools([]);
     }
-  }, [status?.workspace]);
+  }, [status?.workspace, currentAgent]);
 
   function setErrorPublic(msg: string | null) {
     patchActiveChat({ error: msg });
