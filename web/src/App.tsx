@@ -31,6 +31,12 @@ const TREE_TOUCH_TOOLS = new Set([
   "git_commit",
 ]);
 
+// 办公产出工具：执行成功后刷新侧边栏「产出物」Tab
+const OFFICE_TOUCH_TOOLS = new Set([
+  "docx_create", "xlsx_create", "pptx_create", "pdf_create",
+  "data_analyze", "chart_make", "write_file", "execute_command",
+]);
+
 let tabSeq = 0;
 const nextTabId = () => `tab_${++tabSeq}`;
 
@@ -62,14 +68,14 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<"sessions" | "files" | "terminal">(() => {
+  const [sidebarTab, setSidebarTab] = useState<"sessions" | "files" | "terminal" | "outputs">(() => {
     try {
       const saved = localStorage.getItem("litecode.sidebarTab");
-      if (saved === "files" || saved === "terminal" || saved === "sessions") return saved;
+      if (saved === "files" || saved === "terminal" || saved === "sessions" || saved === "outputs") return saved;
     } catch { /* ignore */ }
     return "sessions";
   });
-  const changeSidebarTab = useCallback((t: "sessions" | "files" | "terminal") => {
+  const changeSidebarTab = useCallback((t: "sessions" | "files" | "terminal" | "outputs") => {
     setSidebarTab(t);
     try { localStorage.setItem("litecode.sidebarTab", t); } catch { /* ignore */ }
   }, []);
@@ -80,6 +86,7 @@ export default function App() {
   const [currentAgent, setCurrentAgent] = useState<string>("build");
   const [success, setSuccess] = useState<string | null>(null);
   const [treeRevision, setTreeRevision] = useState(0);
+  const [outputRevision, setOutputRevision] = useState(0);
   const [draftModels, setDraftModels] = useState<Record<string, SessionModel | null>>({});
   const [draftReasoning, setDraftReasoning] = useState<Record<string, string>>({});
   const [mcpServers, setMcpServers] = useState<MCPServerStatus[]>([]);
@@ -612,6 +619,7 @@ export default function App() {
         }
         case "tool:after_execute": {
           if (TREE_TOUCH_TOOLS.has(ev.data.toolName)) setTreeRevision((v) => v + 1);
+          if (OFFICE_TOUCH_TOOLS.has(ev.data.toolName) && ev.data.status !== "error") setOutputRevision((v) => v + 1);
           const cur = streamingRefs.current.get(sid) ?? getChat(sid).streaming;
           if (!cur) break;
           // callId 精确匹配（并行安全），缺失时回退 name+running 启发式（兼容旧后端）
@@ -1131,6 +1139,7 @@ export default function App() {
         workspace={status?.workspace ?? "未打开项目"}
         tab={sidebarTab}
         treeRevision={treeRevision}
+        outputRevision={outputRevision}
         version={status?.version ?? "?"}
         onTabChange={changeSidebarTab}
         onSelectSession={(id) => void selectSession(id)}

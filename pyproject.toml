@@ -11,11 +11,19 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
     "httpx>=0.27",
+    "python-multipart>=0.0.9",
     "tree-sitter>=0.24",
     "tree-sitter-typescript>=0.23",
     "tree-sitter-java>=0.23,<0.24",
     "tree-sitter-go>=0.23",
     "pathspec>=0.12",
+    # 办公/生产力场景（GAI 通用入口）：文档、表格、演示、图表、数据分析
+    "python-docx>=1.1",
+    "openpyxl>=3.1",
+    "python-pptx>=0.6.21",
+    "reportlab>=4.0",
+    "pandas>=2.0",
+    "matplotlib>=3.7",
 ]
 
 [project.optional-dependencies]
@@ -26,15 +34,6 @@ dev = [
 ]
 package = [
     "pyinstaller>=6.10",
-]
-# 办公/通用生产力场景（GAI 入口）：文档、表格、演示、图表、数据分析
-office = [
-    "python-docx>=1.1",
-    "openpyxl>=3.1",
-    "python-pptx>=0.6.21",
-    "reportlab>=4.0",
-    "pandas>=2.0",
-    "matplotlib>=3.7",
 ]
 
 [project.scripts]

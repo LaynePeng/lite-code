@@ -1,4 +1,4 @@
-import type { AgentInfo, AppConfig, FileDiffResponse, FileReadResponse, LLMConfig, LLMProviderMeta, MCPServerConfig, MCPStatus, MCPServerStatus, ServerStatus, SessionInfo, ToolDef, TreeResponse } from "./types";
+import type { AgentInfo, AppConfig, FileDiffResponse, FilePreviewResponse, FileReadResponse, LLMConfig, LLMProviderMeta, MCPServerConfig, MCPStatus, MCPServerStatus, OutputItem, ServerStatus, SessionInfo, ToolDef, TreeResponse } from "./types";
 
 const TIMEOUT = 15000;
 
@@ -158,4 +158,10 @@ export const api = {
   },
   fileDownloadUrl: (path: string) =>
     `/api/files/download?path=${encodeURIComponent(path)}`,
+  fileRawUrl: (path: string) =>
+    `/api/files/raw?path=${encodeURIComponent(path)}`,
+  outputs: () =>
+    req<{ items: OutputItem[] }>("/api/outputs"),
+  filePreview: (path: string) =>
+    req<FilePreviewResponse>(`/api/files/preview?path=${encodeURIComponent(path)}`),
 };

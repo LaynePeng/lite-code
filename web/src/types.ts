@@ -307,6 +307,39 @@ export interface FileDiffResponse {
   deletions: number;
 }
 
+// 产出物列表项（/api/outputs）
+export interface OutputItem {
+  name: string;
+  path: string;
+  source: "outputs" | "uploads";
+  size: number;
+  mtime: string;
+}
+
+// 产出物预览响应（/api/files/preview）
+export type FilePreviewResponse = {
+  name: string;
+  kind: "media";
+  media_type: string;
+  raw_url: string;
+} | {
+  name: string;
+  kind: "table";
+  sheet: string;
+  sheets: string[];
+  rows: string[][];
+  truncated: boolean;
+} | {
+  name: string;
+  kind: "text";
+  text: string;
+  truncated: boolean;
+} | {
+  name: string;
+  kind: "slides";
+  slides: { title: string; bullets: string[] }[];
+};
+
 // Tab 项：对话 或 文件
 export interface TabItem {
   id: string;

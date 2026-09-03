@@ -11,7 +11,7 @@
 ## 功能
 
 - **20 个内置工具**：文件读写、Ripgrep 搜索、Tree-sitter AST 大纲、Search-Replace / Unified Diff 精确编辑、受限 Shell、Git 五件套、代码审查、子 Agent 编排、Web 抓取、`load_skill` 技能加载；MCP 工具按配置动态注册
-- **办公/生产力工具（GAI 通用入口）**：`docx_create`（Word）、`xlsx_create`（Excel）、`pptx_create`（PPT）、`pdf_create`（PDF）、`data_analyze`（数据统计）、`chart_make`（图表，自动适配中文字体）；产出保存到工作区 `.outputs/`。可选依赖：`pip install -e .[office]`；未安装时工具返回友好提示，不影响其他功能
+- **办公/生产力工具（GAI 通用入口）**：`docx_create`（Word）、`xlsx_create`（Excel）、`pptx_create`（PPT）、`pdf_create`（PDF）、`data_analyze`（数据统计）、`chart_make`（图表，自动适配中文字体）；产出保存到工作区 `.outputs/`，侧边栏「产出物」Tab 可预览与下载
 - **多 LLM 供应商**：DeepSeek / OpenAI / Kimi / 通义千问 / 智谱 GLM / Anthropic Claude / 自定义 OpenAI 兼容实例；上下文窗口经 models.dev 元数据自动解析（内置表兜底，断网可用）；**推理强度控制（reasoning_effort：关闭/低/中/高/最大）**，主界面显示实际生效的模型与推理档位（会话 override 优先，回退供应商默认）
 - **安全防御**：三级风险模型（SAFE / MEDIUM / HIGH）+ 动态黑白名单热加载 + Web 审批卡（Human-in-the-Loop）；MCP 外部工具默认需用户确认
 - **Agent 增强**：JSON 自愈、死循环检测、输出截断落盘（上下文只放句柄）、Token 预算与策略 B 两阶段上下文压缩
@@ -52,12 +52,11 @@ python3 -m venv .venv
 .venv/bin/pip install -e .[dev]    # Windows: .venv\Scripts\pip install -e .[dev]
 npm install
 
-# 可选：启用办公工具（Word/Excel/PPT/PDF/图表/数据分析）
-.venv/bin/pip install -e .[office]    # Windows: .venv\Scripts\pip install -e .[office]
-
 npm run dev    # 开发模式：Python Core + Vite + Electron 窗口
 npm start      # 生产模式：构建前端 → 自动拉起 Core → 窗口
 ```
+
+> 办公工具依赖（python-docx / openpyxl / python-pptx / reportlab / pandas / matplotlib）已包含在主依赖中，`pip install -e .` 时自动安装。
 
 - **API Key**：首次启动后在设置界面选择供应商并填写（存储于 `~/.lite-code/config.json`），也支持 `DEEPSEEK_API_KEY` 等环境变量兜底
 - **纯浏览器形态**：`python -m litecode serve` 后访问 `http://127.0.0.1:8787`

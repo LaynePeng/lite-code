@@ -3,7 +3,9 @@ import type { ReactNode } from "react";
 import { api } from "../api";
 import AppIcon from "./AppIcon";
 import TerminalPanel from "./TerminalPanel";
-import type { SessionInfo, TreeEntry } from "../types";
+import type { OutputItem, SessionInfo, TreeEntry } from "../types";
+
+export type SidebarTab = "sessions" | "files" | "terminal" | "outputs";
 
 // ---------------------------------------------------------------- 目录树
 
@@ -137,6 +139,194 @@ function FileTree({ workspace, revision, onFileOpen }: { workspace: string; revi
   );
 }
 
+// ---------------------------------------------------------------- 产出物面板（GAI 通用入口：预览/下载 Agent 生成的办公文件）
+
+const OUTPUT_ICONS: Record<string, string> = {
+  ".docx": "📄", ".xlsx": "📊", ".pptx": "🎞️", ".pdf": "📕",
+  ".png": "🖼️", ".jpg": "🖼️", ".jpeg": "🖼️", ".svg": "🖼️",
+};
+
+function fileIcon(name: string) {
+  const ext = name.slice(name.lastIndexOf(".")).toLowerCase();
+  return OUTPUT_ICONS[ext] ?? "📦";
+}
+
+function fmtSize(size: number) {
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function OutputPreview({ revision }: { revision: number }) {
+  const [items, setItems] = useState<OutputItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
+  const [preview, setPreview] = useState<import("../types").FilePreviewResponse | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState("");
+  const [previewPath, setPreviewPath] = useState("");
+  const refreshingRef = useRef(false);
+
+  const refresh = useCallback(async () => {
+    if (refreshingRef.current) return;
+    refreshingRef.current = true;
+    setLoading(true);
+    try {
+      const r = await api.outputs();
+      setItems(r.items);
+      setError(false);
+    } catch {
+      setError(true);
+    } finally {
+      setLoading(false);
+      refreshingRef.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  // 动态刷新：产出工具执行 / 任务结束后由 App 递增 revision
+  useEffect(() => {
+    if (revision > 0) void refresh();
+  }, [revision, refresh]);
+
+  const openPreview = useCallback(async (path: string) => {
+    setPreviewPath(path);
+    setPreviewLoading(true);
+    setPreviewError("");
+    setPreview(null);
+    try {
+      const r = await api.filePreview(path);
+      setPreview(r);
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, []);
+
+  const closePreview = () => {
+    setPreview(null);
+    setPreviewPath("");
+    setPreviewError("");
+  };
+
+  return (
+    <div className="files-panel outputs-panel">
+      <div className="files-header">
+        <span className="files-workspace" title="Agent 产出物与上传素材">
+          🗂️ 产出物与素材
+        </span>
+        <div className="files-header-actions">
+          <button
+            className={`btn-refresh-tree ${loading ? "spinning" : ""}`}
+            onClick={() => void refresh()}
+            title="刷新列表"
+          >
+            ↻
+          </button>
+        </div>
+      </div>
+      {loading && items.length === 0 ? (
+        <div className="sidebar-empty">加载中…</div>
+      ) : error ? (
+        <div className="sidebar-empty">（无法读取，请确认已打开项目）</div>
+      ) : items.length === 0 ? (
+        <div className="sidebar-empty">
+          还没有产出物
+          <div className="sidebar-empty-sub">
+            切换到「办公」或「调研」Agent，让 Agent 生成文档/表格/图表后，文件会出现在这里
+          </div>
+        </div>
+      ) : (
+        <div className="file-tree outputs-list">
+          {items.map((it) => (
+            <div key={it.path} className="tree-row file output-item" title={it.path} onClick={() => void openPreview(it.path)}>
+              <span className="tree-caret-placeholder" />
+              <span className="tree-icon">{fileIcon(it.name)}</span>
+              <span className="tree-name">{it.name}</span>
+              <span className="output-meta">
+                {it.source === "uploads" ? "素材" : "产出"} · {fmtSize(it.size)} · {it.mtime}
+              </span>
+              <a
+                className="output-download"
+                href={api.fileDownloadUrl(it.path)}
+                onClick={(e) => e.stopPropagation()}
+                title="下载"
+              >
+                ⬇
+              </a>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {(previewLoading || previewError || preview) && (
+        <div className="preview-overlay" onClick={closePreview}>
+          <div className="preview-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="preview-modal-header">
+              <span className="preview-title">{fileIcon(previewPath)} {previewPath.split("/").pop()}</span>
+              <div className="preview-actions">
+                <a className="output-download" href={api.fileDownloadUrl(previewPath)} title="下载文件">⬇ 下载</a>
+                <button className="preview-close" onClick={closePreview}>✕</button>
+              </div>
+            </div>
+            <div className="preview-modal-body">
+              {previewLoading && <div className="sidebar-empty">解析中…</div>}
+              {previewError && <div className="sidebar-empty">⚠ {previewError}</div>}
+              {preview?.kind === "media" && (
+                preview.media_type === "application/pdf" ? (
+                  <iframe src={api.fileRawUrl(previewPath)} title={preview.name} className="preview-frame" />
+                ) : (
+                  <img src={api.fileRawUrl(previewPath)} alt={preview.name} className="preview-image" />
+                )
+              )}
+              {preview?.kind === "table" && (
+                <div className="preview-scroll">
+                  {preview.rows.length === 0 ? (
+                    <div className="sidebar-empty">（空表格）</div>
+                  ) : (
+                    <table className="preview-table">
+                      <thead>
+                        <tr>{preview.rows[0].map((c, i) => <th key={i}>{c}</th>)}</tr>
+                      </thead>
+                      <tbody>
+                        {preview.rows.slice(1).map((row, ri) => (
+                          <tr key={ri}>{row.map((c, ci) => <td key={ci}>{c}</td>)}</tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                  {preview.truncated && <div className="preview-truncated">仅显示前 100 行</div>}
+                </div>
+              )}
+              {preview?.kind === "text" && (
+                <pre className="preview-text">{preview.text}</pre>
+              )}
+              {preview?.kind === "slides" && (
+                <div className="preview-scroll">
+                  {preview.slides.map((s, i) => (
+                    <div key={i} className="preview-slide">
+                      <div className="preview-slide-title">{i + 1}. {s.title || "（无标题）"}</div>
+                      {s.bullets.length > 0 && (
+                        <ul className="preview-slide-bullets">
+                          {s.bullets.map((b, bi) => <li key={bi}>{b}</li>)}
+                        </ul>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- 侧边栏
 
 export default function Sidebar({
@@ -145,6 +335,7 @@ export default function Sidebar({
   workspace,
   tab,
   treeRevision,
+  outputRevision,
   version,
   onTabChange,
   onSelectSession,
@@ -160,10 +351,11 @@ export default function Sidebar({
   sessions: SessionInfo[];
   activeSessionId: string | null;
   workspace: string;
-  tab: "sessions" | "files" | "terminal";
+  tab: SidebarTab;
   treeRevision: number;
+  outputRevision: number;
   version: string;
-  onTabChange: (tab: "sessions" | "files" | "terminal") => void;
+  onTabChange: (tab: SidebarTab) => void;
   onSelectSession: (id: string) => void;
   onOpenSessionWithProject: (id: string) => void;
   onNewSession: () => void;
@@ -187,6 +379,9 @@ export default function Sidebar({
         </button>
         <button className={tab === "files" ? "active" : ""} onClick={() => onTabChange("files")}>
           文件
+        </button>
+        <button className={tab === "outputs" ? "active" : ""} onClick={() => onTabChange("outputs")}>
+          产出物
         </button>
         <button className={tab === "terminal" ? "active" : ""} onClick={() => onTabChange("terminal")}>
           终端
@@ -234,6 +429,8 @@ export default function Sidebar({
         )}
 
         {tab === "files" && <FileTree workspace={workspace} revision={treeRevision} onFileOpen={onFileOpen} />}
+
+        {tab === "outputs" && <OutputPreview revision={outputRevision} />}
       </div>
 
       {tab === "terminal" && (

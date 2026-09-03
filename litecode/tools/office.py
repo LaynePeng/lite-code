@@ -3,8 +3,8 @@
 将 lite-code 从代码 Agent 扩展到通用办公场景，让 Agent 能直接产出
 docx/xlsx/pptx/pdf 等办公文件，以及进行数据分析和生成图表。
 
-所有工具依赖包均为可选（pyproject.toml [office] extras），
-未安装时返回友好提示，不阻塞 Core 启动。
+所有依赖包已包含在主依赖中（pyproject.toml dependencies），
+`pip install -e .` 时自动安装。
 """
 from __future__ import annotations
 
