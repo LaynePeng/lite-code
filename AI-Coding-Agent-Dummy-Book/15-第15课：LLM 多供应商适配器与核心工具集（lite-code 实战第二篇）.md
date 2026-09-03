@@ -401,7 +401,11 @@ class CodebaseTools:
 ```python
 class ASTAnalyzer:
     def extract_outline(self, code: str, ext: str) -> List[SymbolOutline]:
-        lang = tree_sitter.Language(tree_sitter_typescript.language_typescript())
+        # tree-sitter-typescript 提供两种语法：language_typescript（纯 TS/JS）
+        # 与 language_tsx（含 JSX 标签），按扩展名选择对应语法
+        lang = (tree_sitter.Language(tree_sitter_typescript.language_tsx())
+                if ext in (".tsx", ".jsx")
+                else tree_sitter.Language(tree_sitter_typescript.language_typescript()))
         parser = tree_sitter.Parser(lang)
         tree = parser.parse(code.encode("utf-8"))
         # 遍历 AST，提取 function_declaration / class_declaration / interface_declaration

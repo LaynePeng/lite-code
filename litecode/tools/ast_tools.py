@@ -20,8 +20,12 @@ _LANG_CACHE: Dict[str, tree_sitter.Language] = {}
 def _get_language(ext: str) -> Optional[tree_sitter.Language]:
     if ext in _LANG_CACHE:
         return _LANG_CACHE[ext]
-    if ext in (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"):
+    if ext in (".ts", ".js", ".mjs", ".cjs"):
+        # 纯 TS/JS 语法（TS 是 JS 超集，可解析两者）
         lang = tree_sitter.Language(tree_sitter_typescript.language_typescript())
+    elif ext in (".tsx", ".jsx"):
+        # TSX/JSX 必须用 tsx 语法（含 JSX/XML 标签），否则 <div> 等标签会全部变成 ERROR 节点
+        lang = tree_sitter.Language(tree_sitter_typescript.language_tsx())
     elif ext == ".java":
         lang = tree_sitter.Language(tree_sitter_java.language())
     elif ext == ".go":
