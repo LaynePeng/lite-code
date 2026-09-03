@@ -105,6 +105,10 @@ export interface AppConfig {
   pricing: { input_per_mtok: number; output_per_mtok: number };
   /** 技能权限规则：glob 模式 → allow/deny/ask */
   skill_permissions?: Record<string, "allow" | "deny" | "ask">;
+  /** Skills zip 导入大小上限（MB） */
+  max_zip_size_mb?: number;
+  /** triggers 匹配模式：substring | advanced */
+  skill_trigger_mode?: "substring" | "advanced";
 }
 
 export interface ContextTaskStats {

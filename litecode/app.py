@@ -50,6 +50,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # 技能权限（对齐 OpenCode permission.skill）：glob 模式 → allow/deny/ask，
     # 插入序首个命中生效，默认 allow；deny 对 Agent 完全隐藏，ask 使用前需审批
     "skill_permissions": {},
+    # Skills zip 导入大小上限（MB）
+    "max_zip_size_mb": 20,
+    # triggers 匹配模式："substring"（大小写不敏感子串）| "advanced"（词边界+正则）
+    "skill_trigger_mode": "substring",
     # 并行工具执行："auto"（只读轮并行/含写类整轮串行）| "always" | "never"
     "parallel_tool_calls": "auto",
     # 定价（每 M token，美元）：仅作 models.dev 无该模型数据时的回退；

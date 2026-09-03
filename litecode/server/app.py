@@ -302,7 +302,12 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
             # 点击会话不会切换项目（工具/文件树仍停在当前工作区），
             # 因此无 workspace 绑定的旧会话不显示——显示语义错位的内容比隐藏更糟。
             s_ws = (s.get("metadata") or {}).get("workspace", "")
-            if not s_ws or (workspace and os.path.abspath(s_ws) != os.path.abspath(workspace)):
+            if not s_ws:
+                continue
+            # 如果会话关联的项目目录已不存在，则不显示该会话
+            if not os.path.isdir(s_ws):
+                continue
+            if workspace and os.path.abspath(s_ws) != os.path.abspath(workspace):
                 continue
             messages = s.get("messages", [])
             if not any(m.get("role") == "user" for m in messages):
@@ -342,6 +347,29 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
         if snap is None:
             raise HTTPException(status_code=404, detail="会话不存在")
         return snap.to_dict()
+
+    @fast_app.delete("/api/sessions/cleanup")
+    async def cleanup_sessions(request: Request):
+        """一键清理孤儿会话：删除所有关联项目目录已不存在的会话。"""
+        _check_auth(request)
+        snapshots = app.session_store.list()
+        deleted = 0
+        for s in snapshots:
+            s_ws = (s.get("metadata") or {}).get("workspace", "")
+            if not s_ws:
+                continue
+            if not os.path.isdir(s_ws):
+                sid = s.get("session_id", "")
+                if not sid:
+                    continue
+                app.session_store.delete(sid)
+                deleted += 1
+                # 附带清理该会话的 TODO 看板（内存 + 磁盘）
+                try:
+                    app.todo_plugin.delete_board(sid)
+                except Exception:
+                    pass
+        return {"ok": True, "deleted": deleted}
 
     @fast_app.delete("/api/sessions/{session_id}")
     async def delete_session(session_id: str, request: Request):
@@ -442,6 +470,12 @@ def create_app(app: AgentApp, token: Optional[str] = None) -> FastAPI:
         _check_auth(request)
         try:
             if payload.zip_base64:
+                # 检查 zip 大小（base64 编码膨胀约 1.33 倍）
+                max_bytes = app.config.get("max_zip_size_mb", 20) * 1024 * 1024
+                raw_size = len(payload.zip_base64) * 3 // 4
+                if raw_size > max_bytes:
+                    max_mb = max_bytes // (1024 * 1024)
+                    raise ValueError(f"zip 文件过大（{raw_size / 1024 / 1024:.1f}MB），上限为 {max_mb}MB")
                 data = base64.b64decode(payload.zip_base64)
                 return {"skills": app.skills_import_zip(data, payload.scope, payload.name)}
             if payload.source:

@@ -58,7 +58,11 @@ def test_parse_frontmatter_absent():
 
 # ---------------------------------------------------------------- 列表与读取
 
-def test_list_skills_with_scope_and_writable(tmp_path):
+def test_list_skills_with_scope_and_writable(tmp_path, monkeypatch):
+    # 隔离用户主目录：技能发现范围含 ~/.claude/skills 等用户级目录，
+    # 不隔离会把开发机上的真实用户技能扫进来（测试必须封闭）
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))  # Windows 家目录
+    monkeypatch.setenv("HOME", str(tmp_path))
     _make_skill(tmp_path, "review")
     tools = SkillsTools(str(tmp_path))
     skills = tools.list_skills()

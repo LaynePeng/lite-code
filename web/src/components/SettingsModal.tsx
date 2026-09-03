@@ -16,7 +16,16 @@ export default function SettingsModal({
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [activeTab, setActiveTab] = useState<"llm" | "mcp" | "skills">("llm");
+  const [activeTab, setActiveTab] = useState<"llm" | "mcp" | "skills" | "general">("llm");
+  // 综合设置：孤儿会话清理
+  const [cleaning, setCleaning] = useState(false);
+  const [cleanResult, setCleanResult] = useState<{ ok: boolean; text: string } | null>(null);
+  // 综合设置：zip 大小上限（MB）
+  const [maxZipSize, setMaxZipSize] = useState<number>(20);
+  const [zipSaved, setZipSaved] = useState(false);
+  // Skills triggers 匹配模式
+  const [triggerMode, setTriggerMode] = useState<"substring" | "advanced">("substring");
+  const [triggerModeSaved, setTriggerModeSaved] = useState(false);
 
   // Skills 管理（独立于 LLM/MCP 配置，操作即时生效）
   const [skills, setSkills] = useState<SkillInfo[]>([]);
@@ -34,13 +43,19 @@ export default function SettingsModal({
 
   useEffect(() => {
     refreshSkills();
-    // 拉取技能权限规则（config.json 的 skill_permissions）
+    // 拉取技能权限规则（config.json 的 skill_permissions）与综合设置项
     api.config().then((c) => {
       const rules = c.skill_permissions || {};
       setPermRules(Object.entries(rules).map(([pattern, action]) => ({
         pattern, action: (action as "allow" | "deny" | "ask") || "allow",
       })));
       setPermDirty(false);
+      if (typeof c.max_zip_size_mb === "number" && c.max_zip_size_mb > 0) {
+        setMaxZipSize(c.max_zip_size_mb);
+      }
+      if (c.skill_trigger_mode === "substring" || c.skill_trigger_mode === "advanced") {
+        setTriggerMode(c.skill_trigger_mode);
+      }
     }).catch(() => { /* 配置拉取失败不阻塞技能页 */ });
   }, [refreshSkills]);
 
@@ -300,6 +315,48 @@ export default function SettingsModal({
     }
   }, [activeProvider, editing, onSaved]);
 
+  // 一键清理孤儿会话：删除所有关联项目目录已不存在的会话
+  const handleCleanup = useCallback(async () => {
+    if (!window.confirm("将删除所有关联项目目录已不存在的会话，删除后无法恢复。确认继续？")) return;
+    setCleaning(true);
+    setCleanResult(null);
+    try {
+      const res = await api.cleanupSessions();
+      setCleanResult({ ok: true, text: `已清理 ${res.deleted} 个无法关联项目的会话` });
+      onSaved();
+    } catch (err) {
+      setCleanResult({ ok: false, text: `清理失败: ${(err as Error).message}` });
+    } finally {
+      setCleaning(false);
+    }
+  }, [onSaved]);
+
+  // 保存 zip 大小上限
+  const saveZipSize = useCallback(async () => {
+    setZipSaved(false);
+    try {
+      await api.updateConfig({ max_zip_size_mb: maxZipSize });
+      setZipSaved(true);
+      setTimeout(() => setZipSaved(false), 2000);
+      onSaved();
+    } catch (err) {
+      window.alert(`保存失败: ${(err as Error).message}`);
+    }
+  }, [maxZipSize, onSaved]);
+
+  // 保存 triggers 匹配模式
+  const saveTriggerMode = useCallback(async () => {
+    setTriggerModeSaved(false);
+    try {
+      await api.updateConfig({ skill_trigger_mode: triggerMode });
+      setTriggerModeSaved(true);
+      setTimeout(() => setTriggerModeSaved(false), 2000);
+      onSaved();
+    } catch (err) {
+      window.alert(`保存失败: ${(err as Error).message}`);
+    }
+  }, [triggerMode, onSaved]);
+
   return (
       <div className="modal-overlay">
       <div className="modal" onClick={(e) => e.stopPropagation()}>
@@ -327,6 +384,12 @@ export default function SettingsModal({
               onClick={() => setActiveTab("skills")}
             >
               Skills
+            </button>
+            <button
+              className={`settings-tab ${activeTab === "general" ? "active" : ""}`}
+              onClick={() => setActiveTab("general")}
+            >
+              综合设置
             </button>
           </div>
 
@@ -588,6 +651,39 @@ export default function SettingsModal({
                 权限规则（glob → allow/deny/ask）：<b>deny</b> 对 Agent 完全隐藏，<b>ask</b> 使用前弹确认。
               </p>
 
+              <div className="mcp-section-head" style={{ marginTop: 6 }}>
+                <span>triggers 自动匹配模式</span>
+                <button className="btn-test" onClick={saveTriggerMode}>
+                  {triggerModeSaved ? "已保存 ✓" : "保存"}
+                </button>
+              </div>
+              <div className="skills-trigger-mode">
+                <label className="mcp-toggle" style={{ marginRight: 16 }}>
+                  <input
+                    type="radio"
+                    name="trigger-mode"
+                    checked={triggerMode === "substring"}
+                    onChange={() => setTriggerMode("substring")}
+                  />
+                  子串匹配（旧行为）
+                </label>
+                <label className="mcp-toggle">
+                  <input
+                    type="radio"
+                    name="trigger-mode"
+                    checked={triggerMode === "advanced"}
+                    onChange={() => setTriggerMode("advanced")}
+                  />
+                  高级匹配（词边界 + 正则）
+                </label>
+              </div>
+              <p className="mcp-hint">
+                子串匹配：<code>review</code> 命中「reviewed」「code review」等任意包含该词的文本。
+                高级匹配：普通词按词边界命中（<code>review</code> 只命中独立单词，不命中 <code>reviewed</code>），
+                用 <code>/regex/</code> 包裹可写正则，如 <code>/code.?review|审计/</code>。
+                开启高级匹配可显著减少无关技能的误注入，避免挤占上下文。
+              </p>
+
               {skillMsg && <div className={`test-result ${skillMsg.ok ? "ok" : "error"}`}>{skillMsg.text}</div>}
 
               <div className="mcp-section-head">
@@ -708,6 +804,53 @@ export default function SettingsModal({
                   onClick={() => { setPermRules([...permRules, { pattern: "", action: "deny" }]); setPermDirty(true); }}>
                   + 添加规则
                 </button>
+              </div>
+            </div>
+          ) : activeTab === "general" ? (
+            <div className="settings-section">
+              <h3>综合设置</h3>
+              <div className="mcp-section-head">
+                <span>会话缓存清理</span>
+              </div>
+              <p className="mcp-hint">
+                历史会话会记录其关联的项目目录；如果项目目录已被删除或移动，
+                这些会话将无法打开继续开发。点击下方按钮可一键删除所有
+                <b>关联项目目录不存在</b>的孤儿会话（删除后无法恢复）。
+              </p>
+              <div className="form-actions">
+                <button className="btn-test" onClick={handleCleanup} disabled={cleaning}>
+                  {cleaning ? "清理中…" : "🗑️ 清除无关联项目的会话"}
+                </button>
+              </div>
+              {cleanResult && (
+                <div className={`test-result ${cleanResult.ok ? "ok" : "error"}`}>
+                  {cleanResult.text}
+                </div>
+              )}
+
+              <div className="mcp-section-head" style={{ marginTop: 18 }}>
+                <span>Skills zip 导入大小上限</span>
+              </div>
+              <p className="mcp-hint">
+                通过 zip 导入技能时，限制上传文件的大小（base64 解码后）。
+                超过上限的导入请求将被拒绝。
+              </p>
+              <div className="form-group">
+                <label>大小上限（MB）</label>
+                <div className="form-row">
+                  <input
+                    type="number"
+                    className="form-input"
+                    min={1}
+                    max={200}
+                    value={maxZipSize}
+                    onChange={(e) => setMaxZipSize(parseInt(e.target.value, 10) || 1)}
+                    style={{ width: 120 }}
+                  />
+                  <button className="btn-test" onClick={saveZipSize}>
+                    {zipSaved ? "已保存 ✓" : "保存"}
+                  </button>
+                </div>
               </div>
             </div>
           ) : null}

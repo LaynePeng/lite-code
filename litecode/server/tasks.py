@@ -260,7 +260,8 @@ class TaskManager:
                     loaded_names.append(name)
             # triggers 自动匹配（/skill 命令时跳过，避免重复注入）
             if not cmd:
-                for skill in skills_tools.match_skills(prompt):
+                trigger_mode = getattr(self.app, "config", {}).get("skill_trigger_mode", "substring")
+                for skill in skills_tools.match_skills(prompt, trigger_mode):
                     name = skill["name"]
                     action = self.app.skill_permission(name)
                     if action == "deny":

@@ -169,13 +169,18 @@ export default function App() {
 
   const refreshAll = useCallback(async () => {
     try {
-      const [st, cfg, ag, llm, providers, mcp] = await Promise.all([api.status(), api.config(), api.agents(), api.llmConfig(), api.llmProviders(), api.mcpStatus()]);
+      const [st, cfg, ag, llm, providers, mcp, tools] = await Promise.all([
+        api.status(), api.config(), api.agents(), api.llmConfig(), api.llmProviders(), api.mcpStatus(),
+        // 工具列表依赖 workspace，未就绪时报 409；静默降级为空列表，避免整组 Promise 失败
+        api.tools().catch(() => [] as { name: string; description: string }[]),
+      ]);
       setStatus(st);
       setConfig(cfg);
       setAgents(ag);
       setLlmConfig(llm);
       setProviderMeta(providers);
       setMcpServers(mcp.servers || []);
+      setRegisteredTools(tools);
       await refreshSessions(st.workspace ?? undefined); // 用刚取到的 workspace，避免 setState 异步时序
     } catch (e) {
       setErrorPublic((e as Error).message);
@@ -361,6 +366,32 @@ export default function App() {
       }
     },
     [openSessionTab, patchChat, sessions]
+  );
+
+  // 双击会话：切到该会话关联的项目，再打开会话（便于接着原项目继续开发）
+  const openSessionWithProject = useCallback(
+    async (sid: string) => {
+      const info = sessions.find((s) => s.session_id === sid);
+      const targetWs = (info?.metadata?.workspace as string) || "";
+      if (targetWs && status?.workspace !== targetWs) {
+        try {
+          const res = await api.setWorkspace(targetWs);
+          if (res.ok) {
+            setStatus((prev) => (prev ? { ...prev, workspace: res.workspace } : prev));
+            pushLog(`📂 已切换到项目: ${res.workspace}`);
+            closeStream();
+            setChatStates({});
+            chatStatesRef.current = {};
+            await refreshSessions(res.workspace);
+          }
+        } catch (e) {
+          setErrorPublic((e as Error).message);
+          return;
+        }
+      }
+      await selectSession(sid);
+    },
+    [sessions, status?.workspace, selectSession, closeStream, refreshSessions, pushLog]
   );
 
   const deleteSession = useCallback(
@@ -616,7 +647,12 @@ export default function App() {
             const cur = getChat(sid);
             if (cur.messages.some((m) => m.queued)) {
               patchChat(sid, {
-                messages: cur.messages.map((m) => (m.queued ? { ...m, queued: false } : m)),
+                messages: [
+                  ...cur.messages.map((m) => (m.queued ? { ...m, queued: false } : m)),
+                  // 注入确认提示：让用户明确看到补充指令已被 Agent 接收并开始处理，
+                  // 随后 Agent 会注入 TODOs（todo_write 工具）与执行任务
+                  { role: "assistant", content: "✅ 收到新任务，正在处理…" },
+                ],
               });
             }
           }
@@ -1028,6 +1064,7 @@ export default function App() {
         version={status?.version ?? "?"}
         onTabChange={changeSidebarTab}
         onSelectSession={(id) => void selectSession(id)}
+        onOpenSessionWithProject={(id) => void openSessionWithProject(id)}
         onNewSession={requestNewChat}
         onDeleteSession={(id) => void deleteSession(id)}
         onOpenProject={() => void openProject()}

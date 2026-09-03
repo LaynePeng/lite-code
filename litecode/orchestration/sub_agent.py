@@ -153,6 +153,39 @@ class SubAgentRunner:
         sub_kernel.events.on("tool:before_execute", lambda p: _forward_progress("tool:before_execute", p))
         sub_kernel.events.on("tool:after_execute", lambda p: _forward_progress("tool:after_execute", p))
 
+        # 3a. 审批透传：子 Agent 的安全审批事件转发到父事件总线，用户可在主界面审批
+        if parent_events is not None:
+            sub_kernel.events.on("approval:request", lambda p: _forward_progress("approval:request", p))
+            sub_kernel.events.on("approval:resolved", lambda p: _forward_progress("approval:resolved", p))
+
+        # 3b. 流式文本实时显示：转发 llm:stream 事件（带节流，避免高频刷屏）
+        _streaming_buf: List[str] = []
+        _last_stream_flush: float = 0
+
+        async def _forward_llm_stream(payload: Any) -> None:
+            nonlocal _last_stream_flush
+            if parent_bus is None:
+                return
+            chunk = (payload or {}).get("chunk", "")
+            if not chunk:
+                return
+            _streaming_buf.append(chunk)
+            now = time.time()
+            # 每 200ms 或缓冲区超过 500 字符时刷新一次
+            if now - _last_stream_flush > 0.2 or sum(len(s) for s in _streaming_buf) > 500:
+                text = "".join(_streaming_buf)
+                _streaming_buf.clear()
+                _last_stream_flush = now
+                try:
+                    await parent_bus.emit("subagent:progress", {
+                        "subagentId": sub_id, "role": role, "kind": "llm:stream",
+                        "callId": call_id, "text": text,
+                    })
+                except Exception:
+                    pass
+
+        sub_kernel.events.on("llm:stream", _forward_llm_stream)
+
         if parent_events is not None:
             await parent_events.emit("subagent:started", {
                 "task": task_description,

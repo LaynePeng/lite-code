@@ -173,8 +173,14 @@ class SkillsTools:
         except OSError as exc:
             return f"[Error]: 无法读取技能 {name!r}: {exc}"
 
-    def match_skills(self, prompt: str) -> List[Dict[str, Any]]:
-        """triggers 自动匹配：大小写不敏感子串命中即返回该技能。"""
+    def match_skills(self, prompt: str, mode: str = "substring") -> List[Dict[str, Any]]:
+        """triggers 自动匹配。
+        mode="substring"：大小写不敏感子串命中即返回（旧行为）。
+        mode="advanced"：词边界匹配（无修饰词）或正则匹配（/pattern/ 包裹）。
+        """
+        if mode == "advanced":
+            return self._match_skills_advanced(prompt)
+        # substring 模式（默认）
         lowered = (prompt or "").lower()
         matched: List[Dict[str, Any]] = []
         for skill in self.list_skills():
@@ -184,6 +190,36 @@ class SkillsTools:
                 if t and t in lowered:
                     matched.append(skill)
                     break
+        return matched
+
+    def _match_skills_advanced(self, prompt: str) -> List[Dict[str, Any]]:
+        """高级匹配：/pattern/ 为正则，其余为词边界（\\bword\\b）。"""
+        matched: List[Dict[str, Any]] = []
+        for skill in self.list_skills():
+            triggers = skill.get("triggers") or ""
+            for t in triggers.split(","):
+                t = t.strip()
+                if not t:
+                    continue
+                try:
+                    if t.startswith("/") and t.endswith("/") and len(t) > 1:
+                        # /regex/ 包裹 → 直接正则匹配
+                        pattern = t[1:-1]
+                        if re.search(pattern, prompt, re.I):
+                            matched.append(skill)
+                            break
+                    else:
+                        # 普通词 → 词边界匹配
+                        pattern = re.escape(t)
+                        if re.search(rf"\b{pattern}\b", prompt, re.I):
+                            matched.append(skill)
+                            break
+                except re.error:
+                    # 非法正则回退到词边界匹配
+                    pattern = re.escape(t)
+                    if re.search(rf"\b{pattern}\b", prompt, re.I):
+                        matched.append(skill)
+                        break
         return matched
 
     def index(self) -> str:

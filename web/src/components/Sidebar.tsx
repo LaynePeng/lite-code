@@ -148,6 +148,7 @@ export default function Sidebar({
   version,
   onTabChange,
   onSelectSession,
+  onOpenSessionWithProject,
   onNewSession,
   onDeleteSession,
   onOpenProject,
@@ -164,6 +165,7 @@ export default function Sidebar({
   version: string;
   onTabChange: (tab: "sessions" | "files" | "terminal") => void;
   onSelectSession: (id: string) => void;
+  onOpenSessionWithProject: (id: string) => void;
   onNewSession: () => void;
   onDeleteSession: (id: string) => void;
   onOpenProject: () => void;
@@ -211,6 +213,7 @@ export default function Sidebar({
                   key={s.session_id}
                   className={`session-item ${s.session_id === activeSessionId ? "active" : ""}`}
                   onClick={() => onSelectSession(s.session_id)}
+                  onDoubleClick={() => onOpenSessionWithProject(s.session_id)}
                 >
                   <div className="session-title">{s.title}</div>
                   <div className="session-meta">

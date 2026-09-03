@@ -47,6 +47,8 @@ export const api = {
     }),
   deleteSession: (id: string) =>
     req<{ ok: boolean }>(`/api/sessions/${id}`, { method: "DELETE" }),
+  cleanupSessions: () =>
+    req<{ ok: boolean; deleted: number }>("/api/sessions/cleanup", { method: "DELETE" }),
 
   tools: () => req<ToolDef[]>("/api/tools"),
   workspaceTree: (path?: string) =>
