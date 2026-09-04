@@ -230,6 +230,36 @@ function StreamingTurn({ items, turn }: { items: WorkItem[]; turn?: number }) {
   );
 }
 
+function SubAgentRecords({ records }: { records: SubAgentProgress[] }) {
+  const [visible, setVisible] = useState(records);
+
+  useEffect(() => {
+    if (records.length === 0) {
+      setVisible([]);
+      return;
+    }
+    setVisible(records);
+    const timer = setTimeout(() => setVisible([]), 20_000);
+    return () => clearTimeout(timer);
+  }, [records]);
+
+  if (visible.length === 0) return null;
+  return (
+    <div className="subagent-records">
+      {visible.map((r, i) => (
+        <div className="subagent-record" key={`${r.subagentId}-${i}`}>
+          <span className="subagent-record-role">◈ {r.role}</span>
+          <span className={r.status === "error" ? "rec-error" : "rec-done"}>
+            {r.status === "error" ? "✗ 异常" : "✓ 完成"}
+          </span>
+          {r.tokens != null && <span className="rec-tokens">{r.tokens} tokens</span>}
+          <span className="subagent-record-task" title={r.task}>{r.task}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- 历史消息分组
 
 interface RenderTurn {
@@ -455,20 +485,7 @@ export default function ChatView({
             {skillLoaded && skillLoaded.length > 0 && (
               <div className="skill-loaded-hint">📦 已注入技能：{skillLoaded.join("、")}</div>
             )}
-            {subAgentRecords.length > 0 && (
-              <div className="subagent-records">
-                {subAgentRecords.map((r, i) => (
-                  <div className="subagent-record" key={`${r.subagentId}-${i}`}>
-                    <span className="subagent-record-role">◈ {r.role}</span>
-                    <span className={r.status === "error" ? "rec-error" : "rec-done"}>
-                      {r.status === "error" ? "✗ 异常" : "✓ 完成"}
-                    </span>
-                    {r.tokens != null && <span className="rec-tokens">{r.tokens} tokens</span>}
-                    <span className="subagent-record-task" title={r.task}>{r.task}</span>
-                  </div>
-                ))}
-              </div>
-            )}
+            <SubAgentRecords records={subAgentRecords} />
           </>
         )}
         <div ref={bottomRef} />

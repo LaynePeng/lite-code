@@ -713,7 +713,6 @@ export default function App() {
         case "task:done": {
           setTreeRevision((v) => v + 1);
           const cur = streamingRefs.current.get(sid);
-          // 归档本轮的子 Agent 活动卡到会话级记录（最终回复下方折叠展示）
           const finished = (cur?.items ?? [])
             .filter((i) => i.type === "tool" && i.card.subagent)
             .map((i) => (i.type === "tool" ? i.card.subagent! : null))
