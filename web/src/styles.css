@@ -932,28 +932,6 @@ body.resizing-row * { cursor: row-resize !important; user-select: none !importan
   border-color: var(--accent);
 }
 
-.btn-save-settings {
-  width: 100%;
-  padding: 8px 12px;
-  margin-top: 12px;
-  font-size: 13px;
-  color: #fff;
-  background: var(--grad);
-  border-radius: 9px;
-  font-weight: 600;
-  transition: filter 0.15s, transform 0.1s;
-}
-
-.btn-save-settings:hover:not(:disabled) {
-  filter: brightness(1.12);
-  transform: translateY(-1px);
-}
-
-.btn-save-settings:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-
 .settings-msg {
   margin-top: 8px;
   padding: 7px 10px;
@@ -2048,7 +2026,7 @@ body.resizing-row * { cursor: row-resize !important; user-select: none !importan
 }
 
 .modal {
-  width: 560px;
+  width: 750px;
   max-width: 92vw;
   max-height: 86vh;
   display: flex;
@@ -2468,17 +2446,27 @@ body.resizing-row * { cursor: row-resize !important; user-select: none !importan
 .form-actions {
   display: flex;
   gap: 12px;
+  justify-content: center;
   margin-top: 18px;
+}
+
+.form-actions .btn-save-settings {
+  width: auto;
+  min-width: 160px;
+  margin-top: 0;
 }
 
 .btn-test {
   padding: 9px 18px;
+  display: inline-flex;
+  align-items: center;
   border-radius: 9px;
   font-size: 13px;
   font-weight: 600;
   background: var(--bg-2);
   border: 1px solid var(--border);
   color: var(--text-0);
+  white-space: nowrap;
   transition: all 0.15s;
 }
 
@@ -2494,11 +2482,16 @@ body.resizing-row * { cursor: row-resize !important; user-select: none !importan
 
 .btn-save-settings {
   padding: 9px 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: 9px;
   font-size: 13px;
   font-weight: 600;
   background: var(--grad);
   color: #fff;
+  border: 1px solid transparent;
+  white-space: nowrap;
   transition: all 0.15s;
 }
 
